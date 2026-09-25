@@ -16,11 +16,11 @@ import (
 )
 
 // onNode runs a shell command on node with its sandbox dir mounted at /sb and
-// waits for it to finish. Used for workspace chores on worker disks, which this
+// waits for it to finish, returning its output. Used for workspace chores on worker disks, which this
 // server can't reach directly. A node that no longer exists took the disk with it.
-func (m *Manager) onNode(ctx context.Context, node, name, cmd string) error {
+func (m *Manager) onNode(ctx context.Context, node, name, cmd string) (string, error) {
 	if _, err := m.Kube.CoreV1().Nodes().Get(ctx, node, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-		return nil
+		return "", nil
 	}
 	pods := m.Kube.CoreV1().Pods(Namespace)
 	no := false
@@ -43,29 +43,30 @@ func (m *Manager) onNode(ctx context.Context, node, name, cmd string) error {
 	}
 	pods.Delete(ctx, name, metav1.DeleteOptions{}) // a leftover from a crash would block the name
 	if _, err := pods.Create(ctx, pod, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return kubeErr(err)
+		return "", kubeErr(err)
 	}
 	defer pods.Delete(context.Background(), name, metav1.DeleteOptions{GracePeriodSeconds: ptr(int64(0))})
 	deadline := m.Now().Add(2 * time.Minute)
 	for m.Now().Before(deadline) {
 		p, err := pods.Get(ctx, name, metav1.GetOptions{})
 		if err == nil && p.Status.Phase == corev1.PodSucceeded {
-			return nil
+			out, err := pods.GetLogs(name, &corev1.PodLogOptions{}).DoRaw(ctx)
+			return string(out), err
 		}
 		if err == nil && p.Status.Phase == corev1.PodFailed {
-			return errf(500, "node_task_failed", "check the node on the Nodes page", "%s on node %s failed", name, node)
+			return "", errf(500, "node_task_failed", "check the node on the Nodes page", "%s on node %s failed", name, node)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}
-	return errf(504, "node_unreachable", "check the node on the Nodes page; the sandbox is marked deleting and cleanup retries", "%s on node %s did not finish in 2 min", name, node)
+	return "", errf(504, "node_unreachable", "check the node on the Nodes page; the sandbox is marked deleting and cleanup retries", "%s on node %s did not finish in 2 min", name, node)
 }
 
-// nodeDisk is a worker's data volume as seen from one of its sandboxes
-// (/workspace is a hostPath, so df reports the node's disk).
+// nodeDisk is a worker's data volume, measured by our own helper pod: df run
+// inside a sandbox would be the tenant's df, and could lie.
 type nodeDisk struct {
 	free         float64 // percent, when measured
 	total, freed int64   // bytes; freed = usage of sandboxes deleted since
@@ -73,30 +74,43 @@ type nodeDisk struct {
 
 func (d *nodeDisk) freePct() float64 { return d.free + 100*float64(d.freed)/float64(d.total) }
 
-// remoteUsage is DiskUsage for a running sandbox on another node, measured
-// inside it, plus that node's disk (nil if df failed).
-// ponytail: one exec per sandbox per reconcile tick; a node agent reporting du is the upgrade past ~100 remote sandboxes.
-func (m *Manager) remoteUsage(ctx context.Context, id string) (int64, *nodeDisk) {
-	var out capped
-	if code, err := m.RunExec(ctx, id, []string{"sh", "-c", "du -sk /workspace; df -Pk /workspace"}, nil, &out, io.Discard); err != nil || code != 0 {
-		return 0, nil
+// workerDisk runs df on node's data volume; nil if the node didn't answer.
+// ponytail: one helper pod per worker per tick; cache for a few ticks if the churn shows.
+func (m *Manager) workerDisk(ctx context.Context, node string) *nodeDisk {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := m.onNode(ctx, node, "df-"+node, "df -Pk /sb")
+	if err != nil {
+		return nil
 	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	num := func(line string, i int) int64 {
-		f := strings.Fields(line)
-		if i >= len(f) {
-			return 0
-		}
-		n, _ := strconv.ParseInt(f[i], 10, 64)
-		return n << 10
+	return parseDF(out)
+}
+
+// parseDF reads df -Pk output; its last line is "fs <total> <used> <avail> ...".
+func parseDF(out string) *nodeDisk {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	f := strings.Fields(lines[len(lines)-1])
+	if len(f) < 4 {
+		return nil
 	}
-	// du: "<kb> /workspace"; df -P's last line: "fs <total> <used> <avail> ..."
-	df := lines[len(lines)-1]
-	used, total, avail := num(lines[0], 0), num(df, 1), num(df, 3)
+	total, _ := strconv.ParseInt(f[1], 10, 64)
+	avail, _ := strconv.ParseInt(f[3], 10, 64)
 	if total == 0 {
-		return used, nil
+		return nil
 	}
-	return used, &nodeDisk{free: 100 * float64(avail) / float64(total), total: total}
+	return &nodeDisk{free: 100 * float64(avail) / float64(total), total: total << 10}
+}
+
+// remoteUsage is DiskUsage for a running sandbox on another node, measured
+// inside it (so the tenant could under-report its own usage).
+// ponytail: one exec per sandbox per reconcile tick; a node agent reporting du is the upgrade past ~100 remote sandboxes.
+func (m *Manager) remoteUsage(ctx context.Context, id string) int64 {
+	var out capped
+	if code, err := m.RunExec(ctx, id, []string{"du", "-sk", "/workspace"}, nil, &out, io.Discard); err != nil || code != 0 {
+		return 0
+	}
+	kb, _ := strconv.ParseInt(strings.Fields(out.String() + " 0")[0], 10, 64)
+	return kb << 10
 }
 
 // streamCopy copies parent's /workspace into the running kid through the API

@@ -84,8 +84,9 @@ type Manager struct {
 	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
 	fillMu sync.Mutex
-	refill sync.WaitGroup // background FillPool runs started by claim
-	low    []string       // workers under 15% free disk at the last reconcile; under mu
+	refill sync.WaitGroup                                   // background FillPool runs started by claim
+	low    []string                                         // workers under 15% free disk at the last reconcile; under mu
+	diskOf func(ctx context.Context, node string) *nodeDisk // workerDisk; replaced in tests
 }
 
 // lowDisk lists workers new sandboxes should avoid.
@@ -98,6 +99,7 @@ func (m *Manager) lowDisk() []string {
 func New(s *store.Store, kube kubernetes.Interface, rc *rest.Config) *Manager {
 	m := &Manager{Store: s, Kube: kube, Rest: rc, Now: time.Now, locks: map[string]*sync.Mutex{}}
 	m.RunExec, m.RunTTY = m.kubeExec, m.kubeTTY
+	m.diskOf = m.workerDisk
 	return m
 }
 
@@ -335,6 +337,9 @@ func (m *Manager) waitReady(ctx context.Context, id string) (*corev1.Pod, error)
 			}
 			for _, c := range p.Status.Conditions {
 				if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+					if n := p.Spec.NodeSelector["kubernetes.io/hostname"]; n != "" {
+						return nil, errf(507, "no_room", "its files are on node "+n+"; check it under Settings > Nodes", "node %s can't run this sandbox: %s", n, c.Message)
+					}
 					return nil, errf(507, "no_room", "kill unused sandboxes (dawnbx ls), or add a node (Settings > Nodes)", "no node has room for this sandbox: %s", c.Message)
 				}
 			}
@@ -484,7 +489,7 @@ func (m *Manager) remove(ctx context.Context, meta store.Meta) error {
 		return kubeErr(err)
 	}
 	if !m.local(meta) {
-		if err := m.onNode(ctx, meta.Node, "rm-"+meta.ID, "rm -rf -- /sb/"+meta.ID); err != nil {
+		if _, err := m.onNode(ctx, meta.Node, "rm-"+meta.ID, "rm -rf -- /sb/"+meta.ID); err != nil {
 			return err
 		}
 	}
@@ -523,7 +528,7 @@ func (m *Manager) Start(ctx context.Context, id string) (*View, error) {
 	}
 	if meta.Status == StatusStopped {
 		if meta.Reason == "disk_full" {
-			if err := m.checkHeadroom(15); err != nil {
+			if err := m.checkNode(meta); err != nil {
 				return nil, err
 			}
 		}

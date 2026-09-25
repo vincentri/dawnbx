@@ -7,7 +7,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -54,6 +56,19 @@ func (m *Manager) checkHeadroom(min float64) error {
 	if free < min {
 		return errf(507, "disk_low", "kill unused sandboxes (dawnbx ls) or grow the data volume",
 			"data volume %.0f%% free; new sandboxes need %.0f%%", free, min)
+	}
+	return nil
+}
+
+// checkNode is checkHeadroom(15) for the disk meta's workspace lives on. A
+// worker's free space comes from the last reconcile tick.
+func (m *Manager) checkNode(meta store.Meta) error {
+	if m.local(meta) {
+		return m.checkHeadroom(15)
+	}
+	if slices.Contains(m.lowDisk(), meta.Node) {
+		return errf(507, "disk_low", "kill unused sandboxes on that node (dawnbx ls) or grow its disk",
+			"node %s is under 15%% free", meta.Node)
 	}
 	return nil
 }
@@ -121,16 +136,11 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 
 	// 2. Per-sandbox disk cap (R20).
 	usage := map[string]int64{}
-	disks := map[string]*nodeDisk{} // workers, by node name
 	for i, meta := range metas {
 		if m.local(meta) {
 			usage[meta.ID] = DiskUsage(m.Store.WS(meta.ID))
 		} else if meta.Status == StatusRunning || meta.Status == StatusWarm {
-			var d *nodeDisk
-			usage[meta.ID], d = m.remoteUsage(ctx, meta.ID)
-			if d != nil && disks[meta.Node] == nil {
-				disks[meta.Node] = d
-			}
+			usage[meta.ID] = m.remoteUsage(ctx, meta.ID)
 		}
 		inGrace := meta.GraceUntil != nil && now.Before(*meta.GraceUntil)
 		if meta.Status != StatusStopped && usage[meta.ID] > DiskLimit && !inGrace {
@@ -144,6 +154,8 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 			metas[i].Status = StatusStopped
 		}
 	}
+
+	disks := m.workerDisks(ctx)
 
 	// 3. Volume headroom per node (R11/R17): below 10% free, delete expiring
 	// sandboxes largest first, then stop the largest keep-forever one. Only
@@ -206,6 +218,20 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 	m.mu.Lock()
 	m.low = low
 	m.mu.Unlock()
+	// Warm sandboxes on a low worker can't be claimed; drop them so the pool
+	// refills elsewhere.
+	for i, meta := range metas {
+		if meta.Status == StatusWarm && slices.Contains(low, meta.Node) {
+			log.Printf("reconcile: %s: warm on low-disk node %q, deleting", meta.ID, meta.Node)
+			m.withLock(meta.ID, func(cur store.Meta) error {
+				if cur.Status != StatusWarm {
+					return nil // claimed since the scan
+				}
+				return m.remove(ctx, cur)
+			})
+			metas[i].Status = StatusDeleting
+		}
+	}
 
 	// 4. Pods follow meta: recreate missing ones, fix annotations, drop strays.
 	pods, err := m.Kube.CoreV1().Pods(Namespace).List(ctx, metav1.ListOptions{LabelSelector: "dawnbx/id"})
@@ -266,6 +292,36 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 	if startup {
 		log.Printf("reconcile: startup done, %d sandboxes", len(want))
 	}
+}
+
+// workerDisks measures every Ready worker's data volume in parallel.
+func (m *Manager) workerDisks(ctx context.Context) map[string]*nodeDisk {
+	disks := map[string]*nodeDisk{}
+	nodes, err := m.Kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		log.Printf("reconcile: list nodes: %v", err)
+		return disks
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, n := range nodes.Items {
+		ready := false
+		for _, c := range n.Status.Conditions {
+			ready = ready || (c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue)
+		}
+		if n.Name == m.Self || !ready {
+			continue // a NotReady node would only time out
+		}
+		wg.Go(func() {
+			if d := m.diskOf(ctx, n.Name); d != nil {
+				mu.Lock()
+				disks[n.Name] = d
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	return disks
 }
 
 func (m *Manager) exists(id string) bool {

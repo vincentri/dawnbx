@@ -8,12 +8,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"dawnbx/internal/store"
 )
@@ -330,22 +333,54 @@ func TestNodes(t *testing.T) {
 	if sel := m.podSpec(w, "").Spec.NodeSelector["kubernetes.io/hostname"]; sel != "w1" {
 		t.Errorf("selector %q", sel)
 	}
-	if got, d := m.remoteUsage(ctx, w.ID); got != 5<<10 || d != nil {
-		t.Errorf("remote usage %d %v", got, d)
+	if got := m.remoteUsage(ctx, w.ID); got != 5<<10 {
+		t.Errorf("remote usage %d", got)
+	}
+	if d := parseDF("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vdb 1000 950 50 95% /sb\n"); d == nil || d.freePct() != 5 {
+		t.Errorf("df parse %+v", d)
+	}
+	if d := parseDF("fake logs"); d != nil {
+		t.Errorf("garbage df parsed: %+v", d)
 	}
 
 	// Worker disk at 5% free while the server has room: only the worker's
-	// keep-forever sandbox is stopped.
-	m.RunExec = func(_ context.Context, _ string, _ []string, _ io.Reader, out, _ io.Writer) (int, error) {
-		io.WriteString(out, "5\t/workspace\nFilesystem 1024-blocks Used Available Capacity Mounted on\nnone 1000 950 50 95% /workspace\n")
-		return 0, nil
+	// keep-forever sandbox is stopped, and its unclaimed warm sandbox goes.
+	for _, n := range []string{"srv", "w1"} {
+		kube.CoreV1().Nodes().Create(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: n},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}, metav1.CreateOptions{})
 	}
-	if _, d := m.remoteUsage(ctx, w.ID); d == nil || d.freePct() != 5 {
-		t.Errorf("node disk %+v", d)
+	// Helper pods (rm on the worker) finish at once.
+	kube.PrependReactor("create", "pods", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		if p := a.(k8stesting.CreateAction).GetObject().(*corev1.Pod); p.Labels["dawnbx/helper"] != "" {
+			p.Status.Phase = corev1.PodSucceeded
+		}
+		return false, nil, nil
+	})
+	measured := map[string]bool{}
+	var mu sync.Mutex
+	m.diskOf = func(_ context.Context, node string) *nodeDisk {
+		mu.Lock()
+		measured[node] = true
+		mu.Unlock()
+		return &nodeDisk{free: 5, total: 1 << 30}
 	}
+	warm := mk(t, m, store.NewID(), func(x *store.Meta) { x.Status, x.Node = StatusWarm, "w1" })
 	m.Reconcile(ctx, false)
 	if meta, _ := m.Store.ReadMeta(w.ID); meta.Status != StatusStopped || meta.Reason != "disk_full" {
 		t.Errorf("worker sandbox not stopped on full worker disk: %+v", meta)
+	}
+	if !measured["w1"] || measured["srv"] {
+		t.Errorf("measured %v, want only the worker", measured)
+	}
+	if m.exists(warm.ID) {
+		t.Error("warm sandbox on low worker kept")
+	}
+	if _, err := m.Start(ctx, w.ID); err == nil || err.(*Error).Code != "disk_low" {
+		t.Errorf("start on low worker: %v", err)
+	}
+	w2 := mk(t, m, store.NewID(), func(x *store.Meta) { x.Node = "w1" })
+	if _, err := m.Fork(ctx, w2.ID, ForkReq{}); err == nil || err.(*Error).Code != "disk_low" {
+		t.Errorf("fork on low worker: %v", err)
 	}
 	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Reason == "disk_full" {
 		t.Errorf("server sandbox touched: %+v", meta)
@@ -363,6 +398,13 @@ func TestNodes(t *testing.T) {
 	kube.CoreV1().Pods(Namespace).Create(ctx, np, metav1.CreateOptions{})
 	if _, err := m.waitReady(ctx, np.Name); err == nil || !strings.Contains(err.Error(), "no node has room") {
 		t.Errorf("unschedulable: %v", err)
+	}
+	// A pinned sandbox whose node can't take it: point at that node, not "add a node".
+	pp := m.podSpec(store.Meta{ID: "sb-pinned", CPU: "1", Memory: "1Gi", Node: "w1"}, "")
+	pp.Status.Conditions = np.Status.Conditions
+	kube.CoreV1().Pods(Namespace).Create(ctx, pp, metav1.CreateOptions{})
+	if _, err := m.waitReady(ctx, pp.Name); err == nil || !strings.Contains(err.(*Error).Hint, "node w1") {
+		t.Errorf("pinned unschedulable: %v", err)
 	}
 
 	m.PoolSize = 1
