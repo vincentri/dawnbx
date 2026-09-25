@@ -44,8 +44,8 @@ Parameters:
   ReleaseUrl:
     Type: String
     Description: >-
-      Base URL holding install.sh, dawnbx-server-linux-arm64 and dawnbx-linux-arm64
-      (a GitHub release download URL once one exists).
+      Base URL of a release (install.sh, checksums.txt, dawnbx-server-linux-arm64,
+      dawnbx-linux-arm64), e.g. https://github.com/OWNER/dawnbx/releases/download/v0.1.0.
     AllowedPattern: ^https://.+[^/]$
 
 Conditions:
@@ -112,21 +112,19 @@ Resources:
         Fn::Base64: !Sub
           - |
             #!/bin/bash
-            # Downloads fail before install.sh can report, so report them here.
+            # A failed download happens before install.sh can report, so report it here.
             fail() { curl -s -X PUT -H 'Content-Type:' --data-binary "{\"Status\":\"FAILURE\",\"Reason\":\"$1\",\"UniqueId\":\"install\",\"Data\":\"\"}" '${Ready}'; exit 1; }
             cd /root
-            for f in install.sh dawnbx-server-linux-arm64 dawnbx-linux-arm64; do
-              curl -fsSL --retry 3 -o "$f" '${ReleaseUrl}'/"$f" || fail "download $f from ${ReleaseUrl} failed"
-            done
-            chmod +x dawnbx-*
+            curl -fsSL --retry 3 -o install.sh '${ReleaseUrl}/install.sh' || fail "download install.sh from ${ReleaseUrl} failed"
             # The Elastic IP is attached right after boot; wait so Let's Encrypt reaches this box.
             t=$(curl -s -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)
             md() { curl -s -H "X-aws-ec2-metadata-token: $t" "http://169.254.169.254/latest/meta-data/$1"; }
             for _ in $(seq 60); do [ "$(md public-ipv4)" = '${Ip}' ] && break; sleep 5; done
             # Workers join from inside the VPC (the security group limits it further).
             cidr=$(md "network/interfaces/macs/$(md mac)/vpc-ipv4-cidr-block")
+            # install.sh downloads the binaries and checks them against checksums.txt.
             bash install.sh --yes --domain '${Dom}' --allow-join "$cidr" --report '${Ready}' \
-              --server-bin /root/dawnbx-server-linux-arm64 --cli-bin /root/dawnbx-linux-arm64
+              --release-url '${ReleaseUrl}'
           - Dom: !If [HasDomain, !Ref Domain, !Sub "${Ip}.sslip.io"]
   IpAssoc:
     Type: AWS::EC2::EIPAssociation

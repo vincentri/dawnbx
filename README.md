@@ -35,9 +35,9 @@ and password files, never the secrets themselves.
 `deploy/aws/dawnbx.yaml` is a CloudFormation stack: one arm64 EC2 instance
 (t4g.medium by default) with an Elastic IP and HTTPS on `<ip>.sslip.io`, or on
 your domain. Create it in the console (**Create stack > Upload a template**)
-and fill in the key pair, your IP for SSH, and `ReleaseUrl`: a URL serving
-`install.sh`, `dawnbx-server-linux-arm64` and `dawnbx-linux-arm64`. There's no
-public release yet, so you host those three files yourself for now. The stack
+and fill in the key pair, your IP for SSH, and `ReleaseUrl`: the base URL of a
+release (see [Release](#release)). There's no public release yet, so you host
+one yourself for now. The stack
 finishes when the installer does (about 5 min). Then the `SshCommand` output
 prints the API key and admin password.
 
@@ -173,6 +173,17 @@ python3 -m unittest discover -s sdk/python/tests
 python3 sdk/python/tests/smoke.py    # end-to-end against a live server
 DAWNBX_TEST_DATABASE_URL=postgres://... go test ./internal/auth   # auth on Postgres (drops its tables first)
 ```
+
+### Release
+
+```sh
+go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean   # local build into dist/
+```
+
+A release is `install.sh`, `checksums.txt` and binaries named
+`<binary>-<os>-<arch>` (e.g. `dawnbx-server-linux-arm64`). Wherever those are
+served over HTTPS, `sudo ./install.sh --release-url <base-url>` downloads the
+binaries and checks them against `checksums.txt`.
 
 ## License
 

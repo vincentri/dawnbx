@@ -11,14 +11,15 @@
 #   --adopt-data         allow a non-empty data dir without an dawnbx marker
 #   --domain NAME        Let's Encrypt cert for NAME (DNS must point here, ports 80+443 open);
 #                        without it HTTPS uses a self-signed cert (env DAWNBX_DOMAIN)
-#   --server-bin PATH    dawnbx-server binary to install (dev builds; required until releases exist)
+#   --release-url URL    download dawnbx binaries + checksums.txt from URL (env DAWNBX_RELEASE_URL)
+#   --server-bin PATH    dawnbx-server binary to install instead (dev builds)
 #   --cli-bin PATH       dawnbx CLI binary to install alongside (dev builds)
 #   --new-key            replace the API key (the old one stops working)
 #   --allow-join CIDR    let machines in CIDR join as workers (opens 6443 to them only)
 #   --join URL TOKEN     join a server as a worker (copy the command from Settings > Nodes,
 #                        or TOKEN is /var/lib/rancher/k3s/server/node-token on the server)
 #   --report URL         PUT the result as CloudFormation WaitCondition JSON (EC2 user-data)
-# Env: DAWNBX_VERSION, DAWNBX_DOMAIN, GVISOR_RELEASE (default latest),
+# Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default latest),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
 set -euo pipefail
 
@@ -28,7 +29,7 @@ GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
 DEFAULT_IMAGE=docker.io/library/python:3.12-slim
 MIN_FREE_GB=10
 
-LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" ALLOW_JOIN="" JOIN_URL="" JOIN_TOKEN="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
+LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" ALLOW_JOIN="" JOIN_URL="" JOIN_TOKEN="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN="" RELEASE_URL=${DAWNBX_RELEASE_URL:-}
 while [ $# -gt 0 ]; do
   case $1 in
     --local) LOCAL=1 ;;
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
     --data-device) DEV=$2; shift ;;
     --domain) DOMAIN=$2; shift ;;
     --server-bin) SERVER_BIN=$2; shift ;;
+    --release-url) RELEASE_URL=${2%/}; shift ;;
     --cli-bin) CLI_BIN=$2; shift ;;
     --report) REPORT=$2; shift ;;
     --allow-join) ALLOW_JOIN=$2; shift ;;
@@ -68,20 +70,22 @@ fail() { # problem cause fix
 trap 'report FAILURE "install.sh stopped at line $LINENO. Fix: see /var/log/cloud-init-output.log or re-run by hand"' ERR
 
 # ---------------------------------------------------------------- preflight
-# ponytail: no release downloads yet; upgrades reuse the installed binary.
+# Upgrades without --server-bin or --release-url reuse the installed binary.
 if [ -n "$JOIN_URL" ]; then : # workers run only k3s-agent + gVisor
 elif [ -n "$SERVER_BIN" ]; then
   [ -x "$SERVER_BIN" ] || fail "--server-bin $SERVER_BIN is not an executable file" "wrong path" "build it: GOOS=linux CGO_ENABLED=0 go build -o dawnbx-server ./cmd/dawnbx-server"
+elif [ -n "$RELEASE_URL" ]; then
+  case $RELEASE_URL in https://*) ;; *) fail "bad --release-url $RELEASE_URL" "binaries must come over https" "pass the https URL of a release" ;; esac
 elif [ ! -x /usr/local/bin/dawnbx-server ]; then
-  fail "no dawnbx-server binary" "release downloads are not available yet" "build it and pass --server-bin PATH (hack/dev-vm.sh does this)"
+  fail "no dawnbx-server binary" "no --release-url or --server-bin given" "pass --release-url (a dawnbx release) or --server-bin PATH (hack/dev-vm.sh does this)"
 fi
 # Everything here only reads; the box is untouched until preflight passes.
 
 [ "$(id -u)" = 0 ] || fail "must run as root" "installer writes /etc, /usr/local/bin and systemd units" "re-run with sudo"
 
 case $(uname -m) in
-  x86_64) GV_ARCH=x86_64 ;;
-  aarch64|arm64) GV_ARCH=aarch64 ;;
+  x86_64) GV_ARCH=x86_64 GO_ARCH=amd64 ;;
+  aarch64|arm64) GV_ARCH=aarch64 GO_ARCH=arm64 ;;
   *) fail "unsupported CPU $(uname -m)" "gVisor ships amd64 and arm64 only" "use an amd64 or arm64 machine" ;;
 esac
 
@@ -414,6 +418,20 @@ log "pre-pulling $DEFAULT_IMAGE"
 k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create will be slower"
 
 # ---------------------------------------------------------------- dawnbx-server
+if [ -z "$SERVER_BIN" ] && [ -n "$RELEASE_URL" ]; then
+  log "downloading dawnbx from $RELEASE_URL"
+  curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$RELEASE_URL/checksums.txt" ||
+    fail "could not download $RELEASE_URL/checksums.txt" "wrong URL or no network" "check the release URL opens in a browser"
+  for b in dawnbx-server dawnbx; do
+    f=$b-linux-$GO_ARCH
+    curl -fsSL --retry 3 -o "$tmp/$f" "$RELEASE_URL/$f" ||
+      fail "could not download $RELEASE_URL/$f" "the release has no $GO_ARCH build, or no network" "check the release assets"
+    (cd "$tmp" && grep "  $f\$" checksums.txt | sha256sum -c --status) ||
+      fail "$f does not match checksums.txt" "corrupted or tampered download" "re-run; if it keeps failing, don't use this release"
+    chmod 755 "$tmp/$f"
+  done
+  SERVER_BIN=$tmp/dawnbx-server-linux-$GO_ARCH CLI_BIN=$tmp/dawnbx-linux-$GO_ARCH
+fi
 if [ -n "$SERVER_BIN" ]; then
   install -m 755 "$SERVER_BIN" /usr/local/bin/dawnbx-server.new
   mv -f /usr/local/bin/dawnbx-server.new /usr/local/bin/dawnbx-server
