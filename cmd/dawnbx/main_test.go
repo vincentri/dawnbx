@@ -45,6 +45,9 @@ func TestCommands(t *testing.T) {
 	if code, err := run(c, "create", []string{"--ttl", "forever", "--network", "none"}, &out); err != nil || code != 0 || out.String() != "sb-bbbbbbbbbb\n" {
 		t.Errorf("create: %d %v %q", code, err, out.String())
 	}
+	if code, err := run(c, "create", []string{"--wat"}, &out); err != nil || code != 2 { // flag prints the error; main must not repeat it
+		t.Errorf("bad flag: %d %v", code, err)
+	}
 	if last := bodies[len(bodies)-1]; !strings.Contains(last, `"ttl":null`) || !strings.Contains(last, `"network":"none"`) {
 		t.Errorf("create body: %s", last)
 	}

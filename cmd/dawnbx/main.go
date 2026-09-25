@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -179,8 +180,11 @@ func run(c *client, cmd string, args []string, w io.Writer) (int, error) {
 		image := fs.String("image", "", "container image (default python:3.12-slim)")
 		network := fs.String("network", "", "internet or none")
 		ttl := fs.String("ttl", "", `lifetime like 30m, or "forever"`)
-		if err := fs.Parse(args); err != nil {
-			return 2, err
+		if err := fs.Parse(args); err != nil { // flag already printed it with usage
+			if errors.Is(err, flag.ErrHelp) {
+				return 0, nil
+			}
+			return 2, nil
 		}
 		body := map[string]any{}
 		if *image != "" {
