@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, must, when, type Principal } from "@/lib/api";
-import { useMe } from "./shell";
+import { signOut, useMe } from "./shell";
 
 export function Settings() {
   const me = useMe().data!;
@@ -426,8 +426,7 @@ function Account() {
     mutationFn: () => must(api.POST("/v1/me/password", { body: { old, new: pw } })),
     onSuccess: () => {
       // The server ends every session of this user.
-      qc.clear();
-      qc.setQueryData(["me"], null);
+      signOut(qc);
       toast.success("Password changed. Sign in with the new one.");
     },
   });

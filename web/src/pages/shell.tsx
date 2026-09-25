@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { BoxIcon, LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,13 @@ export function useMe() {
     },
     staleTime: Infinity,
   });
+}
+
+// signOut shows Login and drops the old user's data. Not qc.clear(): that
+// would detach Shell's observer from ["me"] and it would never see the null.
+export function signOut(qc: QueryClient) {
+  qc.setQueryData(["me"], null);
+  qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
 }
 
 export function Shell() {
@@ -76,10 +83,7 @@ function UserMenu({ me }: { me: Principal }) {
   const qc = useQueryClient();
   const logout = useMutation({
     mutationFn: () => api.POST("/v1/logout"),
-    onSettled: () => {
-      qc.clear();
-      qc.setQueryData(["me"], null);
-    },
+    onSettled: () => signOut(qc),
   });
   return (
     <DropdownMenu>

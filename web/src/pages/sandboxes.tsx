@@ -47,7 +47,7 @@ function CreateForm() {
   const [ttl, setTtl] = useState("");
   const [network, setNetwork] = useState<"internet" | "none">("internet");
   const create = useMutation({
-    mutationFn: () => must(api.POST("/v1/sandboxes", { body: { network, ...(image.trim() && { image: image.trim() }), ...(ttl.trim() && { ttl: ttl.trim() }) } })),
+    mutationFn: () => must(api.POST("/v1/sandboxes", { body: { network, ...(image.trim() && { image: image.trim() }), ...(ttl.trim() && { ttl: ttl.trim() === "forever" ? null : ttl.trim() }) } })),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: ["sandboxes"] });
       nav({ to: "/", search: { id: s.id } });
@@ -71,7 +71,7 @@ function CreateForm() {
           <SelectItem value="none">no network</SelectItem>
         </SelectContent>
       </Select>
-      <Input className="w-24" placeholder="ttl 1h" aria-label="ttl" value={ttl} onChange={(e) => setTtl(e.target.value)} />
+      <Input className="w-24" placeholder="ttl 1h" title="e.g. 30m, 2h, or forever" aria-label="ttl" value={ttl} onChange={(e) => setTtl(e.target.value)} />
       <Button type="submit" disabled={create.isPending}>
         <PlusIcon /> {create.isPending ? "Creating…" : "New sandbox"}
       </Button>
