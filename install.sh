@@ -157,6 +157,20 @@ fi
 command -v apt-get >/dev/null || command -v nft >/dev/null ||
   fail "nftables missing" "k3s ports are firewalled with nft" "install nftables with your package manager"
 
+# Check the server and token now, not after installing everything: the token
+# is K10<sha256 of the server CA>::server:<password>.
+if [ -n "$JOIN_URL" ]; then
+  ca=$(mktemp)
+  curl -fsk --max-time 10 "$JOIN_URL/cacerts" -o "$ca" ||
+    fail "can't reach $JOIN_URL" "the server is down, or its firewall drops this machine" "check the server is up and installed with --allow-join covering this machine's IP"
+  h=${JOIN_TOKEN#K10}; h=${h%%::*}
+  [ "$(sha256sum <"$ca" | cut -d' ' -f1)" = "$h" ] ||
+    fail "$JOIN_URL is not the server this token belongs to" "its certificate doesn't match the token" "copy the join command again from Settings > Nodes"
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --cacert "$ca" -u "node:${JOIN_TOKEN#*::server:}" "$JOIN_URL/v1-k3s/readyz")
+  rm -f "$ca"
+  [ "$code" = 200 ] || fail "the server rejected the join token (HTTP $code)" "the token is wrong or was rotated" "copy the join command again from Settings > Nodes"
+fi
+
 log "preflight ok ($(uname -m), data dir $DATA, $([ "$UPGRADE" = 1 ] && echo upgrade || echo fresh install))"
 
 # ---------------------------------------------------------------- packages

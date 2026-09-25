@@ -6,14 +6,14 @@ new key, revoke the old one).
 
 ## Next: release + one-click EC2 + --join (CEO review 2026-09-25, plan B)
 Review notes: ~/.gstack/projects/sandbox/ceo-plans/2026-09-25-control-plane-aws.md
-- **(0) Release:** GitHub remote, CI (go test, gofmt, shellcheck, cfn-lint), GoReleaser linux amd64+arm64. install.sh downloads the release binary + checks sha256 (today it needs `--server-bin`). Publish install time and sandboxes per 4 GB, measured on t4g.medium.
+- **(0) Release:** GitHub remote, CI (go test, gofmt, shellcheck, cfn-lint), GoReleaser linux amd64+arm64 (DONE locally: `.goreleaser.yaml`, `install.sh --release-url` with sha256 check; template uses it). Left: remote, CI, first published release (owner/name/visibility: ask). Publish install time and sandboxes per 4 GB, measured on t4g.medium.
 - **(1) `deploy/aws/dawnbx.yaml` written 2026-09-25, cfn-lint clean, NOT launched (paid; ask first).** Default VPC, t4g.medium, 30 GB gp3 encrypted, SG 22 (SshCidr)/80/443 + intra-SG 6443/10250/UDP 51820, IMDSv2 hop 1 via launch template, no IAM role, EIP + sslip.io or Domain, WaitCondition 20 min + `--report`, allow-join = VPC CIDR from IMDS.
   - Credit spec decided: `standard` default (fixed bill; throttles to baseline), `unlimited` as a param. README documents it.
-  - Not one-click yet: `ReleaseUrl` param has no default until (0) exists; then default it to the release URL and pin the version. No sha256 check of downloads yet (do with (0)).
+  - Not one-click yet: `ReleaseUrl` param has no default until (0) exists; then default it to the release URL and pin the version.
   - Left: amd64 instance types (needs ImageId + binary arch switch); non-default VPC/subnet params; worker template mode; the one paid test launch (2am test: fresh stack, then SDK exec over the real cert).
 - **(2) DONE 2026-09-25:** `install.sh --join` + `--allow-join` + WireGuard, `/v1/nodes` (+ join, delete) + Settings Nodes section. Proven on two Lima VMs: wg peer handshake, sandbox on worker, exec/files/fork/kill, pod recreate on the same node, 10250 drops non-peers.
   - Left: server taint once workers exist (deferred); worker disk headroom not watched (reconcile only checks the server volume; `ponytail` in reconcile.go); remote `du` via exec per sandbox per tick (fine to ~100 remote sandboxes); "no room: add node" message; Node column in sandbox list; template worker mode.
-  - Hostile tests not run yet: wrong token, server down during join, worker reboot.
+  - Hostile tests DONE 2026-09-25: install.sh now checks the server CA hash and token (`/v1-k3s/readyz`) before installing anything, so wrong token, wrong server and unreachable server fail in seconds. Worker reboot: node Ready in <1 min, firewall and sandboxes back, files intact.
 
 ## Control plane + clusters on AWS (deferred 2026-09-25: build when users ask to manage several clusters)
 - **Shape:** control plane = dashboard + DB, runs anywhere (`dawnbx-server --control-plane`, single binary or Docker, no k3s). Buttons: Create cluster (server EC2), Add node (worker EC2), Delete cluster. Sandboxes run only inside clusters; SDK/CLI talk to the cluster URL directly, never through the control plane.
