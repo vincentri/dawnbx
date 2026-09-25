@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -76,6 +77,9 @@ type Manager struct {
 
 	// PoolSize warm sandboxes are kept running so create/fork skip pod startup (R10).
 	PoolSize int
+	// Self is this server's k3s node name. Workspaces of sandboxes on other
+	// nodes live on those nodes' disks and are reached through pods.
+	Self string
 
 	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
@@ -205,10 +209,26 @@ func (m *Manager) Create(ctx context.Context, r CreateReq) (*View, error) {
 		os.RemoveAll(m.Store.Dir(meta.ID))
 		return nil, err
 	}
+	meta = m.pin(meta, pod)
 	v := view(meta, pod)
 	v.Warnings = warn
 	return v, nil
 }
+
+// pin records the node the scheduler picked, so a recreated pod lands on the
+// same disk. Caller holds the lock.
+func (m *Manager) pin(meta store.Meta, pod *corev1.Pod) store.Meta {
+	if meta.Node == "" && pod != nil && pod.Spec.NodeName != "" {
+		meta.Node = pod.Spec.NodeName
+		if err := m.Store.WriteMeta(meta); err != nil {
+			log.Printf("%s: record node: %v", meta.ID, err)
+		}
+	}
+	return meta
+}
+
+// local reports whether meta's workspace is on this server's disk.
+func (m *Manager) local(meta store.Meta) bool { return meta.Node == "" || meta.Node == m.Self }
 
 func (m *Manager) podSpec(meta store.Meta, restartedAt string) *corev1.Pod {
 	no := false
@@ -219,7 +239,12 @@ func (m *Manager) podSpec(meta store.Meta, restartedAt string) *corev1.Pod {
 	if restartedAt != "" {
 		ann["dawnbx/restarted-at"] = restartedAt
 	}
-	hostDir := corev1.HostPathDirectory
+	// On other nodes the kubelet makes the dir; here store.Create already did.
+	hostDir := corev1.HostPathDirectoryOrCreate
+	var sel map[string]string
+	if meta.Node != "" {
+		sel = map[string]string{"kubernetes.io/hostname": meta.Node}
+	}
 	res := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse(meta.CPU),
 		corev1.ResourceMemory: resource.MustParse(meta.Memory),
@@ -231,6 +256,7 @@ func (m *Manager) podSpec(meta store.Meta, restartedAt string) *corev1.Pod {
 		},
 		Spec: corev1.PodSpec{
 			RuntimeClassName:              ptr("gvisor"),
+			NodeSelector:                  sel,
 			AutomountServiceAccountToken:  &no,
 			EnableServiceLinks:            &no,
 			RestartPolicy:                 corev1.RestartPolicyAlways,
@@ -433,6 +459,11 @@ func (m *Manager) remove(ctx context.Context, meta store.Meta) error {
 	err := m.Kube.CoreV1().Pods(Namespace).Delete(ctx, meta.ID, metav1.DeleteOptions{GracePeriodSeconds: ptr(int64(0))})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return kubeErr(err)
+	}
+	if !m.local(meta) {
+		if err := m.onNode(ctx, meta.Node, "rm-"+meta.ID, "rm -rf -- /sb/"+meta.ID); err != nil {
+			return err
+		}
 	}
 	return os.RemoveAll(m.Store.Dir(meta.ID)) // RemoveAll does not follow symlinks
 }

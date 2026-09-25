@@ -43,7 +43,7 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 			continue
 		}
 		p, err := m.Kube.CoreV1().Pods(Namespace).Get(ctx, id, metav1.GetOptions{})
-		if err != nil || !podReady(p) {
+		if err != nil || !podReady(p) || (want.Node != "" && p.Spec.NodeName != want.Node) {
 			continue
 		}
 		unlock := m.lock(id)
@@ -51,7 +51,7 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 			unlock() // claimed by someone else meanwhile
 			continue
 		}
-		want.ID = id
+		want.ID, want.Node = id, p.Spec.NodeName
 		if err := m.Store.WriteMeta(want); err != nil {
 			unlock()
 			continue

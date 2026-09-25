@@ -60,6 +60,8 @@ type Meta struct {
 	ProjectID  uint32     `json:"project_id,omitempty"` // ext4 project quota id, 0 = no quota
 	Org        string     `json:"org,omitempty"`        // owning org; empty = "default" (made before orgs)
 	KeyID      string     `json:"key_id,omitempty"`     // API key that created it; empty for dashboard users
+	// Node holds /workspace (hostPath on its disk); the pod is pinned there. Empty = not scheduled yet.
+	Node string `json:"node,omitempty"`
 }
 
 type Store struct{ Root string }

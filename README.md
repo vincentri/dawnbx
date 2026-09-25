@@ -27,6 +27,32 @@ and key to `~/.dawnbx/env`. `./install.sh --help` lists all flags.
 - Lost the key? Make a new one in the dashboard under **Settings**, or re-run
   with `--new-key`.
 
+Run it without a terminal (cloud-init, CI) and it prints the paths of the key
+and password files, never the secrets themselves.
+
+### More machines
+
+Sandboxes can run on extra Linux boxes (workers). Node traffic goes over
+WireGuard, so the kernel needs the `wireguard` module (any recent Ubuntu or
+Debian has it).
+
+```sh
+sudo ./install.sh --allow-join 10.0.0.0/16   # on the server: which network may reach k3s (port 6443)
+sudo ./install.sh --join https://10.0.0.5:6443 K10...   # on the worker: the command from Settings > Nodes
+```
+
+The join command is under **Settings > Nodes** (admins only; viewing it is
+logged). The token in it lets a machine join the cluster, so treat it like a
+password. Boxes also need UDP 51820 open to each other.
+
+- A sandbox's files live on the node that runs it. Its forks go on the same
+  node. If the node dies, its sandboxes stay unavailable until it comes back.
+- Use the same `--data-dir` on workers as on the server (the default is fine).
+- A worker's disk isn't watched for low space yet. Only the server's is.
+- Remove a worker from **Settings > Nodes** once it holds no sandboxes, then
+  run `k3s-agent-uninstall.sh` on it. Re-joining a box that has the same
+  hostname needs that removal first.
+
 On a Mac, [Lima](https://lima-vm.io) runs it in a VM:
 
 ```sh

@@ -294,6 +294,37 @@ func (s *Server) manage(h route) {
 		w.WriteHeader(204)
 		return nil, nil
 	})
+
+	h("GET /v1/nodes", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := adminOnly(r); err != nil {
+			return nil, err
+		}
+		l, err := s.M.Nodes(r.Context())
+		return map[string]any{"nodes": l}, err
+	})
+	h("GET /v1/nodes/join", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := adminOnly(r); err != nil {
+			return nil, err
+		}
+		cmd, err := s.M.JoinCommand(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		s.audit(r, "node.join-token.view", "")
+		return map[string]string{"command": cmd}, nil
+	})
+	h("DELETE /v1/nodes/{name}", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := adminOnly(r); err != nil {
+			return nil, err
+		}
+		name := r.PathValue("name")
+		if err := s.M.RemoveNode(r.Context(), name); err != nil {
+			return nil, err
+		}
+		s.audit(r, "node.delete", name)
+		w.WriteHeader(204)
+		return nil, nil
+	})
 }
 
 // limiter locks a username+IP out for 15 min after 5 wrong passwords, so

@@ -13,9 +13,9 @@ Review notes: ~/.gstack/projects/sandbox/ceo-plans/2026-09-25-control-plane-aws.
   - WaitCondition (20 min) + `install.sh --report <url>`: fail() sends FAILURE + message, end sends SUCCESS. README: disable rollback to debug.
   - Decide t4g credit spec (standard vs unlimited) and document it.
   - One paid test launch: ask first.
-- **(2) `install.sh --join <url> <token>`** + GET /v1/nodes + admin Nodes page, proven on two Lima VMs.
-  - `--flannel-backend=wireguard-native`; `--allow-join <cidr>` opens 6443 to that CIDR only; worker 10250 from server only; UDP 51820 between nodes; preflight fails clearly without WireGuard. Template passes the VPC CIDR.
-  - Join token is admin-only, audited on view. Wait for node Ready with timeout, loud failure. Duplicate hostname: say "delete the node first".
+- **(2) DONE 2026-09-25:** `install.sh --join` + `--allow-join` + WireGuard, `/v1/nodes` (+ join, delete) + Settings Nodes section. Proven on two Lima VMs: wg peer handshake, sandbox on worker, exec/files/fork/kill, pod recreate on the same node, 10250 drops non-peers.
+  - Left: server taint once workers exist (deferred); worker disk headroom not watched (reconcile only checks the server volume; `ponytail` in reconcile.go); remote `du` via exec per sandbox per tick (fine to ~100 remote sandboxes); "no room: add node" message; Node column in sandbox list; template worker mode.
+  - Hostile tests not run yet: wrong token, server down during join, worker reboot.
 
 ## Control plane + clusters on AWS (deferred 2026-09-25: build when users ask to manage several clusters)
 - **Shape:** control plane = dashboard + DB, runs anywhere (`dawnbx-server --control-plane`, single binary or Docker, no k3s). Buttons: Create cluster (server EC2), Add node (worker EC2), Delete cluster. Sandboxes run only inside clusters; SDK/CLI talk to the cluster URL directly, never through the control plane.

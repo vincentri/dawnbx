@@ -43,7 +43,7 @@ a { color: var(--acc); cursor: pointer; }
 #run { display: flex; gap: 6px; }
 #cmd { flex: 1; }
 pre { background: #0a0a0a; border: 1px solid var(--line); padding: 8px; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
-pre .err { color: var(--bad); }
+pre .err, td .err { color: var(--bad); }
 pre .meta { color: var(--dim); }
 #files { list-style: none; padding: 0; margin: 0; columns: 2; min-height: 2em; border: 1px dashed transparent; }
 #files.drop { border-color: var(--dim); }
@@ -54,7 +54,7 @@ pre .meta { color: var(--dim); }
 #keys h3 { padding: 0 16px; margin-top: 28px; color: inherit; }
 #keys h3 .dim { margin-left: 8px; font-weight: 400; }
 #keys .row { display: flex; gap: 6px; padding: 0 16px 8px; flex-wrap: wrap; align-items: center; }
-#k-made pre { flex-basis: 100%; user-select: all; }
+#k-made pre, #n-cmd { flex-basis: 100%; user-select: all; }
 #k-close { margin-left: auto; }
 tr.revoked td { color: var(--dim); text-decoration: line-through; }
 

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -121,7 +122,11 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 	// 2. Per-sandbox disk cap (R20).
 	usage := map[string]int64{}
 	for i, meta := range metas {
-		usage[meta.ID] = DiskUsage(m.Store.WS(meta.ID))
+		if m.local(meta) {
+			usage[meta.ID] = DiskUsage(m.Store.WS(meta.ID))
+		} else if meta.Status == StatusRunning || meta.Status == StatusWarm {
+			usage[meta.ID] = m.remoteUsage(ctx, meta.ID)
+		}
 		inGrace := meta.GraceUntil != nil && now.Before(*meta.GraceUntil)
 		if meta.Status != StatusStopped && usage[meta.ID] > DiskLimit && !inGrace {
 			log.Printf("reconcile: %s uses %d bytes, over cap; stopping", meta.ID, usage[meta.ID])
@@ -136,10 +141,15 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 	}
 
 	// 3. Volume headroom (R11/R17): below 10% free, delete expiring sandboxes
-	// largest first, then stop the largest keep-forever one.
+	// largest first, then stop the largest keep-forever one. Only sandboxes on
+	// this disk free it.
+	// ponytail: worker disks aren't watched; add a per-node free check when workers fill up.
 	if free, err := FreePct(m.Store.Root); err == nil && free < 10 {
 		sort.Slice(metas, func(i, j int) bool { return usage[metas[i].ID] > usage[metas[j].ID] })
 		for _, meta := range metas {
+			if !m.local(meta) {
+				continue
+			}
 			if free, _ = FreePct(m.Store.Root); free >= 10 {
 				break
 			}
@@ -151,7 +161,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		}
 		if free, _ = FreePct(m.Store.Root); free < 10 {
 			for i, meta := range metas {
-				if meta.ExpiresAt == nil && meta.Status == StatusRunning {
+				if meta.ExpiresAt == nil && meta.Status == StatusRunning && m.local(meta) {
 					log.Printf("reconcile: volume %.1f%% free, stopping %s", free, meta.ID)
 					m.withLock(meta.ID, func(cur store.Meta) error { return m.stop(ctx, cur, "disk_full") })
 					metas[i].Status = StatusStopped
@@ -167,9 +177,9 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		log.Printf("reconcile: list pods: %v", err)
 		return
 	}
-	have := map[string]bool{}
-	for _, p := range pods.Items {
-		have[p.Name] = true
+	have := map[string]*corev1.Pod{}
+	for i, p := range pods.Items {
+		have[p.Name] = &pods.Items[i]
 	}
 	want := map[string]bool{}
 	for _, meta := range metas {
@@ -178,11 +188,20 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		}
 		want[meta.ID] = true
 		m.withLock(meta.ID, func(cur store.Meta) error {
+			if p := have[cur.ID]; p != nil {
+				cur = m.pin(cur, p)
+			} else if cur.Node == "" && cur.Status != StatusWarm && m.Self != "" {
+				// Made before multi-node: the workspace is on this disk.
+				cur.Node = m.Self
+				if err := m.Store.WriteMeta(cur); err != nil {
+					return err
+				}
+			}
 			switch {
-			case cur.Status == StatusStopped && have[cur.ID]:
+			case cur.Status == StatusStopped && have[cur.ID] != nil:
 				return m.Kube.CoreV1().Pods(Namespace).Delete(ctx, cur.ID, metav1.DeleteOptions{})
 			case cur.Status == StatusStopped:
-			case !have[cur.ID]:
+			case have[cur.ID] == nil:
 				log.Printf("reconcile: %s: pod missing, recreating", cur.ID)
 				restarted := m.Now().UTC().Format(time.RFC3339)
 				if cur.Status == StatusWarm {

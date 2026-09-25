@@ -6,6 +6,10 @@ cpus: 2
 memory: 4GiB
 disk: 40GiB
 mounts: []
+# user-v2 puts VMs on 192.168.104.0/24 where they reach each other (--join tests);
+# no host daemon needed (vzNAT got no DHCP lease on some Macs).
+networks:
+  - lima: user-v2
 additionalDisks:
   - name: dawnbxdata
     format: false

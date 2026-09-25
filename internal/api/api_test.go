@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/remotecommand"
 
@@ -295,6 +297,38 @@ func TestUsersOrgsLockout(t *testing.T) {
 	}
 	if w := do("GET", "/v1/keys", "", admin...); !strings.Contains(w.Body.String(), "installer") || !strings.Contains(w.Body.String(), "bob-ci") {
 		t.Errorf("admin sees all keys: %s", w.Body)
+	}
+
+	// Nodes: admins only; the join token view is audited; a node holding sandboxes stays.
+	m.Self = "srv"
+	tok := filepath.Join(t.TempDir(), "node-token")
+	os.WriteFile(tok, []byte("K10secret\n"), 0o600)
+	sandbox.NodeTokenFile = tok
+	for _, n := range []string{"srv", "w1"} {
+		m.Kube.CoreV1().Nodes().Create(context.Background(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: n},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.1"}}}}, metav1.CreateOptions{})
+	}
+	st.Create(store.Meta{ID: store.NewID(), Image: "x", Created: time.Now(), Status: sandbox.StatusRunning, Node: "w1"})
+	if w := do("GET", "/v1/nodes", "", bob...); w.Code != 403 {
+		t.Errorf("member listed nodes: %d", w.Code)
+	}
+	if w := do("GET", "/v1/nodes/join", "", bob...); w.Code != 403 {
+		t.Errorf("member saw join token: %d", w.Code)
+	}
+	if w := do("GET", "/v1/nodes", "", admin...); !strings.Contains(w.Body.String(), `"name":"w1"`) || !strings.Contains(w.Body.String(), `"sandboxes":1`) {
+		t.Errorf("nodes: %d %s", w.Code, w.Body)
+	}
+	if w := do("GET", "/v1/nodes/join", "", admin...); !strings.Contains(w.Body.String(), "--join https://10.0.0.1:6443 K10secret") {
+		t.Errorf("join: %d %s", w.Code, w.Body)
+	}
+	if w := do("GET", "/v1/audit", "", admin...); !strings.Contains(w.Body.String(), "node.join-token.view") {
+		t.Errorf("join view not audited: %s", w.Body)
+	}
+	if w := do("DELETE", "/v1/nodes/w1", "", admin...); w.Code != 409 {
+		t.Errorf("removed node holding a sandbox: %d", w.Code)
+	}
+	if w := do("DELETE", "/v1/nodes/srv", "", admin...); w.Code != 400 {
+		t.Errorf("removed server node: %d", w.Code)
 	}
 
 	// Password change ends sessions; the old password stops working.

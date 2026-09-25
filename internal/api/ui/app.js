@@ -96,6 +96,10 @@ $("#keys-btn").onclick = () => {
   for (const e of document.querySelectorAll("#keys .admin")) e.hidden = !me.admin;
   loadSettings().catch(show);
 };
+$("#n-show").onclick = (e) => busy(e.target, async () => {
+  $("#n-cmd").textContent = (await api("GET", "/v1/nodes/join")).command;
+  $("#n-cmd").hidden = false;
+});
 $("#k-close").onclick = () => ($("#keys").hidden = true);
 
 async function loadSettings() {
@@ -121,7 +125,24 @@ async function loadSettings() {
     }),
   );
   if (!me.admin) return;
-  const [{ users }, { orgs }] = await Promise.all([api("GET", "/v1/users"), api("GET", "/v1/orgs")]);
+  const [{ users }, { orgs }, { nodes }] = await Promise.all([api("GET", "/v1/users"), api("GET", "/v1/orgs"), api("GET", "/v1/nodes")]);
+  $("#n-empty").hidden = nodes.some((n) => n.role === "worker");
+  $("#n-rows").replaceChildren(
+    ...nodes.map((n) => {
+      const tr = el("tr");
+      const td = el("td");
+      if (n.role === "worker") {
+        td.append(rowButton("Remove", `Remove node ${n.name}? Also run k3s-agent-uninstall.sh on it, or it rejoins.`, async () => {
+          await api("DELETE", `/v1/nodes/${encodeURIComponent(n.name)}`);
+          await loadSettings();
+        }));
+      }
+      const status = n.ready ? el("span", "Ready", "badge") : el("span", `NotReady since ${when(n.since)}`, "err");
+      tr.append(el("td", n.name), el("td", n.role), el("td"), el("td", n.ip), el("td", String(n.sandboxes)), el("td", n.kubelet), td);
+      tr.children[2].append(status);
+      return tr;
+    }),
+  );
   for (const sel of ["#k-org", "#u-org"]) {
     const cur = $(sel).value || me.org;
     $(sel).replaceChildren(...orgs.map((o) => el("option", o.id)));

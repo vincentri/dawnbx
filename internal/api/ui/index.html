@@ -106,6 +106,15 @@
       <tbody id="u-rows"></tbody>
     </table>
 
+    <h3>Nodes <span class="dim">boxes running sandboxes; a sandbox stays on the node that holds its files</span></h3>
+    <table>
+      <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Sandboxes</th><th>k3s</th><th></th></tr></thead>
+      <tbody id="n-rows"></tbody>
+    </table>
+    <p id="n-empty" class="dim" hidden>No workers yet. To add one, run the join command on another Linux box that can reach this one on port 6443.</p>
+    <p><button id="n-show">Show join command</button> <span class="dim">the token lets a machine join as a node; admins only, viewing is audited</span></p>
+    <pre id="n-cmd" hidden></pre>
+
     <h3>Orgs <span class="dim">each org's keys and users only see its own sandboxes</span></h3>
     <form id="o-new" class="row">
       <input id="o-id" placeholder="id, e.g. acme" required pattern="[a-z0-9][a-z0-9\-]{0,39}" aria-label="org id">

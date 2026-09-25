@@ -14,6 +14,9 @@
 #   --server-bin PATH    dawnbx-server binary to install (dev builds; required until releases exist)
 #   --cli-bin PATH       dawnbx CLI binary to install alongside (dev builds)
 #   --new-key            replace the API key (the old one stops working)
+#   --allow-join CIDR    let machines in CIDR join as workers (opens 6443 to them only)
+#   --join URL TOKEN     join a server as a worker (copy the command from Settings > Nodes,
+#                        or TOKEN is /var/lib/rancher/k3s/server/node-token on the server)
 #   --report URL         PUT the result as CloudFormation WaitCondition JSON (EC2 user-data)
 # Env: DAWNBX_VERSION, DAWNBX_DOMAIN, GVISOR_RELEASE (default latest),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
@@ -25,7 +28,7 @@ GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
 DEFAULT_IMAGE=docker.io/library/python:3.12-slim
 MIN_FREE_GB=10
 
-LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
+LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" ALLOW_JOIN="" JOIN_URL="" JOIN_TOKEN="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
 while [ $# -gt 0 ]; do
   case $1 in
     --local) LOCAL=1 ;;
@@ -38,7 +41,9 @@ while [ $# -gt 0 ]; do
     --server-bin) SERVER_BIN=$2; shift ;;
     --cli-bin) CLI_BIN=$2; shift ;;
     --report) REPORT=$2; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    --allow-join) ALLOW_JOIN=$2; shift ;;
+    --join) JOIN_URL=$2 JOIN_TOKEN=${3:-}; shift 2 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -64,7 +69,8 @@ trap 'report FAILURE "install.sh stopped at line $LINENO. Fix: see /var/log/clou
 
 # ---------------------------------------------------------------- preflight
 # ponytail: no release downloads yet; upgrades reuse the installed binary.
-if [ -n "$SERVER_BIN" ]; then
+if [ -n "$JOIN_URL" ]; then : # workers run only k3s-agent + gVisor
+elif [ -n "$SERVER_BIN" ]; then
   [ -x "$SERVER_BIN" ] || fail "--server-bin $SERVER_BIN is not an executable file" "wrong path" "build it: GOOS=linux CGO_ENABLED=0 go build -o dawnbx-server ./cmd/dawnbx-server"
 elif [ ! -x /usr/local/bin/dawnbx-server ]; then
   fail "no dawnbx-server binary" "release downloads are not available yet" "build it and pass --server-bin PATH (hack/dev-vm.sh does this)"
@@ -82,6 +88,11 @@ esac
 [ -f /sys/fs/cgroup/cgroup.controllers ] ||
   fail "cgroup v2 not enabled" "k3s + gVisor need the unified cgroup hierarchy" "use Ubuntu 22.04+ / Debian 12+, or boot with systemd.unified_cgroup_hierarchy=1"
 
+# Node-to-node traffic is WireGuard-encrypted (flannel wireguard-native), so
+# workers can join over the public internet.
+[ -d /sys/module/wireguard ] || modprobe wireguard 2>/dev/null ||
+  fail "kernel has no WireGuard" "node traffic is encrypted with WireGuard" "use Linux 5.6+ (Ubuntu 22.04+ / Debian 12+)"
+
 UPGRADE=0
 if [ -f /etc/dawnbx/install.json ]; then
   UPGRADE=1
@@ -93,6 +104,11 @@ if [ -f /etc/dawnbx/install.json ]; then
   # Re-runs keep the mode and domain they were installed with.
   grep -q '"local": *true' /etc/dawnbx/install.json && LOCAL=1
   DOMAIN=${DOMAIN:-$(sed -n 's/.*"domain": *"\([^"]*\)".*/\1/p' /etc/dawnbx/install.json)}
+  ALLOW_JOIN=${ALLOW_JOIN:-$(sed -n 's/.*"allow_join": *"\([^"]*\)".*/\1/p' /etc/dawnbx/install.json)}
+  prevjoin=$(sed -n 's/.*"join": *"\([^"]*\)".*/\1/p' /etc/dawnbx/install.json)
+  if [ -n "$prevjoin" ] && [ -z "$JOIN_URL" ]; then
+    fail "this machine is a worker of $prevjoin" "re-running as a server would start a second cluster" "re-run with --join $prevjoin TOKEN"
+  fi
 elif command -v k3s >/dev/null || [ -d /etc/rancher/k3s ]; then
   fail "k3s already installed and not by dawnbx" "dawnbx never adopts a foreign cluster" "use a fresh machine (existing clusters = Helm chart, phase 2)"
 fi
@@ -101,6 +117,16 @@ if [ "$LOCAL" = 1 ] && [ -n "$DOMAIN" ]; then
   fail "--domain needs a public install" "--local serves plain HTTP on 127.0.0.1 only" "drop --local (or --domain)"
 fi
 case $DOMAIN in *[!a-zA-Z0-9.-]*) fail "bad --domain $DOMAIN" "only letters, digits, dots and dashes" "pass a DNS name like sandbox.example.com" ;; esac
+if [ -n "$JOIN_URL" ]; then
+  case $JOIN_URL in https://*:6443) ;; *) fail "bad --join URL $JOIN_URL" "it is the server's k3s address" "pass https://SERVER_IP:6443" ;; esac
+  case $JOIN_TOKEN in K10*::server:*) ;; *) fail "--join needs the server's node token" "got something that is not a k3s token" "on the server: sudo cat /var/lib/rancher/k3s/server/node-token" ;; esac
+  [ -z "$DOMAIN$ALLOW_JOIN" ] || fail "--join takes no --domain or --allow-join" "those configure a server" "drop them"
+  SERVER_IP=${JOIN_URL#https://}; SERVER_IP=${SERVER_IP%:6443}
+  case $SERVER_IP in *[!0-9.]*) fail "--join URL must use the server's IPv4 address" "got $SERVER_IP" "pass https://SERVER_IP:6443" ;; esac
+fi
+case $ALLOW_JOIN in ""|*.*.*.*/*) ;; *) fail "bad --allow-join $ALLOW_JOIN" "expected an IPv4 CIDR" "pass something like 10.0.0.0/16" ;; esac
+case $ALLOW_JOIN in *[!0-9./]*) fail "bad --allow-join $ALLOW_JOIN" "expected an IPv4 CIDR" "pass something like 10.0.0.0/16" ;; esac
+
 case $DATA in /*) ;; *) fail "--data-dir must be absolute" "got $DATA" "pass a full path like /var/lib/dawnbx" ;; esac
 
 if [ "$UPGRADE" = 0 ]; then
@@ -184,6 +210,8 @@ else
   warn "no ext4 project quota on $DATA; per-sandbox disk cap falls back to a 30 s du check (dawnbx doctor shows how to fix)"
 fi
 
+NODE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
+if [ -z "$JOIN_URL" ]; then
 # ---------------------------------------------------------------- server identity
 # Lives on the data volume so a rebuilt machine keeps the same API key and TLS
 # cert. Never mounted into sandboxes (they only get sb/<id>/ws).
@@ -219,7 +247,6 @@ elif [ ! -f "$SRV/admin.env" ]; then
   printf %s "$ADMIN_PASSWORD" >"$SRV/admin.pending"
 fi
 
-NODE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
 if [ "$LOCAL" = 0 ]; then
   mkdir -p "$SRV/tls"
   if [ ! -f "$SRV/tls/cert.pem" ]; then
@@ -231,28 +258,34 @@ if [ "$LOCAL" = 0 ]; then
   fi
 fi
 printf 'quota=%s\n' "$QUOTA" >"$SRV/config"
+fi # server identity
 umask 022
 
 mkdir -p /etc/dawnbx
-printf '{"version":"%s","installed":"%s","data_dir":"%s","local":%s,"domain":"%s"}\n' \
-  "$DAWNBX_VERSION" "$(date -u +%FT%TZ)" "$DATA" "$([ "$LOCAL" = 1 ] && echo true || echo false)" "$DOMAIN" >/etc/dawnbx/install.json
+printf '{"version":"%s","installed":"%s","data_dir":"%s","local":%s,"domain":"%s","allow_join":"%s","join":"%s"}\n' \
+  "$DAWNBX_VERSION" "$(date -u +%FT%TZ)" "$DATA" "$([ "$LOCAL" = 1 ] && echo true || echo false)" "$DOMAIN" "$ALLOW_JOIN" "$JOIN_URL" >/etc/dawnbx/install.json
 
 # ---------------------------------------------------------------- firewall
-# apiserver (6443) and kubelet (10250) answer only on loopback and the pod network.
-cat >/etc/dawnbx/firewall.nft <<'NFT'
+# apiserver (6443) and kubelet (10250) answer only on loopback, the pod network
+# and peers: machines in --allow-join on a server, the server on a worker.
+PEERS=${ALLOW_JOIN:-${SERVER_IP:+$SERVER_IP/32}}
+PEER_RULE=""
+[ -n "$PEERS" ] && PEER_RULE="ip saddr $PEERS tcp dport { 6443, 10250 } accept"
+cat >/etc/dawnbx/firewall.nft <<NFT
 table inet dawnbx
 delete table inet dawnbx
 table inet dawnbx {
   chain input {
     type filter hook input priority -10; policy accept;
-    iifname != { "lo", "cni0", "flannel.1" } tcp dport { 6443, 10250 } drop
+    $PEER_RULE
+    iifname != { "lo", "cni0", "flannel.1", "flannel-wg" } tcp dport { 6443, 10250 } drop
   }
 }
 NFT
 cat >/etc/systemd/system/dawnbx-firewall.service <<'UNIT'
 [Unit]
 Description=dawnbx: block k3s apiserver/kubelet on non-local interfaces
-Before=k3s.service
+Before=k3s.service k3s-agent.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
@@ -264,7 +297,7 @@ systemctl daemon-reload
 systemctl enable dawnbx-firewall.service >/dev/null 2>&1
 systemctl restart dawnbx-firewall.service ||
   fail "firewall rules failed to load" "$(journalctl -u dawnbx-firewall -n 3 --no-pager | tail -1)" "check nft is installed and the kernel has nf_tables"
-log "firewall: 6443/10250 closed on non-local interfaces"
+log "firewall: 6443/10250 closed on non-local interfaces${PEERS:+ except $PEERS}"
 
 # ---------------------------------------------------------------- gVisor
 log "installing gVisor ($GVISOR_RELEASE)"
@@ -282,17 +315,23 @@ chmod 755 /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
 # Config, containerd template and manifests are all written before k3s starts,
 # so it comes up once with gVisor instead of needing a restart (the restart
 # is what tripped the cloud-controller crash loop in the C2 probe).
-mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/agent/etc/containerd /var/lib/rancher/k3s/server/manifests
-cat >/etc/rancher/k3s/config.yaml <<'EOF'
+mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/agent/etc/containerd
+K3S_CONF_OLD=$(cat /etc/rancher/k3s/config.yaml 2>/dev/null || true)
+if [ -z "$JOIN_URL" ]; then
+  mkdir -p /var/lib/rancher/k3s/server/manifests
+  cat >/etc/rancher/k3s/config.yaml <<'EOF'
 disable-cloud-controller: true
 write-kubeconfig-mode: "0600"
+flannel-backend: wireguard-native
 EOF
+fi
 cat >/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl <<'EOF'
 {{ template "base" . }}
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runsc]
   runtime_type = "io.containerd.runsc.v1"
 EOF
+if [ -z "$JOIN_URL" ]; then
 cat >/var/lib/rancher/k3s/server/manifests/dawnbx.yaml <<EOF
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
@@ -328,18 +367,48 @@ spec:
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except: [10.42.0.0/16, 10.43.0.0/16, 169.254.169.254/32${NODE_IP:+, $NODE_IP/32}]
+            except: [10.42.0.0/16, 10.43.0.0/16, 169.254.169.254/32${NODE_IP:+, $NODE_IP/32}${ALLOW_JOIN:+, $ALLOW_JOIN}]
 EOF
+fi
+
+if [ -n "$JOIN_URL" ]; then
+  log "joining $JOIN_URL as a worker (k3s $K3S_VERSION)"
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION K3S_URL=$JOIN_URL K3S_TOKEN=$JOIN_TOKEN sh -s - >"$tmp/k3s.log" 2>&1 ||
+    fail "k3s agent install failed" "$(tail -1 "$tmp/k3s.log")" "see journalctl -u k3s-agent"
+  # The kubelet's local health port answers once the node registered with the server.
+  for _ in $(seq 1 90); do
+    curl -fs http://127.0.0.1:10248/healthz >/dev/null 2>&1 && break
+    if journalctl -u k3s-agent --no-pager -n 50 2>/dev/null | grep -q 'password rejected'; then
+      fail "the server already has a node named $(hostname)" "k3s refuses a second machine with the same name" "on the server: sudo k3s kubectl delete node $(hostname), then re-run"
+    fi
+    sleep 2
+  done
+  curl -fs http://127.0.0.1:10248/healthz >/dev/null 2>&1 ||
+    fail "worker did not join within 3 min" "$(journalctl -u k3s-agent -n 1 --no-pager -o cat)" "check the token, and that the server was installed with --allow-join covering $NODE_IP"
+  ip link del flannel.1 2>/dev/null || true
+  log "pre-pulling $DEFAULT_IMAGE"
+  k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create here will be slower"
+  echo
+  echo "Joined $JOIN_URL as node $(hostname). See it on the server's Nodes page."
+  report SUCCESS "node $(hostname) joined $JOIN_URL"
+  exit 0
+fi
 
 log "installing k3s $K3S_VERSION"
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION sh -s - >"$tmp/k3s.log" 2>&1 ||
   fail "k3s install failed" "$(tail -1 "$tmp/k3s.log")" "see journalctl -u k3s"
+# The k3s installer restarts only when its unit changed, not on a new config.yaml.
+if [ -n "$K3S_CONF_OLD" ] && [ "$K3S_CONF_OLD" != "$(cat /etc/rancher/k3s/config.yaml)" ]; then
+  log "k3s config changed, restarting k3s (sandboxes keep running)"
+  systemctl restart k3s
+fi
 K="k3s kubectl"
 for _ in $(seq 1 90); do
   $K get node 2>/dev/null | grep -q ' Ready' && $K get runtimeclass gvisor >/dev/null 2>&1 && break
   sleep 2
 done
 $K get node 2>/dev/null | grep -q ' Ready' || fail "k3s node not Ready after 3 min" "$(journalctl -u k3s -n 1 --no-pager)" "journalctl -u k3s"
+ip link del flannel.1 2>/dev/null || true # left over from the VXLAN backend before wireguard-native
 
 log "pre-pulling $DEFAULT_IMAGE"
 k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create will be slower"

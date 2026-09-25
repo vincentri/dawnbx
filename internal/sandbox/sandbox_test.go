@@ -304,3 +304,58 @@ func TestPool(t *testing.T) {
 		t.Errorf("list after claim: %v", l)
 	}
 }
+
+func TestNodes(t *testing.T) {
+	m, kube := setup(t)
+	ctx := context.Background()
+	m.Self = "srv"
+	m.RunExec = func(_ context.Context, _ string, _ []string, _ io.Reader, out, _ io.Writer) (int, error) {
+		io.WriteString(out, "5\t/workspace\n")
+		return 0, nil
+	}
+	legacy := mk(t, m, store.NewID(), func(x *store.Meta) { x.Status = StatusStopped })
+	w := mk(t, m, store.NewID(), nil)
+	p := m.podSpec(w, "")
+	p.Spec.NodeName = "w1"
+	kube.CoreV1().Pods(Namespace).Create(ctx, p, metav1.CreateOptions{})
+	m.Reconcile(ctx, false)
+	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Node != "srv" {
+		t.Errorf("legacy not pinned to server: %q", meta.Node)
+	}
+	w, _ = m.Store.ReadMeta(w.ID)
+	if w.Node != "w1" || m.local(w) {
+		t.Errorf("worker sandbox not pinned: %q", w.Node)
+	}
+	if sel := m.podSpec(w, "").Spec.NodeSelector["kubernetes.io/hostname"]; sel != "w1" {
+		t.Errorf("selector %q", sel)
+	}
+	if got := m.remoteUsage(ctx, w.ID); got != 5<<10 {
+		t.Errorf("remote usage %d", got)
+	}
+
+	m.PoolSize = 1
+	m.FillPool(ctx)
+	ids, _ := m.Store.IDs()
+	for _, id := range ids {
+		if wp := pod(kube, id); wp != nil && id != w.ID {
+			wp.Spec.NodeName = "srv"
+			wp.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+			kube.CoreV1().Pods(Namespace).Update(ctx, wp, metav1.UpdateOptions{})
+		}
+	}
+	want := store.Meta{Image: DefaultImage, Network: "internet", CPU: "1", Memory: "1Gi", Node: "w1"}
+	if _, _, _, ok := m.claim(ctx, want); ok {
+		t.Error("claimed a warm pod on another node")
+	}
+	want.Node = ""
+	got, _, unlock, ok := m.claim(ctx, want)
+	if !ok || got.Node != "srv" {
+		t.Errorf("claim did not record node: %+v %v", got, ok)
+	}
+	if ok {
+		unlock()
+	}
+	m.PoolSize = 0 // stop the refill claim started before TempDir cleanup
+	m.fillMu.Lock()
+	m.fillMu.Unlock()
+}

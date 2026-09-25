@@ -77,6 +77,8 @@ func main() {
 	}
 	m := sandbox.New(st, kube, rc)
 	m.PoolSize = *pool
+	// k3s names the node after the hostname; sandboxes pinned to it use this disk.
+	m.Self, _ = os.Hostname()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
