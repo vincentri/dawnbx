@@ -45,7 +45,8 @@ a { color: var(--acc); cursor: pointer; }
 pre { background: #0a0a0a; border: 1px solid var(--line); padding: 8px; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; }
 pre .err { color: var(--bad); }
 pre .meta { color: var(--dim); }
-#files { list-style: none; padding: 0; margin: 0; columns: 2; }
+#files { list-style: none; padding: 0; margin: 0; columns: 2; min-height: 2em; border: 1px dashed transparent; }
+#files.drop { border-color: var(--dim); }
 #files li { padding: 1px 0; }
 
 #keys { position: fixed; inset: 0; background: var(--bg); overflow: auto; z-index: 5; }

@@ -3,7 +3,7 @@
 Self-hosted sandboxes for AI agents on one Linux box. Each sandbox is a gVisor
 container on k3s with its own `/workspace`, which you can run commands in, read
 and write files in, and fork. You get an HTTP API, a CLI, Python and TypeScript
-SDKs, and a web dashboard with a terminal.
+SDKs, and a web dashboard with a terminal and file upload.
 
 ## Install
 

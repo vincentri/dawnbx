@@ -16,8 +16,9 @@ let cwd = ".";
 
 async function api(method, path, body, text) {
   const headers = { "X-Dawnbx": "1" }; // the server wants it on cookie-authed writes (CSRF)
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const raw = body instanceof Blob; // file uploads go as-is
+  if (body !== undefined && !raw) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, { method, headers, body: body === undefined || raw ? body : JSON.stringify(body) });
   if (r.status === 401 && path !== "/v1/login") {
     signedOut();
     throw new Error("signed out (session expired); sign in again");
@@ -351,6 +352,36 @@ async function cat(path) {
   $("#file").replaceChildren(el("span", `${path}\n`, "meta"), text.length > 200000 ? text.slice(0, 200000) + "\n… truncated" : text);
   $("#file").hidden = false;
 }
+
+// Upload into the current folder, via the button or by dropping files on the list.
+async function upload(picked) {
+  const id = sel;
+  for (const f of picked) {
+    if (f.size > 100 << 20) {
+      show(`${f.name}: files over 100 MB can't be uploaded here`);
+      continue;
+    }
+    const path = cwd === "." ? f.name : `${cwd}/${f.name}`;
+    $("#cwd").textContent = `uploading ${f.name}…`;
+    await api("PUT", `/v1/sandboxes/${id}/files?path=${encodeURIComponent(path)}`, f).catch(show);
+  }
+  if (id === sel) ls();
+}
+$("#up-btn").onclick = () => $("#up").click();
+$("#up").onchange = (e) => {
+  upload([...e.target.files]);
+  e.target.value = "";
+};
+$("#files").ondragover = (e) => {
+  e.preventDefault();
+  $("#files").classList.add("drop");
+};
+$("#files").ondragleave = () => $("#files").classList.remove("drop");
+$("#files").ondrop = (e) => {
+  e.preventDefault();
+  $("#files").classList.remove("drop");
+  upload([...e.dataTransfer.files]);
+};
 
 // --- terminal ---
 // The session cookie rides along on the upgrade; the server checks Origin.
