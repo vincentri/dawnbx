@@ -1,0 +1,15 @@
+# local tool state (browser tokens, logs, personal settings)
+.claude/
+.gstack/
+.DS_Store
+
+# build output
+/dawnbx
+/dawnbx-server
+*.test
+dist/
+node_modules/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/

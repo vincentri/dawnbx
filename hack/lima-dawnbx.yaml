@@ -1,0 +1,11 @@
+# Dev bench VM: Ubuntu 24.04 + a raw second disk that install.sh formats
+# with ext4 project quota (same path as a VPS with an attached volume).
+base: template:ubuntu-24.04
+vmType: vz
+cpus: 2
+memory: 4GiB
+disk: 40GiB
+mounts: []
+additionalDisks:
+  - name: dawnbxdata
+    format: false

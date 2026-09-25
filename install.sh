@@ -1,0 +1,421 @@
+#!/usr/bin/env bash
+# dawnbx installer: k3s + gVisor + dawnbx on one Linux box.
+#
+#   curl -sfL https://.../install.sh | sudo bash -s -- [flags]
+#
+# Flags:
+#   --local              laptop/VM mode: HTTP on 127.0.0.1 only, no HTTPS
+#   --yes                non-interactive (also formats a blank --data-device)
+#   --data-dir PATH      where sandboxes live (default /var/lib/dawnbx)
+#   --data-device DEV    block device for the data dir; formatted only if blank
+#   --adopt-data         allow a non-empty data dir without an dawnbx marker
+#   --domain NAME        Let's Encrypt cert for NAME (DNS must point here, ports 80+443 open);
+#                        without it HTTPS uses a self-signed cert (env DAWNBX_DOMAIN)
+#   --server-bin PATH    dawnbx-server binary to install (dev builds; required until releases exist)
+#   --cli-bin PATH       dawnbx CLI binary to install alongside (dev builds)
+#   --new-key            replace the API key (the old one stops working)
+# Env: DAWNBX_VERSION, DAWNBX_DOMAIN, GVISOR_RELEASE (default latest),
+#      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
+set -euo pipefail
+
+DAWNBX_VERSION=${DAWNBX_VERSION:-dev}
+K3S_VERSION=v1.35.5+k3s1
+GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
+DEFAULT_IMAGE=docker.io/library/python:3.12-slim
+MIN_FREE_GB=10
+
+LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --local) LOCAL=1 ;;
+    --yes|-y) YES=1 ;;
+    --adopt-data) ADOPT=1 ;;
+    --new-key) NEWKEY=1 ;;
+    --data-dir) DATA=$2; shift ;;
+    --data-device) DEV=$2; shift ;;
+    --domain) DOMAIN=$2; shift ;;
+    --server-bin) SERVER_BIN=$2; shift ;;
+    --cli-bin) CLI_BIN=$2; shift ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+log() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+fail() { # problem cause fix
+  printf '\nerror: %s\n  cause: %s\n  fix:   %s\n' "$1" "$2" "$3" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------- preflight
+# ponytail: no release downloads yet; upgrades reuse the installed binary.
+if [ -n "$SERVER_BIN" ]; then
+  [ -x "$SERVER_BIN" ] || fail "--server-bin $SERVER_BIN is not an executable file" "wrong path" "build it: GOOS=linux CGO_ENABLED=0 go build -o dawnbx-server ./cmd/dawnbx-server"
+elif [ ! -x /usr/local/bin/dawnbx-server ]; then
+  fail "no dawnbx-server binary" "release downloads are not available yet" "build it and pass --server-bin PATH (hack/dev-vm.sh does this)"
+fi
+# Everything here only reads; the box is untouched until preflight passes.
+
+[ "$(id -u)" = 0 ] || fail "must run as root" "installer writes /etc, /usr/local/bin and systemd units" "re-run with sudo"
+
+case $(uname -m) in
+  x86_64) GV_ARCH=x86_64 ;;
+  aarch64|arm64) GV_ARCH=aarch64 ;;
+  *) fail "unsupported CPU $(uname -m)" "gVisor ships amd64 and arm64 only" "use an amd64 or arm64 machine" ;;
+esac
+
+[ -f /sys/fs/cgroup/cgroup.controllers ] ||
+  fail "cgroup v2 not enabled" "k3s + gVisor need the unified cgroup hierarchy" "use Ubuntu 22.04+ / Debian 12+, or boot with systemd.unified_cgroup_hierarchy=1"
+
+UPGRADE=0
+if [ -f /etc/dawnbx/install.json ]; then
+  UPGRADE=1
+  prev=$(sed -n 's/.*"data_dir": *"\([^"]*\)".*/\1/p' /etc/dawnbx/install.json)
+  if [ -n "$DATA" ] && [ -n "$prev" ] && [ "$DATA" != "$prev" ]; then
+    fail "--data-dir $DATA differs from installed $prev" "moving the data dir in place is not supported" "re-run without --data-dir, or reinstall on a fresh machine"
+  fi
+  DATA=${DATA:-$prev}
+  # Re-runs keep the mode and domain they were installed with.
+  grep -q '"local": *true' /etc/dawnbx/install.json && LOCAL=1
+  DOMAIN=${DOMAIN:-$(sed -n 's/.*"domain": *"\([^"]*\)".*/\1/p' /etc/dawnbx/install.json)}
+elif command -v k3s >/dev/null || [ -d /etc/rancher/k3s ]; then
+  fail "k3s already installed and not by dawnbx" "dawnbx never adopts a foreign cluster" "use a fresh machine (existing clusters = Helm chart, phase 2)"
+fi
+DATA=${DATA:-/var/lib/dawnbx}
+if [ "$LOCAL" = 1 ] && [ -n "$DOMAIN" ]; then
+  fail "--domain needs a public install" "--local serves plain HTTP on 127.0.0.1 only" "drop --local (or --domain)"
+fi
+case $DOMAIN in *[!a-zA-Z0-9.-]*) fail "bad --domain $DOMAIN" "only letters, digits, dots and dashes" "pass a DNS name like sandbox.example.com" ;; esac
+case $DATA in /*) ;; *) fail "--data-dir must be absolute" "got $DATA" "pass a full path like /var/lib/dawnbx" ;; esac
+
+if [ "$UPGRADE" = 0 ]; then
+  for p in 80 443 6443; do
+    if ss -Htln "sport = :$p" | grep -q .; then
+      fail "port $p already in use" "$(ss -Htlnp "sport = :$p" | awk '{print $NF}' | head -1)" "stop that service or use a fresh machine"
+    fi
+  done
+fi
+
+free_gb=$(df -Pk /var/lib | awk 'NR==2 {print int($4/1048576)}')
+[ "$free_gb" -ge "$MIN_FREE_GB" ] ||
+  fail "only ${free_gb} GB free on /var/lib" "images and k3s state need at least ${MIN_FREE_GB} GB" "grow the disk or free space"
+
+if [ -n "$DEV" ]; then
+  [ -b "$DEV" ] || fail "$DEV is not a block device" "--data-device must name an attached disk" "check lsblk"
+  if ! blkid "$DEV" >/dev/null 2>&1 && [ "$YES" = 0 ]; then
+    [ -t 0 ] || exec </dev/tty
+    read -r -p "$DEV is blank. Format it as ext4 for dawnbx data? [y/N] " ans
+    [ "$ans" = y ] || [ "$ans" = Y ] || fail "format declined" "blank $DEV needs a filesystem" "re-run with --yes, or drop --data-device"
+  fi
+fi
+
+command -v apt-get >/dev/null || command -v nft >/dev/null ||
+  fail "nftables missing" "k3s ports are firewalled with nft" "install nftables with your package manager"
+
+log "preflight ok ($(uname -m), data dir $DATA, $([ "$UPGRADE" = 1 ] && echo upgrade || echo fresh install))"
+
+# ---------------------------------------------------------------- packages
+if command -v apt-get >/dev/null; then
+  log "installing packages"
+  export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+  apt-get -qq update
+  apt-get -qq install -y nftables quota curl openssl bzip2 >/dev/null
+  # Stock cloud kernels ship quota_v2 in linux-modules-extra; without it an
+  # ext4 volume with the quota feature fails to mount (ESRCH).
+  if ! modinfo quota_v2 >/dev/null 2>&1; then
+    apt-get -qq install -y "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true
+  fi
+fi
+QUOTA_MOD=0
+if modprobe quota_v2 2>/dev/null; then
+  QUOTA_MOD=1
+  echo quota_v2 >/etc/modules-load.d/dawnbx.conf
+fi
+
+# ---------------------------------------------------------------- data volume
+mkdir -p "$DATA"
+if [ -n "$DEV" ]; then
+  if ! blkid "$DEV" >/dev/null 2>&1; then
+    [ "$QUOTA_MOD" = 1 ] || warn "quota_v2 module unavailable; formatting without project quota"
+    log "formatting $DEV (ext4$([ "$QUOTA_MOD" = 1 ] && echo ', project quota'))"
+    if [ "$QUOTA_MOD" = 1 ]; then mkfs.ext4 -q -O quota,project "$DEV"; else mkfs.ext4 -q "$DEV"; fi
+  fi
+  opts=defaults,nofail
+  if [ "$QUOTA_MOD" = 1 ] && tune2fs -l "$DEV" 2>/dev/null | grep -q 'features:.*project'; then opts=$opts,prjquota; fi
+  uuid=$(blkid -s UUID -o value "$DEV")
+  grep -q "UUID=$uuid" /etc/fstab || echo "UUID=$uuid $DATA ext4 $opts 0 2" >>/etc/fstab
+  systemctl daemon-reload
+  mountpoint -q "$DATA" || mount "$DATA"
+fi
+
+if mountpoint -q "$DATA"; then :
+elif [ "$LOCAL" = 0 ]; then
+  warn "$DATA is on the root disk; sandboxes won't survive losing this machine. Use --data-device with a separate volume."
+fi
+
+if [ -f "$DATA/.dawnbx-volume" ]; then
+  log "data volume marker found, reusing $DATA"
+elif [ -n "$(ls -A "$DATA" | grep -vx lost+found || true)" ] && [ "$ADOPT" = 0 ]; then
+  fail "$DATA is not empty and has no dawnbx marker" "it may be another app's data, or the real volume is not mounted over it" "mount the right volume, or pass --adopt-data to use this dir as is"
+else
+  openssl rand -hex 16 >"$DATA/.dawnbx-volume"
+fi
+mkdir -p "$DATA/sb"
+
+QUOTA=off
+if findmnt -no OPTIONS --target "$DATA" | grep -q prjquota; then
+  QUOTA=on
+else
+  warn "no ext4 project quota on $DATA; per-sandbox disk cap falls back to a 30 s du check (dawnbx doctor shows how to fix)"
+fi
+
+# ---------------------------------------------------------------- server identity
+# Lives on the data volume so a rebuilt machine keeps the same API key and TLS
+# cert. Never mounted into sandboxes (they only get sb/<id>/ws).
+SRV=$DATA/server
+install -d -m 700 "$SRV"
+umask 077
+API_KEY=""
+# The plaintext key waits in api-key.pending until it has been printed, so a
+# run that fails halfway still shows it on the next run.
+if [ -f "$SRV/api-key.pending" ]; then
+  API_KEY=$(cat "$SRV/api-key.pending")
+elif [ -f "$SRV/api-keys.json" ] && [ "$NEWKEY" = 0 ]; then
+  log "restored server identity from $SRV"
+else
+  API_KEY="dawnbx_$(openssl rand -hex 24)"
+  printf '{"v":1,"keys":[{"sha256":"%s","created":"%s"}]}\n' \
+    "$(printf %s "$API_KEY" | sha256sum | cut -d' ' -f1)" "$(date -u +%FT%TZ)" >"$SRV/api-keys.json"
+  printf %s "$API_KEY" >"$SRV/api-key.pending"
+fi
+
+# Dashboard admin login. The server reads admin.env verbatim (any characters are
+# fine) and keeps only a bcrypt hash in its DB. Changing the value here and
+# restarting dawnbx resets the password; a change made in the dashboard sticks otherwise.
+ADMIN_PASSWORD=""
+if [ -n "${DAWNBX_ADMIN_PASSWORD:-}" ]; then
+  ADMIN_PASSWORD=$DAWNBX_ADMIN_PASSWORD
+  printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
+elif [ -f "$SRV/admin.pending" ]; then
+  ADMIN_PASSWORD=$(cat "$SRV/admin.pending")
+elif [ ! -f "$SRV/admin.env" ]; then
+  ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=')
+  printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
+  printf %s "$ADMIN_PASSWORD" >"$SRV/admin.pending"
+fi
+
+NODE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
+if [ "$LOCAL" = 0 ]; then
+  mkdir -p "$SRV/tls"
+  if [ ! -f "$SRV/tls/cert.pem" ]; then
+    san="IP:$NODE_IP,DNS:$NODE_IP.sslip.io"
+    [ -n "$DOMAIN" ] && san="$san,DNS:$DOMAIN"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+      -subj /CN=dawnbx -addext "subjectAltName=$san" \
+      -keyout "$SRV/tls/key.pem" -out "$SRV/tls/cert.pem" 2>/dev/null
+  fi
+fi
+printf 'quota=%s\n' "$QUOTA" >"$SRV/config"
+umask 022
+
+mkdir -p /etc/dawnbx
+printf '{"version":"%s","installed":"%s","data_dir":"%s","local":%s,"domain":"%s"}\n' \
+  "$DAWNBX_VERSION" "$(date -u +%FT%TZ)" "$DATA" "$([ "$LOCAL" = 1 ] && echo true || echo false)" "$DOMAIN" >/etc/dawnbx/install.json
+
+# ---------------------------------------------------------------- firewall
+# apiserver (6443) and kubelet (10250) answer only on loopback and the pod network.
+cat >/etc/dawnbx/firewall.nft <<'NFT'
+table inet dawnbx
+delete table inet dawnbx
+table inet dawnbx {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname != { "lo", "cni0", "flannel.1" } tcp dport { 6443, 10250 } drop
+  }
+}
+NFT
+cat >/etc/systemd/system/dawnbx-firewall.service <<'UNIT'
+[Unit]
+Description=dawnbx: block k3s apiserver/kubelet on non-local interfaces
+Before=k3s.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/dawnbx/firewall.nft
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable dawnbx-firewall.service >/dev/null 2>&1
+systemctl restart dawnbx-firewall.service ||
+  fail "firewall rules failed to load" "$(journalctl -u dawnbx-firewall -n 3 --no-pager | tail -1)" "check nft is installed and the kernel has nf_tables"
+log "firewall: 6443/10250 closed on non-local interfaces"
+
+# ---------------------------------------------------------------- gVisor
+log "installing gVisor ($GVISOR_RELEASE)"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+url=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/$GV_ARCH/gvisor.tar.bz2
+curl -fsSL -o "$tmp/gvisor.tar.bz2" "$url" && curl -fsSL -o "$tmp/gvisor.tar.bz2.sha512" "$url.sha512" ||
+  fail "gVisor download failed" "$url unreachable" "check outbound HTTPS, or set GVISOR_RELEASE to a release date like 20260901"
+(cd "$tmp" && sha512sum -c --quiet gvisor.tar.bz2.sha512) ||
+  fail "gVisor checksum mismatch" "download corrupted or tampered" "re-run the installer"
+tar -xjf "$tmp/gvisor.tar.bz2" -C /usr/local/bin runsc containerd-shim-runsc-v1 gvisor-bin
+chmod 755 /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
+
+# ---------------------------------------------------------------- k3s
+# Config, containerd template and manifests are all written before k3s starts,
+# so it comes up once with gVisor instead of needing a restart (the restart
+# is what tripped the cloud-controller crash loop in the C2 probe).
+mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/agent/etc/containerd /var/lib/rancher/k3s/server/manifests
+cat >/etc/rancher/k3s/config.yaml <<'EOF'
+disable-cloud-controller: true
+write-kubeconfig-mode: "0600"
+EOF
+cat >/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl <<'EOF'
+{{ template "base" . }}
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+EOF
+cat >/var/lib/rancher/k3s/server/manifests/dawnbx.yaml <<EOF
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: {name: gvisor}
+handler: runsc
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: dawnbx-sandboxes}
+---
+# Policies add up, so: deny everything for every sandbox, then allow egress
+# for all except network=none.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: sandbox-deny-all, namespace: dawnbx-sandboxes}
+spec:
+  podSelector: {}
+  policyTypes: [Egress, Ingress]
+---
+# DNS + internet, nothing inside the cluster, the node or cloud metadata.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: sandbox-egress, namespace: dawnbx-sandboxes}
+spec:
+  podSelector:
+    matchExpressions: [{key: dawnbx/network, operator: NotIn, values: ["none"]}]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.42.0.0/16, 10.43.0.0/16, 169.254.169.254/32${NODE_IP:+, $NODE_IP/32}]
+EOF
+
+log "installing k3s $K3S_VERSION"
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION sh -s - >"$tmp/k3s.log" 2>&1 ||
+  fail "k3s install failed" "$(tail -1 "$tmp/k3s.log")" "see journalctl -u k3s"
+K="k3s kubectl"
+for _ in $(seq 1 90); do
+  $K get node 2>/dev/null | grep -q ' Ready' && $K get runtimeclass gvisor >/dev/null 2>&1 && break
+  sleep 2
+done
+$K get node 2>/dev/null | grep -q ' Ready' || fail "k3s node not Ready after 3 min" "$(journalctl -u k3s -n 1 --no-pager)" "journalctl -u k3s"
+
+log "pre-pulling $DEFAULT_IMAGE"
+k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create will be slower"
+
+# ---------------------------------------------------------------- dawnbx-server
+if [ -n "$SERVER_BIN" ]; then
+  install -m 755 "$SERVER_BIN" /usr/local/bin/dawnbx-server.new
+  mv -f /usr/local/bin/dawnbx-server.new /usr/local/bin/dawnbx-server
+fi
+if [ -n "$CLI_BIN" ]; then
+  install -m 755 "$CLI_BIN" /usr/local/bin/dawnbx.new
+  mv -f /usr/local/bin/dawnbx.new /usr/local/bin/dawnbx
+fi
+cat >/etc/systemd/system/dawnbx.service <<UNIT
+[Unit]
+Description=dawnbx sandbox API
+After=k3s.service
+Wants=k3s.service
+RequiresMountsFor=$DATA
+[Service]
+ExecStart=/usr/local/bin/dawnbx-server --data-dir $DATA --listen 127.0.0.1:8080$([ "$LOCAL" = 0 ] && echo " --https-listen :443")${DOMAIN:+ --domain $DOMAIN}
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable dawnbx.service >/dev/null 2>&1
+systemctl restart dawnbx.service
+for _ in $(seq 1 30); do
+  curl -fs http://127.0.0.1:8080/v1/version >/dev/null && break
+  sleep 1
+done
+curl -fs http://127.0.0.1:8080/v1/version >/dev/null ||
+  fail "dawnbx-server did not start" "$(journalctl -u dawnbx -n 1 --no-pager -o cat)" "journalctl -u dawnbx"
+log "dawnbx-server up on 127.0.0.1:8080"
+
+# ---------------------------------------------------------------- done
+# On-box clients use loopback HTTP (no cert to trust); remote ones use HTTPS.
+# Lima forwards guest loopback ports, so the loopback URL works from the Mac too.
+URL=http://127.0.0.1:8080
+if [ "$LOCAL" = 1 ]; then PUBLIC=$URL
+elif [ -n "$DOMAIN" ]; then
+  PUBLIC=https://$DOMAIN
+  # The first HTTPS request makes the server fetch its Let's Encrypt cert.
+  if curl -fsS --max-time 60 "$PUBLIC/v1/version" >/dev/null 2>&1; then
+    log "Let's Encrypt cert ready for $DOMAIN"
+  else
+    warn "could not reach $PUBLIC with a valid cert yet. Check: DNS A record for $DOMAIN points at this server's public IP; ports 80 and 443 are open in the cloud firewall / security group. The server retries on the next HTTPS request; errors: journalctl -u dawnbx"
+  fi
+else
+  PUBLIC=https://${NODE_IP:-<this-server-ip>}
+fi
+
+home=$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)
+# Plaintext copy for the installing user only (like ~/.kube/config), so a
+# re-run can print it again. The data volume keeps only the hash.
+KEYFILE=$home/.dawnbx/env
+if [ -n "$API_KEY" ]; then
+  install -d -m 700 "$home/.dawnbx"
+  printf 'export DAWNBX_URL=%s\nexport DAWNBX_API_KEY=%s\n' "$URL" "$API_KEY" >"$KEYFILE"
+  chown -R "${SUDO_USER:-root}" "$home/.dawnbx" 2>/dev/null || true
+elif [ -f "$KEYFILE" ]; then
+  API_KEY=$(sed -n 's/^export DAWNBX_API_KEY=//p' "$KEYFILE")
+fi
+rm -f "$home/dawnbx-quickstart.mjs" # older installs wrote an npm quickstart; the SDKs are not published yet
+echo
+echo "dawnbx $DAWNBX_VERSION installed."
+echo
+echo "  export DAWNBX_URL=$PUBLIC"
+if [ -n "$API_KEY" ]; then echo "  export DAWNBX_API_KEY=$API_KEY"
+else echo "  # API key not on this machine; re-run with --new-key to make one"; fi
+echo
+if [ -n "$API_KEY" ]; then
+  echo "Saved to $KEYFILE for use on this machine (source it in new shells)."
+fi
+if [ -n "$ADMIN_PASSWORD" ]; then
+  echo "Dashboard: $PUBLIC  user: admin  password: $ADMIN_PASSWORD"
+  echo "  (make more API keys there; the password lives in $SRV/admin.env)"
+else
+  echo "Dashboard: $PUBLIC  user: admin  (password in $SRV/admin.env)"
+fi
+if [ "$LOCAL" = 0 ] && [ -z "$DOMAIN" ]; then
+  echo "HTTPS uses a self-signed cert: browsers warn and the SDKs refuse it. For a real cert, point a"
+  echo "DNS name here and re-run with --domain NAME (ports 80 and 443 must be reachable)."
+fi
+if command -v dawnbx >/dev/null; then
+  echo
+  echo "Try it (the CLI reads $KEYFILE):"
+  echo "  id=\$(dawnbx create) && dawnbx exec \$id \"python -c 'print(6*7)'\" && dawnbx kill \$id"
+fi
+rm -f "$SRV/api-key.pending" "$SRV/admin.pending"

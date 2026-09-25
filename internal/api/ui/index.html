@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dawnbx</title>
+<link rel="stylesheet" href="/ui/vendor/xterm.css">
+<link rel="stylesheet" href="/ui/app.css">
+<script src="/ui/vendor/xterm.js" defer></script>
+<script src="/ui/vendor/addon-fit.js" defer></script>
+<script src="/ui/app.js" defer></script>
+</head>
+<body>
+<p id="msg" role="alert" hidden></p>
+<form id="login" hidden>
+  <h1>dawnbx</h1>
+  <label for="user">Username</label>
+  <input id="user" autocomplete="username" value="admin" required>
+  <label for="pass">Password</label>
+  <input id="pass" type="password" autocomplete="current-password" required autofocus>
+  <button>Sign in</button>
+  <p class="dim">The admin password the installer printed. Lost it? Set DAWNBX_ADMIN_PASSWORD in /var/lib/dawnbx/server/admin.env and restart dawnbx.</p>
+</form>
+
+<div id="app" hidden>
+  <header>
+    <strong>dawnbx</strong>
+    <span id="stat" class="dim"></span>
+    <form id="new">
+      <input id="new-image" placeholder="python:3.12-slim" aria-label="image">
+      <select id="new-net" aria-label="network"><option>internet</option><option>none</option></select>
+      <input id="new-ttl" placeholder="ttl 1h" size="6" aria-label="ttl">
+      <button>New sandbox</button>
+    </form>
+    <button id="keys-btn" class="link">Settings</button>
+    <span id="me" class="dim"></span>
+    <button id="logout" class="link">Sign out</button>
+  </header>
+  <main>
+    <section>
+      <table>
+        <thead><tr><th>ID</th><th>Status</th><th>Image</th><th>Network</th><th>Parent</th><th>Age</th><th>Expires</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="dim" hidden>No sandboxes. Create one above or with the SDK.</p>
+    </section>
+    <aside id="detail" hidden>
+      <h2><span id="d-id"></span> <span id="d-status" class="badge"></span></h2>
+      <p id="d-note" class="warn"></p>
+      <dl id="d-info"></dl>
+      <div class="actions">
+        <button id="a-extend">Extend 1h</button>
+        <button id="a-forever">Keep forever</button>
+        <button id="a-term">Terminal</button>
+        <button id="a-fork">Fork</button>
+        <button id="a-start">Start</button>
+        <button id="a-kill" class="danger">Kill</button>
+      </div>
+      <h3>Run</h3>
+      <form id="run">
+        <input id="cmd" placeholder="ls -la" autocomplete="off" aria-label="command">
+        <button>Run</button>
+      </form>
+      <pre id="out" hidden></pre>
+      <h3>Files <span id="cwd" class="dim"></span></h3>
+      <ul id="files"></ul>
+      <pre id="file" hidden></pre>
+    </aside>
+  </main>
+</div>
+
+<div id="keys" hidden>
+  <header>
+    <strong>Settings</strong>
+    <span id="k-who" class="dim"></span>
+    <button id="k-close" class="link">Close</button>
+  </header>
+
+  <h3>API keys <span class="dim">for the SDKs, CLI and curl: Authorization: Bearer &lt;key&gt;</span></h3>
+  <form id="k-new" class="row">
+    <input id="k-name" placeholder="name, e.g. ci" required maxlength="100" aria-label="key name">
+    <select id="k-org" class="admin" aria-label="org"></select>
+    <select id="k-ttl" aria-label="expires"><option value="">never expires</option><option value="720h">30 days</option><option value="2160h">90 days</option><option value="8760h">1 year</option></select>
+    <button>Create key</button>
+  </form>
+  <div id="k-made" class="row" hidden>
+    <p class="warn">Copy this key now. It is not shown again.</p>
+    <pre id="k-token"></pre>
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>Name</th><th>Org</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+    <tbody id="k-rows"></tbody>
+  </table>
+
+  <div class="admin">
+    <h3>Users <span class="dim">members see their own org; admins see every org</span></h3>
+    <form id="u-new" class="row">
+      <input id="u-name" placeholder="username" required maxlength="64" autocomplete="off" aria-label="username">
+      <input id="u-pass" type="password" placeholder="password (10+ chars)" required minlength="10" maxlength="72" autocomplete="new-password" aria-label="password">
+      <select id="u-org" aria-label="org"></select>
+      <select id="u-role" aria-label="role"><option>member</option><option>admin</option></select>
+      <button>Add user</button>
+    </form>
+    <table>
+      <thead><tr><th>Username</th><th>Org</th><th>Role</th><th>Created</th><th></th></tr></thead>
+      <tbody id="u-rows"></tbody>
+    </table>
+
+    <h3>Orgs <span class="dim">each org's keys and users only see its own sandboxes</span></h3>
+    <form id="o-new" class="row">
+      <input id="o-id" placeholder="id, e.g. acme" required pattern="[a-z0-9][a-z0-9\-]{0,39}" aria-label="org id">
+      <input id="o-name" placeholder="display name (optional)" maxlength="100" aria-label="org name">
+      <button>Add org</button>
+    </form>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Created</th></tr></thead>
+      <tbody id="o-rows"></tbody>
+    </table>
+  </div>
+
+  <h3>Change password <span class="dim">signs out all your sessions</span></h3>
+  <form id="p-new" class="row">
+    <input id="p-old" type="password" placeholder="current password" required autocomplete="current-password" aria-label="current password">
+    <input id="p-new1" type="password" placeholder="new password (10+ chars)" required minlength="10" maxlength="72" autocomplete="new-password" aria-label="new password">
+    <button>Change</button>
+  </form>
+
+  <h3>Audit log <span class="dim">last 200 events</span></h3>
+  <table>
+    <thead><tr><th>When</th><th>Org</th><th>Who</th><th>Action</th><th>Target</th></tr></thead>
+    <tbody id="a-rows"></tbody>
+  </table>
+</div>
+
+<div id="term" hidden>
+  <header>
+    <strong id="t-id"></strong>
+    <span id="t-state" class="dim"></span>
+    <button id="t-close" class="link">Close</button>
+  </header>
+  <div id="xterm"></div>
+</div>
+</body>
+</html>

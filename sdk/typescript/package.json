@@ -1,0 +1,22 @@
+{
+  "name": "dawnbx",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for dawnbx, self-hosted gVisor sandboxes for AI agents",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

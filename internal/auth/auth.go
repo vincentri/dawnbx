@@ -1,0 +1,632 @@
+// Package auth stores orgs, users, API keys, sessions and the audit log in
+// SQLite (default, one file on the data volume) or Postgres (several API nodes).
+// Queries are plain SQL that both accept; $N placeholders work in SQLite too.
+package auth
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
+)
+
+// DefaultOrg owns everything made before orgs existed.
+const DefaultOrg = "default"
+
+const (
+	SessionTTL = 7 * 24 * time.Hour
+	cacheTTL   = 30 * time.Second // a key revoked on another API node works this long there
+)
+
+var ErrUnauthorized = errors.New("unauthorized")
+
+// Each entry runs once, in order, inside a transaction.
+var migrations = []string{`
+CREATE TABLE orgs (id TEXT PRIMARY KEY, name TEXT NOT NULL, created BIGINT NOT NULL);
+CREATE TABLE users (id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES orgs(id), username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL, role TEXT NOT NULL, created BIGINT NOT NULL);
+CREATE TABLE api_keys (id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES orgs(id), name TEXT NOT NULL,
+  hash TEXT NOT NULL UNIQUE, created BIGINT NOT NULL, created_by TEXT NOT NULL,
+  last_used BIGINT, expires BIGINT, revoked BIGINT);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created BIGINT NOT NULL, expires BIGINT NOT NULL);
+CREATE TABLE audit_log (id TEXT PRIMARY KEY, at BIGINT NOT NULL, org_id TEXT NOT NULL, actor TEXT NOT NULL,
+  action TEXT NOT NULL, target TEXT NOT NULL);
+CREATE INDEX audit_log_org_at ON audit_log (org_id, at);
+INSERT INTO orgs (id, name, created) VALUES ('default', 'default', 0)`, `
+CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
+}
+
+// Principal is who a request acts as.
+type Principal struct {
+	Org   string `json:"org"`
+	User  string `json:"user,omitempty"`   // set for dashboard sessions
+	KeyID string `json:"key_id,omitempty"` // set for API keys
+	Admin bool   `json:"admin"`            // sees every org's sandboxes, manages keys
+}
+
+func (p *Principal) Actor() string {
+	if p.User != "" {
+		return "user:" + p.User
+	}
+	return "key:" + p.KeyID
+}
+
+type cached struct {
+	p   *Principal
+	exp time.Time
+}
+
+type DB struct {
+	db  *sql.DB
+	Now func() time.Time
+
+	mu    sync.Mutex
+	cache map[string]cached // "k:" or "s:" + sha256 hex of the token
+}
+
+// Open takes a postgres:// URL or a SQLite file path and migrates it.
+func Open(url string) (*DB, error) {
+	var db *sql.DB
+	var err error
+	if strings.HasPrefix(url, "postgres://") || strings.HasPrefix(url, "postgresql://") {
+		db, err = sql.Open("pgx", url)
+	} else {
+		// One writer at a time; busy_timeout waits instead of failing under concurrent writes.
+		db, err = sql.Open("sqlite", "file:"+url+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+		db.SetMaxOpenConns(1)
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &DB{db: db, Now: time.Now, cache: map[string]cached{}}
+	if err := d.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("database %s: %w", redact(url), err)
+	}
+	return d, nil
+}
+
+func (d *DB) Close() error { return d.db.Close() }
+
+func redact(url string) string {
+	if i := strings.Index(url, "@"); i > 0 && strings.Contains(url, "://") {
+		return url[:strings.Index(url, "://")+3] + "…" + url[i:]
+	}
+	return url
+}
+
+// ponytail: two API nodes migrating at once make one fail on the duplicate
+// version row; systemd restarts it and it finds the work done.
+func (d *DB) migrate() error {
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`); err != nil {
+		return err
+	}
+	var have int
+	if err := d.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&have); err != nil {
+		return err
+	}
+	if have > len(migrations) {
+		return fmt.Errorf("schema version %d is newer than this build (%d); upgrade dawnbx-server", have, len(migrations))
+	}
+	for v := have + 1; v <= len(migrations); v++ {
+		tx, err := d.db.Begin()
+		if err != nil {
+			return err
+		}
+		for _, stmt := range strings.Split(migrations[v-1], ";\n") {
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %d: %w", v, err)
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, v); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func randID(n int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	rand.Read(b)
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
+}
+
+func hash(tok string) string {
+	s := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(s[:])
+}
+
+func unix(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.Unix()
+}
+
+func (d *DB) lookup(h string) *Principal {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c, ok := d.cache[h]; ok && d.Now().Before(c.exp) {
+		return c.p
+	}
+	return nil
+}
+
+func (d *DB) remember(h string, p *Principal) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.cache) > 10000 { // ponytail: drop everything past 10k tokens; an LRU if that ever churns
+		clear(d.cache)
+	}
+	d.cache[h] = cached{p, d.Now().Add(cacheTTL)}
+}
+
+func (d *DB) forget(h string) {
+	d.mu.Lock()
+	delete(d.cache, h)
+	d.mu.Unlock()
+}
+
+// ponytail: orgs can't be renamed or deleted; add it when a tenant leaves.
+func (d *DB) CreateOrg(id, name string) error {
+	if d.OrgExists(id) {
+		return ErrExists
+	}
+	_, err := d.db.Exec(`INSERT INTO orgs (id, name, created) VALUES ($1, $2, $3)`, id, name, d.Now().Unix())
+	return err
+}
+
+// --- API keys ---
+
+// Key is an API key as listed; the secret itself is never stored.
+type Key struct {
+	ID        string     `json:"id"`
+	Org       string     `json:"org"`
+	Name      string     `json:"name"`
+	Created   time.Time  `json:"created"`
+	CreatedBy string     `json:"created_by"`
+	LastUsed  *time.Time `json:"last_used"`
+	Expires   *time.Time `json:"expires"`
+	Revoked   *time.Time `json:"revoked"`
+}
+
+// CreateKey returns the plaintext token once: dbx_<id>_<secret>.
+func (d *DB) CreateKey(org, name, by string, expires *time.Time) (string, *Key, error) {
+	k := &Key{ID: randID(12), Org: org, Name: name, Created: d.Now().UTC().Truncate(time.Second), CreatedBy: by, Expires: expires}
+	secret := make([]byte, 24)
+	rand.Read(secret)
+	tok := "dbx_" + k.ID + "_" + hex.EncodeToString(secret)
+	_, err := d.db.Exec(`INSERT INTO api_keys (id, org_id, name, hash, created, created_by, expires) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		k.ID, org, name, hash(tok), k.Created.Unix(), by, unix(expires))
+	if err != nil {
+		return "", nil, err
+	}
+	return tok, k, nil
+}
+
+func (d *DB) ListKeys(org string) ([]Key, error) {
+	q := `SELECT id, org_id, name, created, created_by, last_used, expires, revoked FROM api_keys`
+	args := []any{}
+	if org != "" {
+		q += ` WHERE org_id = $1`
+		args = append(args, org)
+	}
+	rows, err := d.db.Query(q+` ORDER BY created, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Key{}
+	for rows.Next() {
+		var k Key
+		var created int64
+		var used, exp, rev sql.NullInt64
+		if err := rows.Scan(&k.ID, &k.Org, &k.Name, &created, &k.CreatedBy, &used, &exp, &rev); err != nil {
+			return nil, err
+		}
+		k.Created = time.Unix(created, 0).UTC()
+		k.LastUsed, k.Expires, k.Revoked = ptime(used), ptime(exp), ptime(rev)
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func ptime(n sql.NullInt64) *time.Time {
+	if !n.Valid {
+		return nil
+	}
+	t := time.Unix(n.Int64, 0).UTC()
+	return &t
+}
+
+// RevokeKey reports false if org has no such live key. Empty org = any org.
+func (d *DB) RevokeKey(org, id string) (bool, error) {
+	var h string
+	err := d.db.QueryRow(`SELECT hash FROM api_keys WHERE id = $1 AND ($2 = '' OR org_id = $2) AND revoked IS NULL`, id, org).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := d.db.Exec(`UPDATE api_keys SET revoked = $1 WHERE id = $2`, d.Now().Unix(), id); err != nil {
+		return false, err
+	}
+	d.forget("k:" + h)
+	return true, nil
+}
+
+// CheckKey resolves a bearer token. Valid keys are cached for 30 s.
+func (d *DB) CheckKey(tok string) (*Principal, error) {
+	if tok == "" {
+		return nil, ErrUnauthorized
+	}
+	h := "k:" + hash(tok)
+	if p := d.lookup(h); p != nil {
+		return p, nil
+	}
+	var p Principal
+	var exp, rev sql.NullInt64
+	err := d.db.QueryRow(`SELECT id, org_id, expires, revoked FROM api_keys WHERE hash = $1`, h[2:]).Scan(&p.KeyID, &p.Org, &exp, &rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := d.Now()
+	if rev.Valid || (exp.Valid && now.Unix() >= exp.Int64) {
+		return nil, ErrUnauthorized
+	}
+	// Written at most once per cache period per node, so hot keys don't write on every call.
+	d.db.Exec(`UPDATE api_keys SET last_used = $1 WHERE id = $2`, now.Unix(), p.KeyID)
+	d.remember(h, &p)
+	return &p, nil
+}
+
+// ImportKeyFile syncs install.sh's api-keys.json (sha256 hashes, no ids) into
+// the default org: new hashes are added, installer keys no longer listed are
+// revoked, so `install.sh --new-key` still retires the old key.
+func (d *DB) ImportKeyFile(path string) error {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var kf struct {
+		Keys []struct {
+			SHA256  string    `json:"sha256"`
+			Created time.Time `json:"created"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(b, &kf); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	keep := map[string]bool{}
+	for _, k := range kf.Keys {
+		if len(k.SHA256) != 64 {
+			continue
+		}
+		keep[k.SHA256] = true
+		created := k.Created
+		if created.IsZero() {
+			created = d.Now()
+		}
+		// ON CONFLICT DO NOTHING is the same in SQLite and Postgres.
+		if _, err := d.db.Exec(`INSERT INTO api_keys (id, org_id, name, hash, created, created_by) VALUES ($1, $2, 'installer', $3, $4, 'install.sh')
+			ON CONFLICT (hash) DO NOTHING`, randID(12), DefaultOrg, k.SHA256, created.Unix()); err != nil {
+			return err
+		}
+	}
+	rows, err := d.db.Query(`SELECT id, hash FROM api_keys WHERE created_by = 'install.sh' AND revoked IS NULL`)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var id, h string
+		if err := rows.Scan(&id, &h); err != nil {
+			rows.Close()
+			return err
+		}
+		if !keep[h] {
+			stale = append(stale, id)
+		}
+	}
+	rows.Close()
+	for _, id := range stale {
+		if _, err := d.RevokeKey("", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- users and sessions ---
+
+// EnsureAdmin creates the admin user from the env password. Later it only
+// resets the password when the env value changes, so a password changed in the
+// dashboard survives restarts, and editing the env still recovers a lost login.
+func (d *DB) EnsureAdmin(username, password string) error {
+	var id string
+	err := d.db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := d.CreateUser(DefaultOrg, username, password, "admin"); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		var applied string
+		d.db.QueryRow(`SELECT v FROM settings WHERE k = 'admin_env'`).Scan(&applied)
+		if applied != "" && bcrypt.CompareHashAndPassword([]byte(applied), []byte(username+"\n"+password)) == nil {
+			return nil
+		}
+		if err := d.SetPassword(username, password); err != nil {
+			return err
+		}
+		if _, err := d.db.Exec(`UPDATE users SET role = 'admin' WHERE id = $1`, id); err != nil {
+			return err
+		}
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(username+"\n"+password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`INSERT INTO settings (k, v) VALUES ('admin_env', $1) ON CONFLICT (k) DO UPDATE SET v = excluded.v`, string(h))
+	return err
+}
+
+type User struct {
+	ID       string    `json:"id"`
+	Org      string    `json:"org"`
+	Username string    `json:"username"`
+	Role     string    `json:"role"` // admin: every org; member: own org only
+	Created  time.Time `json:"created"`
+}
+
+var ErrExists = errors.New("already exists")
+
+func (d *DB) CreateUser(org, username, password, role string) (*User, error) {
+	var n int
+	d.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = $1`, username).Scan(&n)
+	if n > 0 {
+		return nil, ErrExists
+	}
+	ph, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	u := &User{ID: randID(12), Org: org, Username: username, Role: role, Created: d.Now().UTC().Truncate(time.Second)}
+	_, err = d.db.Exec(`INSERT INTO users (id, org_id, username, password_hash, role, created) VALUES ($1, $2, $3, $4, $5, $6)`,
+		u.ID, org, username, string(ph), role, u.Created.Unix())
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// ListUsers lists org's users; empty org = every org.
+func (d *DB) ListUsers(org string) ([]User, error) {
+	rows, err := d.db.Query(`SELECT id, org_id, username, role, created FROM users WHERE $1 = '' OR org_id = $1 ORDER BY created, username`, org)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		var u User
+		var created int64
+		if err := rows.Scan(&u.ID, &u.Org, &u.Username, &u.Role, &created); err != nil {
+			return nil, err
+		}
+		u.Created = time.Unix(created, 0).UTC()
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUser ends the user's sessions with it. Their API keys stay: keys belong to the org.
+func (d *DB) DeleteUser(username string) (bool, error) {
+	var id string
+	if err := d.db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if err := d.dropSessions(id); err != nil {
+		return false, err
+	}
+	_, err := d.db.Exec(`DELETE FROM users WHERE id = $1`, id)
+	return err == nil, err
+}
+
+// SetPassword replaces username's password and signs out all of its sessions.
+func (d *DB) SetPassword(username, password string) error {
+	ph, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	var id string
+	if err := d.db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&id); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`UPDATE users SET password_hash = $1 WHERE id = $2`, string(ph), id); err != nil {
+		return err
+	}
+	return d.dropSessions(id)
+}
+
+type Org struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Created time.Time `json:"created"`
+}
+
+func (d *DB) ListOrgs() ([]Org, error) {
+	rows, err := d.db.Query(`SELECT id, name, created FROM orgs ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Org{}
+	for rows.Next() {
+		var o Org
+		var created int64
+		if err := rows.Scan(&o.ID, &o.Name, &created); err != nil {
+			return nil, err
+		}
+		o.Created = time.Unix(created, 0).UTC()
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) OrgExists(id string) bool {
+	var n int
+	d.db.QueryRow(`SELECT COUNT(*) FROM orgs WHERE id = $1`, id).Scan(&n)
+	return n > 0
+}
+
+func (d *DB) dropSessions(userID string) error {
+	_, err := d.db.Exec(`DELETE FROM sessions WHERE user_id = $1`, userID)
+	d.mu.Lock()
+	clear(d.cache) // ponytail: session hashes aren't indexed by user; a password change is rare
+	d.mu.Unlock()
+	return err
+}
+
+// Burned on unknown usernames so a wrong name costs the same bcrypt time as a wrong password.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dawnbx"), bcrypt.DefaultCost)
+
+// CheckPassword returns ErrUnauthorized unless password is username's.
+func (d *DB) CheckPassword(username, password string) error {
+	_, _, _, err := d.checkPassword(username, password)
+	return err
+}
+
+func (d *DB) checkPassword(username, password string) (id, org, role string, err error) {
+	var ph string
+	err = d.db.QueryRow(`SELECT id, password_hash, org_id, role FROM users WHERE username = $1`, username).Scan(&id, &ph, &org, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		return "", "", "", ErrUnauthorized
+	}
+	if err != nil {
+		return "", "", "", err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(ph), []byte(password)) != nil {
+		return "", "", "", ErrUnauthorized
+	}
+	return id, org, role, nil
+}
+
+// Login returns a session token for the dashboard cookie.
+func (d *DB) Login(username, password string) (string, *Principal, error) {
+	id, org, role, err := d.checkPassword(username, password)
+	if err != nil {
+		return "", nil, err
+	}
+	b := make([]byte, 32)
+	rand.Read(b)
+	tok := hex.EncodeToString(b)
+	now := d.Now()
+	d.db.Exec(`DELETE FROM sessions WHERE expires < $1`, now.Unix())
+	if _, err := d.db.Exec(`INSERT INTO sessions (hash, user_id, created, expires) VALUES ($1, $2, $3, $4)`,
+		hash(tok), id, now.Unix(), now.Add(SessionTTL).Unix()); err != nil {
+		return "", nil, err
+	}
+	return tok, &Principal{Org: org, User: username, Admin: role == "admin"}, nil
+}
+
+func (d *DB) CheckSession(tok string) (*Principal, error) {
+	if tok == "" {
+		return nil, ErrUnauthorized
+	}
+	h := "s:" + hash(tok)
+	if p := d.lookup(h); p != nil {
+		return p, nil
+	}
+	var p Principal
+	var role string
+	var exp int64
+	err := d.db.QueryRow(`SELECT u.username, u.org_id, u.role, s.expires FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.hash = $1`, h[2:]).
+		Scan(&p.User, &p.Org, &role, &exp)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && d.Now().Unix() >= exp) {
+		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.Admin = role == "admin"
+	d.remember(h, &p)
+	return &p, nil
+}
+
+func (d *DB) Logout(tok string) error {
+	h := hash(tok)
+	d.forget("s:" + h)
+	_, err := d.db.Exec(`DELETE FROM sessions WHERE hash = $1`, h)
+	return err
+}
+
+// --- audit ---
+
+type Event struct {
+	At     time.Time `json:"at"`
+	Org    string    `json:"org"`
+	Actor  string    `json:"actor"`
+	Action string    `json:"action"`
+	Target string    `json:"target"`
+}
+
+// Audit records who did what; failures only log, they never fail the request.
+func (d *DB) Audit(org, actor, action, target string) error {
+	_, err := d.db.Exec(`INSERT INTO audit_log (id, at, org_id, actor, action, target) VALUES ($1, $2, $3, $4, $5, $6)`,
+		randID(16), d.Now().Unix(), org, actor, action, target)
+	return err
+}
+
+// Events lists the newest audit entries first; empty org = every org.
+func (d *DB) Events(org string, limit int) ([]Event, error) {
+	rows, err := d.db.Query(`SELECT at, org_id, actor, action, target FROM audit_log WHERE $1 = '' OR org_id = $1
+		ORDER BY at DESC, id LIMIT $2`, org, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		var e Event
+		var at int64
+		if err := rows.Scan(&at, &e.Org, &e.Actor, &e.Action, &e.Target); err != nil {
+			return nil, err
+		}
+		e.At = time.Unix(at, 0).UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
