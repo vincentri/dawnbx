@@ -14,6 +14,7 @@
 #   --server-bin PATH    dawnbx-server binary to install (dev builds; required until releases exist)
 #   --cli-bin PATH       dawnbx CLI binary to install alongside (dev builds)
 #   --new-key            replace the API key (the old one stops working)
+#   --report URL         PUT the result as CloudFormation WaitCondition JSON (EC2 user-data)
 # Env: DAWNBX_VERSION, DAWNBX_DOMAIN, GVISOR_RELEASE (default latest),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
 set -euo pipefail
@@ -24,7 +25,7 @@ GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
 DEFAULT_IMAGE=docker.io/library/python:3.12-slim
 MIN_FREE_GB=10
 
-LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
+LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN=""
 while [ $# -gt 0 ]; do
   case $1 in
     --local) LOCAL=1 ;;
@@ -36,7 +37,8 @@ while [ $# -gt 0 ]; do
     --domain) DOMAIN=$2; shift ;;
     --server-bin) SERVER_BIN=$2; shift ;;
     --cli-bin) CLI_BIN=$2; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --report) REPORT=$2; shift ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -44,10 +46,21 @@ done
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
+# CloudFormation WaitCondition format. Reason is the fail() text, which never holds secrets.
+report() { # status reason
+  [ -n "$REPORT" ] || return 0
+  reason=$(printf %s "$2" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-900)
+  printf '{"Status":"%s","Reason":"%s","UniqueId":"install","Data":"%s"}' "$1" "$reason" "$1" |
+    curl -fsS --max-time 20 --retry 3 -X PUT -H 'Content-Type:' --data-binary @- "$REPORT" >/dev/null ||
+    warn "could not send result to --report URL"
+}
 fail() { # problem cause fix
   printf '\nerror: %s\n  cause: %s\n  fix:   %s\n' "$1" "$2" "$3" >&2
+  report FAILURE "$1: $2. Fix: $3"
   exit 1
 }
+# set -e exits skip fail(); still tell the stack instead of letting it time out.
+trap 'report FAILURE "install.sh stopped at line $LINENO. Fix: see /var/log/cloud-init-output.log or re-run by hand"' ERR
 
 # ---------------------------------------------------------------- preflight
 # ponytail: no release downloads yet; upgrades reuse the installed binary.
@@ -394,17 +407,25 @@ elif [ -f "$KEYFILE" ]; then
 fi
 rm -f "$home/dawnbx-quickstart.mjs" # older installs wrote an npm quickstart; the SDKs are not published yet
 echo
+# Secrets go to the screen only. Without a terminal (EC2 user-data, pipes) stdout
+# lands in logs like cloud-init-output.log, which the EC2 console serves to anyone
+# with ec2:GetConsoleOutput, so print where they live instead.
+if [ ! -t 1 ]; then
+  API_KEY_SHOWN="(in $KEYFILE)" ADMIN_SHOWN=""
+else
+  API_KEY_SHOWN=$API_KEY ADMIN_SHOWN=$ADMIN_PASSWORD
+fi
 echo "dawnbx $DAWNBX_VERSION installed."
 echo
 echo "  export DAWNBX_URL=$PUBLIC"
-if [ -n "$API_KEY" ]; then echo "  export DAWNBX_API_KEY=$API_KEY"
+if [ -n "$API_KEY" ]; then echo "  export DAWNBX_API_KEY=$API_KEY_SHOWN"
 else echo "  # API key not on this machine; re-run with --new-key to make one"; fi
 echo
 if [ -n "$API_KEY" ]; then
   echo "Saved to $KEYFILE for use on this machine (source it in new shells)."
 fi
-if [ -n "$ADMIN_PASSWORD" ]; then
-  echo "Dashboard: $PUBLIC  user: admin  password: $ADMIN_PASSWORD"
+if [ -n "$ADMIN_SHOWN" ]; then
+  echo "Dashboard: $PUBLIC  user: admin  password: $ADMIN_SHOWN"
   echo "  (make more API keys there; the password lives in $SRV/admin.env)"
 else
   echo "Dashboard: $PUBLIC  user: admin  (password in $SRV/admin.env)"
@@ -419,3 +440,4 @@ if command -v dawnbx >/dev/null; then
   echo "  id=\$(dawnbx create) && dawnbx exec \$id \"python -c 'print(6*7)'\" && dawnbx kill \$id"
 fi
 rm -f "$SRV/api-key.pending" "$SRV/admin.pending"
+report SUCCESS "dawnbx $DAWNBX_VERSION up at $PUBLIC"
