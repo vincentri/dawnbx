@@ -66,7 +66,10 @@ password. Boxes also need UDP 51820 open to each other.
 - A sandbox's files live on the node that runs it. Its forks go on the same
   node. If the node dies, its sandboxes stay unavailable until it comes back.
 - Use the same `--data-dir` on workers as on the server (the default is fine).
-- A worker's disk isn't watched for low space yet. Only the server's is.
+- Each node's disk is watched. Under 15% free, new sandboxes skip that
+  worker and forks of its sandboxes fail with `disk_low`. Under 10%, sandboxes on it that have a TTL are deleted,
+  biggest first, then keep-forever ones are stopped. When no node has room,
+  create fails with `no_room`.
 - Remove a worker from **Settings > Nodes** once it holds no sandboxes, then
   run `k3s-agent-uninstall.sh` on it. Re-joining a box that has the same
   hostname needs that removal first.
