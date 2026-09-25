@@ -28,6 +28,7 @@ func setup(t *testing.T) (*Manager, *fake.Clientset) {
 	}
 	kube := fake.NewClientset()
 	m := New(st, kube, nil)
+	t.Cleanup(m.refill.Wait) // before TempDir removal and the next test's globals
 	FreePct = func(string) (float64, error) { return 50, nil }
 	DiskUsage = func(string) int64 { return 0 }
 	return m, kube
@@ -329,8 +330,25 @@ func TestNodes(t *testing.T) {
 	if sel := m.podSpec(w, "").Spec.NodeSelector["kubernetes.io/hostname"]; sel != "w1" {
 		t.Errorf("selector %q", sel)
 	}
-	if got := m.remoteUsage(ctx, w.ID); got != 5<<10 {
-		t.Errorf("remote usage %d", got)
+	if got, d := m.remoteUsage(ctx, w.ID); got != 5<<10 || d != nil {
+		t.Errorf("remote usage %d %v", got, d)
+	}
+
+	// Worker disk at 5% free while the server has room: only the worker's
+	// keep-forever sandbox is stopped.
+	m.RunExec = func(_ context.Context, _ string, _ []string, _ io.Reader, out, _ io.Writer) (int, error) {
+		io.WriteString(out, "5\t/workspace\nFilesystem 1024-blocks Used Available Capacity Mounted on\nnone 1000 950 50 95% /workspace\n")
+		return 0, nil
+	}
+	if _, d := m.remoteUsage(ctx, w.ID); d == nil || d.freePct() != 5 {
+		t.Errorf("node disk %+v", d)
+	}
+	m.Reconcile(ctx, false)
+	if meta, _ := m.Store.ReadMeta(w.ID); meta.Status != StatusStopped || meta.Reason != "disk_full" {
+		t.Errorf("worker sandbox not stopped on full worker disk: %+v", meta)
+	}
+	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Reason == "disk_full" {
+		t.Errorf("server sandbox touched: %+v", meta)
 	}
 
 	m.PoolSize = 1
@@ -355,7 +373,4 @@ func TestNodes(t *testing.T) {
 	if ok {
 		unlock()
 	}
-	m.PoolSize = 0 // stop the refill claim started before TempDir cleanup
-	m.fillMu.Lock()
-	m.fillMu.Unlock()
 }

@@ -12,7 +12,8 @@ Review notes: ~/.gstack/projects/sandbox/ceo-plans/2026-09-25-control-plane-aws.
   - Not one-click yet: `ReleaseUrl` param has no default until (0) exists; then default it to the release URL and pin the version.
   - Left: amd64 instance types (needs ImageId + binary arch switch); non-default VPC/subnet params; worker template mode; the one paid test launch (2am test: fresh stack, then SDK exec over the real cert).
 - **(2) DONE 2026-09-25:** `install.sh --join` + `--allow-join` + WireGuard, `/v1/nodes` (+ join, delete) + Settings Nodes section. Proven on two Lima VMs: wg peer handshake, sandbox on worker, exec/files/fork/kill, pod recreate on the same node, 10250 drops non-peers.
-  - Left: server taint once workers exist (deferred); worker disk headroom not watched (reconcile only checks the server volume; `ponytail` in reconcile.go); remote `du` via exec per sandbox per tick (fine to ~100 remote sandboxes); "no room: add node" message; Node column in sandbox list; template worker mode.
+  - Worker disk headroom DONE 2026-09-26: `df` rides the per-sandbox `du` exec; below 10% free, reconcile deletes expiring then stops keep-forever sandboxes on that node only (verified live on dawnbx2).
+  - Left: server taint once workers exist (deferred); create doesn't check a worker's free space before k8s schedules onto it (the reaper catches it after); remote `du` via exec per sandbox per tick (fine to ~100 remote sandboxes); "no room: add node" message; Node column in sandbox list; template worker mode.
   - Hostile tests DONE 2026-09-25: install.sh now checks the server CA hash and token (`/v1-k3s/readyz`) before installing anything, so wrong token, wrong server and unreachable server fail in seconds. Worker reboot: node Ready in <1 min, firewall and sandboxes back, files intact.
 
 ## Control plane + clusters on AWS (deferred 2026-09-25: build when users ask to manage several clusters)

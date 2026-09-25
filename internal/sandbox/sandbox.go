@@ -84,6 +84,7 @@ type Manager struct {
 	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
 	fillMu sync.Mutex
+	refill sync.WaitGroup // background FillPool runs started by claim
 }
 
 func New(s *store.Store, kube kubernetes.Interface, rc *rest.Config) *Manager {

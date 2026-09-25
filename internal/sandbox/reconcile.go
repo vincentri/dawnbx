@@ -121,11 +121,16 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 
 	// 2. Per-sandbox disk cap (R20).
 	usage := map[string]int64{}
+	disks := map[string]*nodeDisk{} // workers, by node name
 	for i, meta := range metas {
 		if m.local(meta) {
 			usage[meta.ID] = DiskUsage(m.Store.WS(meta.ID))
 		} else if meta.Status == StatusRunning || meta.Status == StatusWarm {
-			usage[meta.ID] = m.remoteUsage(ctx, meta.ID)
+			var d *nodeDisk
+			usage[meta.ID], d = m.remoteUsage(ctx, meta.ID)
+			if d != nil && disks[meta.Node] == nil {
+				disks[meta.Node] = d
+			}
 		}
 		inGrace := meta.GraceUntil != nil && now.Before(*meta.GraceUntil)
 		if meta.Status != StatusStopped && usage[meta.ID] > DiskLimit && !inGrace {
@@ -140,29 +145,50 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		}
 	}
 
-	// 3. Volume headroom (R11/R17): below 10% free, delete expiring sandboxes
-	// largest first, then stop the largest keep-forever one. Only sandboxes on
-	// this disk free it.
-	// ponytail: worker disks aren't watched; add a per-node free check when workers fill up.
-	if free, err := FreePct(m.Store.Root); err == nil && free < 10 {
-		sort.Slice(metas, func(i, j int) bool { return usage[metas[i].ID] > usage[metas[j].ID] })
-		for _, meta := range metas {
-			if !m.local(meta) {
+	// 3. Volume headroom per node (R11/R17): below 10% free, delete expiring
+	// sandboxes largest first, then stop the largest keep-forever one. Only
+	// sandboxes on that node's disk free it. A worker's free space is measured
+	// once per tick, so what deletes free there is estimated from their usage.
+	free := map[string]func() float64{m.Self: func() float64 {
+		f, err := FreePct(m.Store.Root)
+		if err != nil {
+			return 100
+		}
+		return f
+	}}
+	for n, d := range disks {
+		free[n] = d.freePct
+	}
+	nodeOf := func(meta store.Meta) string {
+		if m.local(meta) {
+			return m.Self
+		}
+		return meta.Node
+	}
+	sort.Slice(metas, func(i, j int) bool { return usage[metas[i].ID] > usage[metas[j].ID] })
+	for node, freeNow := range free {
+		if freeNow() >= 10 {
+			continue
+		}
+		for i, meta := range metas {
+			if nodeOf(meta) != node || meta.ExpiresAt == nil || meta.Status == StatusDeleting {
 				continue
 			}
-			if free, _ = FreePct(m.Store.Root); free >= 10 {
+			f := freeNow()
+			if f >= 10 {
 				break
 			}
-			if meta.ExpiresAt != nil {
-				log.Printf("reconcile: volume %.1f%% free, deleting %s", free, meta.ID)
-				m.withLock(meta.ID, func(cur store.Meta) error { return m.remove(ctx, cur) })
-				meta.Status = StatusDeleting
+			log.Printf("reconcile: volume %.1f%% free on %q, deleting %s", f, node, meta.ID)
+			m.withLock(meta.ID, func(cur store.Meta) error { return m.remove(ctx, cur) })
+			metas[i].Status = StatusDeleting
+			if d := disks[node]; d != nil {
+				d.freed += usage[meta.ID]
 			}
 		}
-		if free, _ = FreePct(m.Store.Root); free < 10 {
+		if f := freeNow(); f < 10 {
 			for i, meta := range metas {
-				if meta.ExpiresAt == nil && meta.Status == StatusRunning && m.local(meta) {
-					log.Printf("reconcile: volume %.1f%% free, stopping %s", free, meta.ID)
+				if nodeOf(meta) == node && meta.ExpiresAt == nil && meta.Status == StatusRunning {
+					log.Printf("reconcile: volume %.1f%% free on %q, stopping %s", f, node, meta.ID)
 					m.withLock(meta.ID, func(cur store.Meta) error { return m.stop(ctx, cur, "disk_full") })
 					metas[i].Status = StatusStopped
 					break

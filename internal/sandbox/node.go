@@ -64,15 +64,39 @@ func (m *Manager) onNode(ctx context.Context, node, name, cmd string) error {
 	return errf(504, "node_unreachable", "check the node on the Nodes page; the sandbox is marked deleting and cleanup retries", "%s on node %s did not finish in 2 min", name, node)
 }
 
-// remoteUsage is DiskUsage for a running sandbox on another node, measured inside it.
+// nodeDisk is a worker's data volume as seen from one of its sandboxes
+// (/workspace is a hostPath, so df reports the node's disk).
+type nodeDisk struct {
+	free         float64 // percent, when measured
+	total, freed int64   // bytes; freed = usage of sandboxes deleted since
+}
+
+func (d *nodeDisk) freePct() float64 { return d.free + 100*float64(d.freed)/float64(d.total) }
+
+// remoteUsage is DiskUsage for a running sandbox on another node, measured
+// inside it, plus that node's disk (nil if df failed).
 // ponytail: one exec per sandbox per reconcile tick; a node agent reporting du is the upgrade past ~100 remote sandboxes.
-func (m *Manager) remoteUsage(ctx context.Context, id string) int64 {
+func (m *Manager) remoteUsage(ctx context.Context, id string) (int64, *nodeDisk) {
 	var out capped
-	if code, err := m.RunExec(ctx, id, []string{"du", "-sk", "/workspace"}, nil, &out, io.Discard); err != nil || code != 0 {
-		return 0
+	if code, err := m.RunExec(ctx, id, []string{"sh", "-c", "du -sk /workspace; df -Pk /workspace"}, nil, &out, io.Discard); err != nil || code != 0 {
+		return 0, nil
 	}
-	kb, _ := strconv.ParseInt(strings.Fields(out.String() + " 0")[0], 10, 64)
-	return kb << 10
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	num := func(line string, i int) int64 {
+		f := strings.Fields(line)
+		if i >= len(f) {
+			return 0
+		}
+		n, _ := strconv.ParseInt(f[i], 10, 64)
+		return n << 10
+	}
+	// du: "<kb> /workspace"; df -P's last line: "fs <total> <used> <avail> ..."
+	df := lines[len(lines)-1]
+	used, total, avail := num(lines[0], 0), num(df, 1), num(df, 3)
+	if total == 0 {
+		return used, nil
+	}
+	return used, &nodeDisk{free: 100 * float64(avail) / float64(total), total: total}
 }
 
 // streamCopy copies parent's /workspace into the running kid through the API

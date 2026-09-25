@@ -57,7 +57,7 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 			continue
 		}
 		m.syncAnnotations(ctx, want)
-		go m.FillPool(context.Background())
+		m.refill.Go(func() { m.FillPool(context.Background()) })
 		return want, p, unlock, true
 	}
 	return want, nil, nil, false
