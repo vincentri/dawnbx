@@ -1,5 +1,34 @@
 # TODOS
 
+Shipped since these were written (2026-09-25): dashboard, Python SDK, warm pool
+for the default image, DB-backed keys/users/orgs (replaces `key rotate`: make a
+new key, revoke the old one).
+
+## Control plane + clusters on AWS (agreed 2026-09-25)
+- **Shape:** control plane = dashboard + DB, runs anywhere (`dawnbx-server --control-plane`, single binary or Docker, no k3s). Buttons: Create cluster (server EC2), Add node (worker EC2), Delete cluster. Sandboxes run only inside clusters; SDK/CLI talk to the cluster URL directly, never through the control plane.
+- **install.sh stays** as the machine bootstrap: passed as EC2 user-data (`install.sh` for the server, `install.sh --join <url> <token>` for workers). Add `--report <url>` so boot progress/failures show in the UI. AMI with k3s+gVisor pre-baked only if ~2 min boot hurts.
+- **AWS access:** default credential chain (profile/SSO/env/instance role), no pasted keys. "Set up AWS" button makes one scoped role via CloudFormation: RunInstances + SG + CreateTags, terminate/stop only on `dawnbx-cluster`-tagged resources. Delete cluster removes everything with the tag. Show price before launch.
+- **Per cluster:** own users/keys/audit (v1); central login later. Server node tainted once workers exist, so sandboxes only run on workers. Workers have no IAM role. IMDSv2 + hop limit 1 everywhere, plus the existing 169.254.169.254 NetworkPolicy block. 6443 closed publicly; HTTPS on the cluster endpoint (R12) before internet exposure.
+- **Multi-node behavior:** workspace on the node's local disk; fork is same-node (cross-node needs snapshots); node removal blocked while it holds keep-forever sandboxes; "no room: add a node" when full; Nodes page + Node column.
+- **No EKS** (~$73/mo control plane). One EC2 per click in v1; ASG/cluster-autoscaler later.
+- **Build order:** (1) `install.sh --join` + Nodes page on two Lima VMs; (2) control-plane mode with a Lima provider; (3) HTTPS on cluster endpoint; (4) EC2 provider + Set up AWS. Step 4 costs money: ask before launching.
+## Warm pool for other images
+- **What:** per-image pool size (`--pool python:3.12-slim=2,node:22-slim=1`); today only the default image is pre-started.
+- **Why:** non-default images pay the ~2-3 s cold start.
+- **Cons:** RAM per idle pod.
+
+## Kata runtime option
+- **What:** `runtime: kata` per sandbox beside gVisor, for workloads gVisor can't run (odd syscalls, GPU later).
+- **Cons:** needs KVM: bare-metal or nested-virt hosts; Lima on Mac likely can't test it.
+
+## Org rename/delete
+- **What:** `PATCH/DELETE /v1/orgs/{id}`; delete refuses while the org owns live sandboxes, revokes its keys, removes its users.
+- **Trigger:** first tenant leaves.
+
+## Shared login lockout
+- **What:** move the 5-miss lockout from memory into the DB.
+- **Trigger:** more than one API node behind a round-robin load balancer.
+
 ## Async Python SDK
 - **What:** `AsyncSandbox` with the same methods (`await Sandbox.create()`).
 - **Why:** agent frameworks (LangGraph, OpenAI Agents SDK, pydantic-ai) are async-first; a sync SDK blocks their event loop.
@@ -24,14 +53,6 @@
 - **Context:** from /plan-eng-review 3 (D11), 2026-09-25 (human: ~1 day / CC: ~20 min).
 - **Depends on:** R16 `writeMeta()` + R17 `stopped` state shipped. Trigger: first report of stale sandboxes.
 
-## `dawnbx key rotate` with grace period
-- **What:** `dawnbx key rotate [--grace 1h | --now]`: server accepts old + new key hash until grace ends; new key printed once.
-- **Why:** v1 has one key in `<data>/server/`; a leaked key or fresh install after volume loss means manual file edit + restart + client outage.
-- **Pros:** zero-downtime rotation; standard leak response.
-- **Cons:** second valid-key path + expiry in auth; tests for expiry and `--now`.
-- **Context:** from /plan-eng-review 3 (D12), 2026-09-25 (human: ~1 day / CC: ~20 min). v1 ships a 3-line manual rotation in docs instead.
-- **Depends on:** auth + `<data>/server/` layout shipped. Trigger: second operator or multi-key need.
-
 ## Evaluate agent-sandbox v1beta1 at multi-node milestone
 - **What:** Lima probe of kubernetes-sigs/agent-sandbox (v1beta1) under dawnbx-server: gVisor RuntimeClass, local-path PVC workspace, suspend/resume, ext4 project quota on PVC dir, controller RAM on 4GB. Swap `internal/sandbox` lifecycle to Sandbox CRDs if it passes.
 - **Why:** it is the Kubernetes-standard sandbox lifecycle (Red Hat supported 2026-07, GKE Agent Sandbox, Lovable in production); multi-node + Helm-on-existing-cluster come with it.
@@ -42,18 +63,6 @@
 
 ## Deferred from first release (/plan-ceo-review SCOPE REDUCTION, D3.0, 2026-09-25)
 Rule used: keep what proves the pitch (one command → sandbox API on VPS/laptop, fork, durability), defer polish. Each item below was in approved scope before the cut; design context lives in the design doc DX/eng sections.
-
-### Console v1
-- **What:** embedded web UI: sandbox list, live logs, fork tree, web terminal, create/kill (design D8=C, stage v1).
-- **Why:** visual fork tree is a demo magnet; non-CLI users.
-- **Cons:** L effort UI; auth + websocket terminal surface.
-- **Depends on:** `/v1` API frozen. Trigger: first release out, users ask for a UI.
-
-### Python SDK (swapped with TypeScript, 2026-09-25)
-- **What:** same `create/exec/files/fork/kill` as the TS SDK (`sdk/typescript`), sync first, then the async TODO above.
-- **Why:** user flipped CEO S2: TypeScript SDK ships first (Vercel AI SDK / Mastra users); installer quickstart is TS.
-- **Cons:** second SDK to keep in sync.
-- **Depends on:** `/v1` frozen; ideally generated from the same spec as TS.
 
 ### SDK TLS pinning (`DAWNBX_FINGERPRINT`)
 - **What:** pin the self-signed cert fingerprint in the SDK once the server serves HTTPS (R12). Node fetch needs an undici dispatcher for custom verification.
@@ -81,12 +90,6 @@ Rule used: keep what proves the pitch (one command → sandbox API on VPS/laptop
 ### Rollback + Deprecation/Sunset headers (T12)
 - **What:** `install.sh --version <old>`; API deprecation headers + SDK warning.
 - **Depends on:** a second released version exists.
-
-### Warm pool (R10)
-- **What:** N pre-started idle pods per image (R10 approved default 2).
-- **Why:** create < 1s instead of ~2–3s cold.
-- **Cons:** RAM on 4GB VPS; pool reconcile code.
-- **Depends on:** E2 lifecycle. Trigger: measured cold start hurts users.
 
 ### `doc_url` per error + `docs/errors` pages (T10 part)
 - **What:** each error code links a docs page. `dawnbx doctor` already shipped in v0.1.
