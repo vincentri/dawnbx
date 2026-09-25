@@ -4,14 +4,28 @@ Shipped since these were written (2026-09-25): dashboard, Python SDK, warm pool
 for the default image, DB-backed keys/users/orgs (replaces `key rotate`: make a
 new key, revoke the old one).
 
-## Control plane + clusters on AWS (agreed 2026-09-25)
+## Next: release + one-click EC2 + --join (CEO review 2026-09-25, plan B)
+Review notes: ~/.gstack/projects/sandbox/ceo-plans/2026-09-25-control-plane-aws.md
+- **(0) Release:** GitHub remote, CI (go test, gofmt, shellcheck, cfn-lint), GoReleaser linux amd64+arm64. install.sh downloads the release binary + checks sha256 (today it needs `--server-bin`). Publish install time and sandboxes per 4 GB, measured on t4g.medium.
+- **(1) `deploy/aws/dawnbx.yaml` Launch Stack:** Ubuntu 24.04 (SSM param), t4g.medium, 30 GB gp3 (default 8 GB fails the 10 GB preflight), SG 22/80/443, IMDSv2 hop 1, no IAM role, pinned DAWNBX_VERSION.
+  - Elastic IP + `--domain <eip>.sslip.io` unless a Domain param is set (reuses Let's Encrypt path; LE rate-limit failure says "set Domain").
+  - No secrets on stdout when not a tty: print file paths; Outputs give `ssh ... sudo cat` (console log is readable with ec2:GetConsoleOutput).
+  - WaitCondition (20 min) + `install.sh --report <url>`: fail() sends FAILURE + message, end sends SUCCESS. README: disable rollback to debug.
+  - Decide t4g credit spec (standard vs unlimited) and document it.
+  - One paid test launch: ask first.
+- **(2) `install.sh --join <url> <token>`** + GET /v1/nodes + admin Nodes page, proven on two Lima VMs.
+  - `--flannel-backend=wireguard-native`; `--allow-join <cidr>` opens 6443 to that CIDR only; worker 10250 from server only; UDP 51820 between nodes; preflight fails clearly without WireGuard. Template passes the VPC CIDR.
+  - Join token is admin-only, audited on view. Wait for node Ready with timeout, loud failure. Duplicate hostname: say "delete the node first".
+
+## Control plane + clusters on AWS (deferred 2026-09-25: build when users ask to manage several clusters)
 - **Shape:** control plane = dashboard + DB, runs anywhere (`dawnbx-server --control-plane`, single binary or Docker, no k3s). Buttons: Create cluster (server EC2), Add node (worker EC2), Delete cluster. Sandboxes run only inside clusters; SDK/CLI talk to the cluster URL directly, never through the control plane.
 - **install.sh stays** as the machine bootstrap: passed as EC2 user-data (`install.sh` for the server, `install.sh --join <url> <token>` for workers). Add `--report <url>` so boot progress/failures show in the UI. AMI with k3s+gVisor pre-baked only if ~2 min boot hurts.
 - **AWS access:** default credential chain (profile/SSO/env/instance role), no pasted keys. "Set up AWS" button makes one scoped role via CloudFormation: RunInstances + SG + CreateTags, terminate/stop only on `dawnbx-cluster`-tagged resources. Delete cluster removes everything with the tag. Show price before launch.
 - **Per cluster:** own users/keys/audit (v1); central login later. Server node tainted once workers exist, so sandboxes only run on workers. Workers have no IAM role. IMDSv2 + hop limit 1 everywhere, plus the existing 169.254.169.254 NetworkPolicy block. 6443 closed publicly; HTTPS on the cluster endpoint (R12) before internet exposure.
 - **Multi-node behavior:** workspace on the node's local disk; fork is same-node (cross-node needs snapshots); node removal blocked while it holds keep-forever sandboxes; "no room: add a node" when full; Nodes page + Node column.
 - **No EKS** (~$73/mo control plane). One EC2 per click in v1; ASG/cluster-autoscaler later.
-- **Build order:** (1) `install.sh --join` + Nodes page on two Lima VMs; (2) control-plane mode with a Lima provider; (3) HTTPS on cluster endpoint; (4) EC2 provider + Set up AWS. Step 4 costs money: ask before launching.
+- **Build order once triggered:** control-plane mode with a Lima provider, then EC2 provider + Set up AWS (reuses the Launch Stack template, `--join` and `--report`). EC2 costs money: ask before launching.
+
 ## Warm pool for other images
 - **What:** per-image pool size (`--pool python:3.12-slim=2,node:22-slim=1`); today only the default image is pre-started.
 - **Why:** non-default images pay the ~2-3 s cold start.
