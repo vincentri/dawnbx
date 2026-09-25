@@ -67,7 +67,8 @@ func TestAuthAndEnvelope(t *testing.T) {
 		{"GET", "/v1/sandboxes", "dawnbx_bad", 401, `"hint":"set DAWNBX_API_KEY`},
 		{"GET", "/nope", "dawnbx_good", 404, `"code":"not_found"`},
 		{"GET", "/", "", 200, "<title>dawnbx</title>"},
-		{"GET", "/ui/app.js", "", 200, "textContent"},
+		{"GET", "/ui/settings", "", 200, `id="root"`},
+		{"GET", "/ui/assets/nope.js", "", 404, ""},
 		{"GET", "/v1/status", "", 401, `"code":"unauthorized"`},
 	} {
 		req := httptest.NewRequest(c.method, c.path, nil)

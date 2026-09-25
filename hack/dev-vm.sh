@@ -20,6 +20,7 @@ if ! limactl list -q | grep -qx "$n"; then
 fi
 limactl list -f '{{.Status}}' "$n" | grep -q Running || limactl start "$n"
 
+(cd web && npm ci --silent && npm run build >/dev/null) # dashboard, embedded by the server
 # vz runs the host's arch, so the host GOARCH is the VM's.
 for b in dawnbx-server dawnbx; do
   CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o "${TMPDIR:-/tmp}/$b" ./cmd/$b

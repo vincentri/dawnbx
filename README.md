@@ -171,11 +171,17 @@ JSON: `{"code", "message", "hint"}`.
 
 ```sh
 go test -race ./...
+(cd web && npm install && npm run dev)   # dashboard on :5173, proxies /v1 to 127.0.0.1:8080
 python3 -m unittest discover -s sdk/python/tests
 (cd sdk/typescript && npm test)
 python3 sdk/python/tests/smoke.py    # end-to-end against a live server
 DAWNBX_TEST_DATABASE_URL=postgres://... go test ./internal/auth   # auth on Postgres (drops its tables first)
 ```
+
+The dashboard is React + Vite in `web/`. `npm run build` writes it to
+`internal/api/ui`, which the server embeds; that output is committed so
+`go build` needs no Node. API types come from `internal/api/openapi.yaml`
+(`npm run gen` after changing it).
 
 ### Release
 

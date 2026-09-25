@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"slices"
@@ -195,8 +196,10 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		if r.URL.Path == "/" {
-			r.URL.Path = "/ui/"
+		if strings.HasPrefix(r.URL.Path, "/ui/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // names carry a content hash
+		} else if _, err := fs.Stat(ui, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+			r.URL.Path = "/ui/" // client-side routes like /ui/settings
 		}
 		files.ServeHTTP(w, r)
 	}

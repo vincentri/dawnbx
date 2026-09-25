@@ -1,6 +1,10 @@
 version: 2
 # Plain binaries named <binary>-<os>-<arch> plus checksums.txt: the names
 # install.sh --release-url and deploy/aws/dawnbx.yaml download.
+# The dashboard (web/) builds into internal/api/ui, which the server embeds.
+before:
+  hooks:
+    - sh -c "cd web && npm ci && npm run build"
 builds:
   - id: server
     main: ./cmd/dawnbx-server

@@ -1,6 +1,7 @@
 # local tool state (browser tokens, logs, personal settings)
 .claude/
 .gstack/
+.serena/
 .DS_Store
 
 # build output

@@ -1,0 +1,434 @@
+openapi: 3.1.0
+info:
+  title: dawnbx
+  version: v1
+  description: |
+    Self-hosted sandboxes for AI agents. Auth: `Authorization: Bearer dbx_...`
+    (API keys) or the `dawnbx_session` cookie (dashboard). Cookie-authed writes
+    need `X-Dawnbx: 1`. Errors are `{code, message, hint?}`.
+    Terminal: `GET /v1/sandboxes/{id}/terminal` upgrades to a WebSocket
+    (subprotocol `dawnbx`); binary frames are the tty, text frames
+    `{"cols":N,"rows":N}` resize it. API errors close with 4000+status.
+servers:
+  - url: /
+security:
+  - bearer: []
+  - cookie: []
+
+paths:
+  /v1/version:
+    get:
+      security: []
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Version" } } } }
+  /v1/status:
+    get:
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/sandboxes:
+    get:
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/SandboxList" } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image: { type: string }
+                ttl: { type: [string, "null"], description: "like 1h; null keeps it until killed; absent = default" }
+                network: { type: string, enum: [internet, none] }
+                cpu: { type: string }
+                memory: { type: string }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Sandbox" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Sandbox" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      responses:
+        "204": { description: killed }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}/exec:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cmd]
+              properties:
+                cmd: { type: string }
+                timeout: { type: [number, "null"], description: seconds; null = no limit }
+                background: { type: boolean }
+                env: { type: object, additionalProperties: { type: string } }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/ExecResult" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}/fork:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, minimum: 1, maximum: 10 }
+                ttl: { type: [string, "null"] }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/SandboxList" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}/extend:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ttl]
+              properties:
+                ttl: { type: [string, "null"], description: null keeps it until killed }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Sandbox" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}/start:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Sandbox" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/sandboxes/{id}/files:
+    parameters:
+      - { $ref: "#/components/parameters/id" }
+      - { name: path, in: query, required: true, schema: { type: string }, description: relative to /workspace }
+    get:
+      responses:
+        "200": { description: file bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      requestBody:
+        required: true
+        description: up to 100 MB
+        content: { application/octet-stream: { schema: { type: string, format: binary } } }
+      responses:
+        "204": { description: written }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/login:
+    post:
+      security: []
+      parameters: [{ name: X-Dawnbx, in: header, required: true, schema: { type: string, enum: ["1"] } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200": { description: signed in; sets the session cookie, content: { application/json: { schema: { $ref: "#/components/schemas/Principal" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/logout:
+    post:
+      security: []
+      responses:
+        "204": { description: signed out }
+  /v1/me:
+    get:
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Principal" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/me/password:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old, new]
+              properties:
+                old: { type: string }
+                new: { type: string, minLength: 10, maxLength: 72 }
+      responses:
+        "204": { description: changed; every session of the user ends }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/keys:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [keys], properties: { keys: { type: array, items: { $ref: "#/components/schemas/Key" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+                ttl: { type: string, description: 'Go duration like "720h"; empty = never expires' }
+                org: { type: string, description: admins only }
+      responses:
+        "200":
+          description: the token is shown only here
+          content:
+            application/json:
+              schema: { type: object, required: [key, info], properties: { key: { type: string }, info: { $ref: "#/components/schemas/Key" } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/keys/{key}:
+    parameters: [{ name: key, in: path, required: true, schema: { type: string } }]
+    delete:
+      responses:
+        "204": { description: revoked }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/audit:
+    get:
+      responses:
+        "200":
+          description: latest 200 events
+          content:
+            application/json:
+              schema: { type: object, required: [events], properties: { events: { type: array, items: { $ref: "#/components/schemas/Event" } } } }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/orgs:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [orgs], properties: { orgs: { type: array, items: { $ref: "#/components/schemas/Org" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }
+                name: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [id, name], properties: { id: { type: string }, name: { type: string } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/users:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [users], properties: { users: { type: array, items: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, minLength: 10, maxLength: 72 }
+                org: { type: string }
+                role: { type: string, enum: [member, admin] }
+      responses:
+        "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/users/{username}:
+    parameters: [{ $ref: "#/components/parameters/username" }]
+    delete:
+      responses:
+        "204": { description: deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/users/{username}/password:
+    parameters: [{ $ref: "#/components/parameters/username" }]
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 10, maxLength: 72 }
+      responses:
+        "204": { description: changed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/nodes:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [nodes], properties: { nodes: { type: array, items: { $ref: "#/components/schemas/Node" } } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/nodes/join:
+    get:
+      responses:
+        "200":
+          description: install command for a new worker (audited)
+          content:
+            application/json:
+              schema: { type: object, required: [command], properties: { command: { type: string } } }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/nodes/{name}:
+    parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+    delete:
+      responses:
+        "204": { description: removed }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+    cookie: { type: apiKey, in: cookie, name: dawnbx_session }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string } }
+    username: { name: username, in: path, required: true, schema: { type: string } }
+  responses:
+    Error:
+      description: error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        hint: { type: string }
+    Version:
+      type: object
+      required: [version, api]
+      properties: { version: { type: string }, api: { type: string } }
+    Status:
+      type: object
+      required: [version, free_pct, warm, pool_size]
+      properties:
+        version: { type: string }
+        free_pct: { type: number }
+        warm: { type: integer }
+        pool_size: { type: integer }
+    Sandbox:
+      type: object
+      required: [id, image, status, network, created, expires_at, restarted_at, org]
+      properties:
+        id: { type: string }
+        image: { type: string }
+        status: { type: string, enum: [running, stopped, deleting] }
+        reason: { type: string, description: why it stopped }
+        parent: { type: string }
+        network: { type: string }
+        created: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time, description: null = kept until killed }
+        restarted_at: { type: [string, "null"], format: date-time }
+        org: { type: string }
+        node: { type: string }
+        warnings: { type: array, items: { type: string } }
+    SandboxList:
+      type: object
+      required: [sandboxes]
+      properties: { sandboxes: { type: array, items: { $ref: "#/components/schemas/Sandbox" } } }
+    ExecResult:
+      type: object
+      required: [exit_code, stdout, stderr]
+      properties:
+        exit_code: { type: integer }
+        stdout: { type: string }
+        stderr: { type: string }
+        pid: { type: integer, description: background only }
+        log: { type: string, description: background only }
+    Principal:
+      type: object
+      required: [org, admin]
+      properties:
+        org: { type: string }
+        user: { type: string, description: dashboard sessions }
+        key_id: { type: string, description: API keys }
+        admin: { type: boolean }
+    Key:
+      type: object
+      required: [id, org, name, created, created_by, last_used, expires, revoked]
+      properties:
+        id: { type: string }
+        org: { type: string }
+        name: { type: string }
+        created: { type: string, format: date-time }
+        created_by: { type: string }
+        last_used: { type: [string, "null"], format: date-time }
+        expires: { type: [string, "null"], format: date-time }
+        revoked: { type: [string, "null"], format: date-time }
+    Event:
+      type: object
+      required: [at, org, actor, action, target]
+      properties:
+        at: { type: string, format: date-time }
+        org: { type: string }
+        actor: { type: string }
+        action: { type: string }
+        target: { type: string }
+    Org:
+      type: object
+      required: [id, name, created]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        created: { type: string, format: date-time }
+    User:
+      type: object
+      required: [id, org, username, role, created]
+      properties:
+        id: { type: string }
+        org: { type: string }
+        username: { type: string }
+        role: { type: string, enum: [member, admin] }
+        created: { type: string, format: date-time }
+    Node:
+      type: object
+      required: [name, role, ready, since, heartbeat, ip, kubelet, sandboxes]
+      properties:
+        name: { type: string }
+        role: { type: string, enum: [server, worker] }
+        ready: { type: boolean }
+        since: { type: string, format: date-time, description: last Ready change }
+        heartbeat: { type: string, format: date-time }
+        ip: { type: string }
+        kubelet: { type: string }
+        sandboxes: { type: integer }
