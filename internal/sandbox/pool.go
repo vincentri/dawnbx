@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,7 +44,7 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 			continue
 		}
 		p, err := m.Kube.CoreV1().Pods(Namespace).Get(ctx, id, metav1.GetOptions{})
-		if err != nil || !podReady(p) || (want.Node != "" && p.Spec.NodeName != want.Node) {
+		if err != nil || !podReady(p) || (want.Node != "" && p.Spec.NodeName != want.Node) || slices.Contains(m.lowDisk(), p.Spec.NodeName) {
 			continue
 		}
 		unlock := m.lock(id)

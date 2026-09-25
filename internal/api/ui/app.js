@@ -227,6 +227,9 @@ function link(id) {
 }
 
 function renderRows() {
+  // The Node column only shows once sandboxes run on more than one machine.
+  const multi = new Set(list.map((s) => s.node)).size > 1;
+  $("#th-node").hidden = !multi;
   const rows = list.map((s) => {
     const tr = el("tr");
     if (s.id === sel) tr.className = "sel";
@@ -240,6 +243,7 @@ function renderRows() {
       el("td", age(s.created)),
       el("td", left(s.expires_at)),
     );
+    if (multi) tr.append(el("td", s.node || "–", s.node ? "" : "dim"));
     if (s.parent) tr.children[4].append(link(s.parent));
     return tr;
   });
@@ -275,6 +279,7 @@ function renderDetail() {
     ["network", s.network],
     ["created", new Date(s.created).toLocaleString()],
     ["expires", s.expires_at ? `${new Date(s.expires_at).toLocaleString()} (in ${left(s.expires_at)})` : "never"],
+    ["node", s.node],
     ["restarted", s.restarted_at && new Date(s.restarted_at).toLocaleString()],
     ["parent", s.parent && link(s.parent)],
     ["children", kids.length && kids.flatMap((k, i) => (i ? [" ", link(k.id)] : [link(k.id)]))],

@@ -197,6 +197,16 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		}
 	}
 
+	var low []string
+	for n, d := range disks {
+		if d.freePct() < 15 {
+			low = append(low, n)
+		}
+	}
+	m.mu.Lock()
+	m.low = low
+	m.mu.Unlock()
+
 	// 4. Pods follow meta: recreate missing ones, fix annotations, drop strays.
 	pods, err := m.Kube.CoreV1().Pods(Namespace).List(ctx, metav1.ListOptions{LabelSelector: "dawnbx/id"})
 	if err != nil {

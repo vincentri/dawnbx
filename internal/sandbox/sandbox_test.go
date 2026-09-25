@@ -350,6 +350,20 @@ func TestNodes(t *testing.T) {
 	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Reason == "disk_full" {
 		t.Errorf("server sandbox touched: %+v", meta)
 	}
+	// New sandboxes avoid the full worker.
+	aff := m.podSpec(store.Meta{ID: "sb-new", CPU: "1", Memory: "1Gi"}, "").Spec.Affinity
+	if aff == nil || aff.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] != "w1" {
+		t.Errorf("low-disk worker not avoided: %+v", aff)
+	}
+
+	// Nowhere to schedule: fail fast with no_room.
+	np := m.podSpec(store.Meta{ID: "sb-noroom", CPU: "1", Memory: "1Gi"}, "")
+	np.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+		Reason: corev1.PodReasonUnschedulable, Message: "0/2 nodes are available: 2 Insufficient memory."}}
+	kube.CoreV1().Pods(Namespace).Create(ctx, np, metav1.CreateOptions{})
+	if _, err := m.waitReady(ctx, np.Name); err == nil || !strings.Contains(err.Error(), "no node has room") {
+		t.Errorf("unschedulable: %v", err)
+	}
 
 	m.PoolSize = 1
 	m.FillPool(ctx)

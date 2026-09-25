@@ -46,6 +46,7 @@ type sandbox struct {
 	Reason    string     `json:"reason"`
 	Parent    string     `json:"parent"`
 	Network   string     `json:"network"`
+	Node      string     `json:"node"`
 	Created   time.Time  `json:"created"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	Warnings  []string   `json:"warnings"`
@@ -160,8 +161,18 @@ func run(c *client, cmd string, args []string, w io.Writer) (int, error) {
 		if err := c.do("GET", "/v1/sandboxes", nil, &r); err != nil {
 			return 1, err
 		}
+		// The NODE column only shows once sandboxes run on more than one machine.
+		nodes := map[string]bool{}
+		for _, s := range r.Sandboxes {
+			nodes[s.Node] = true
+		}
+		multi := len(nodes) > 1
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSTATUS\tIMAGE\tNETWORK\tPARENT\tAGE\tEXPIRES")
+		hdr := "ID\tSTATUS\tIMAGE\tNETWORK\tPARENT\tAGE\tEXPIRES"
+		if multi {
+			hdr += "\tNODE"
+		}
+		fmt.Fprintln(tw, hdr)
 		for _, s := range r.Sandboxes {
 			exp := "never"
 			if s.ExpiresAt != nil {
@@ -171,7 +182,11 @@ func run(c *client, cmd string, args []string, w io.Writer) (int, error) {
 			if s.Reason != "" {
 				status += " (" + s.Reason + ")"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, status, s.Image, s.Network, or(s.Parent, "-"), ago(time.Since(s.Created)), exp)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s", s.ID, status, s.Image, s.Network, or(s.Parent, "-"), ago(time.Since(s.Created)), exp)
+			if multi {
+				fmt.Fprint(tw, "\t"+or(s.Node, "-"))
+			}
+			fmt.Fprintln(tw)
 		}
 		return 0, tw.Flush()
 

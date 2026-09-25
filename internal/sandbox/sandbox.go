@@ -85,6 +85,14 @@ type Manager struct {
 	locks  map[string]*sync.Mutex
 	fillMu sync.Mutex
 	refill sync.WaitGroup // background FillPool runs started by claim
+	low    []string       // workers under 15% free disk at the last reconcile; under mu
+}
+
+// lowDisk lists workers new sandboxes should avoid.
+func (m *Manager) lowDisk() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.low
 }
 
 func New(s *store.Store, kube kubernetes.Interface, rc *rest.Config) *Manager {
@@ -118,6 +126,7 @@ type View struct {
 	ExpiresAt   *time.Time `json:"expires_at"`
 	RestartedAt *time.Time `json:"restarted_at"`
 	Org         string     `json:"org"`
+	Node        string     `json:"node,omitempty"` // k3s node holding the workspace
 	Warnings    []string   `json:"warnings,omitempty"`
 }
 
@@ -243,8 +252,15 @@ func (m *Manager) podSpec(meta store.Meta, restartedAt string) *corev1.Pod {
 	// On other nodes the kubelet makes the dir; here store.Create already did.
 	hostDir := corev1.HostPathDirectoryOrCreate
 	var sel map[string]string
+	var aff *corev1.Affinity
 	if meta.Node != "" {
 		sel = map[string]string{"kubernetes.io/hostname": meta.Node}
+	} else if low := m.lowDisk(); len(low) > 0 {
+		aff = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpNotIn, Values: low}},
+			}}},
+		}}
 	}
 	res := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse(meta.CPU),
@@ -258,6 +274,7 @@ func (m *Manager) podSpec(meta store.Meta, restartedAt string) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			RuntimeClassName:              ptr("gvisor"),
 			NodeSelector:                  sel,
+			Affinity:                      aff,
 			AutomountServiceAccountToken:  &no,
 			EnableServiceLinks:            &no,
 			RestartPolicy:                 corev1.RestartPolicyAlways,
@@ -316,6 +333,11 @@ func (m *Manager) waitReady(ctx context.Context, id string) (*corev1.Pod, error)
 			if podReady(p) {
 				return p, nil
 			}
+			for _, c := range p.Status.Conditions {
+				if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+					return nil, errf(507, "no_room", "kill unused sandboxes (dawnbx ls), or add a node (Settings > Nodes)", "no node has room for this sandbox: %s", c.Message)
+				}
+			}
 			for _, cs := range p.Status.ContainerStatuses {
 				if w := cs.State.Waiting; w != nil {
 					switch w.Reason {
@@ -337,7 +359,7 @@ func (m *Manager) waitReady(ctx context.Context, id string) (*corev1.Pod, error)
 
 func view(meta store.Meta, pod *corev1.Pod) *View {
 	v := &View{ID: meta.ID, Image: meta.Image, Status: meta.Status, Reason: meta.Reason, Parent: meta.Parent,
-		Network: meta.Network, Created: meta.Created, ExpiresAt: meta.ExpiresAt, Org: OrgOf(meta)}
+		Network: meta.Network, Created: meta.Created, ExpiresAt: meta.ExpiresAt, Org: OrgOf(meta), Node: meta.Node}
 	if v.Status == "" {
 		v.Status = StatusRunning
 	}

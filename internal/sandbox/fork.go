@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
 	"time"
 
@@ -77,6 +78,8 @@ func (m *Manager) Fork(ctx context.Context, id string, r ForkReq) ([]*View, erro
 	node := parent.Node
 	if !remote {
 		node = m.Self
+	} else if slices.Contains(m.lowDisk(), node) {
+		return nil, errf(507, "disk_low", "kill unused sandboxes on that node (dawnbx ls) or grow its disk", "node %s is under 15%% free; forks live on their parent's node", node)
 	}
 	kids := make([]store.Meta, r.Count)
 	pods := make([]*corev1.Pod, r.Count)
