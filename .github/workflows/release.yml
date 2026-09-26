@@ -58,6 +58,11 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # An annotated tag is a commit, and a commit needs an author. The
+          # runner has no identity configured, so the first release failed with
+          # "Committer identity unknown" before it published anything.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Run number rather than the commit count: it is monotonic across
           # force-pushes and rebases, which is what a published version needs.
           # workflow_dispatch on an older main would otherwise reuse a number.
