@@ -22,7 +22,7 @@
 #   --bootstrap-parameter NAME
 #                        read the admin password from SSM SecureString NAME; server only,
 #                        and the password never reaches a log or a command line
-# Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default latest),
+# Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default the pinned release),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset),
 #      DAWNBX_BOOTSTRAP_PARAMETER (same as --bootstrap-parameter, for image
 #      builders that cannot pass a flag; the flag wins when both are set)
@@ -30,7 +30,12 @@ set -euo pipefail
 
 DAWNBX_VERSION=${DAWNBX_VERSION:-dev}
 K3S_VERSION=v1.35.5+k3s1
-GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
+# Pinned, like k3s. `latest` made a cluster's sandbox runtime change under a
+# machine that was already running, so two clusters installed from the same
+# release could not be compared and an upgrade could not be reasoned about.
+# Overridable on purpose: an operator pinning a security fix should not have to
+# edit this file.
+GVISOR_RELEASE=${GVISOR_RELEASE:-20260921.0}
 DEFAULT_IMAGE=docker.io/library/python:3.12-slim
 MIN_FREE_GB=10
 

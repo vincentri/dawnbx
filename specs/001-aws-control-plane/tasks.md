@@ -698,15 +698,31 @@ ImageId and a node list that answers with the provider's own id.
       address for ids it recognises, and the two are matched only when the name
       does not. A worker the cluster does not know still reports its own status
       (FR-010, blocks SC-004).
-- [ ] T156 Drop a node record whose instance is gone. A terminated worker leaves
-      a row that blocks cluster deletion with `cluster_has_nodes`, so a cluster
-      whose host has already gone cannot be deleted at all - the destroy refuses,
-      and the refuse is what keeps the stack alive. Verified by hand on a real
-      account: the teardown had to be completed with the AWS CLI (US3).
-- [ ] T157 Say what rotation costs the control plane. Rotation mints a new
+- [X] T156 Drop a node record whose instance is gone. A terminated worker left a
+      row that blocked cluster deletion with `cluster_has_nodes`, so a cluster
+      whose host had already gone could not be deleted at all - the destroy
+      refuses, and the refuse is what keeps the stack alive. The refresh already
+      asks the provider which instances exist, so a row the provider no longer
+      names is now forgotten with the one lookup it had already made. Only
+      forgotten when that lookup succeeded: a provider that cannot answer says
+      nothing about which machines are real, and forgetting is the dangerous
+      direction (US3).
+- [X] T157 Say what rotation costs the control plane. Rotation mints a new
       password into the bootstrap parameter and revokes the old API key, and the
       running cluster keeps the old password until an operator applies the new
       one - which means the control plane cannot log in to the cluster it just
       rotated, and answers 503 `cluster_unreachable` on every node call until
       then. That is the deliberate trade (revoking the live password would lock
-      everyone out) but the dashboard does not say it (US2, FR-011).
+      everyone out) but the dashboard did not say it. The rotate detail now
+      states the cost, because a rotation that silently stops the control plane
+      managing its own cluster reads as a fault rather than a choice (US2,
+      FR-011).
+- [X] T158 Pin gVisor. It was the one dependency resolving from `latest`, so a
+      cluster's sandbox runtime could change under a machine that was already
+      running and two clusters installed from the same release could not be
+      compared. Pinned to 20260921.0, verified to exist for both the arm64 and
+      amd64 artifacts install.sh asks for, still overridable so an operator
+      pinning a security fix does not have to edit the installer. The gate now
+      asserts the rule, because nothing else reads install.sh and a pin that
+      silently reverts to `latest` is exactly the sort of change review misses
+      (FR-001).

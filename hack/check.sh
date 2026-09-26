@@ -63,6 +63,31 @@ run "openapi contract" bash -c '
   cd web && ./node_modules/.bin/openapi-typescript ../internal/api/openapi.yaml -o "$out"
 '
 
+# ---- installer pins ---------------------------------------------------------
+# A cluster that is not reproducible is not one an operator can reason about,
+# and an unpinned dependency is the usual way that happens: `latest` resolves to
+# something new under a machine that is already running. install.sh is the only
+# place these are decided, and nothing else reads it, so the rule is asserted
+# here rather than trusted to review.
+run "installer pins its dependencies" bash -c '
+  set -e
+  if grep -qE "^(K3S_VERSION|GVISOR_RELEASE)=.*:-latest" install.sh; then
+    echo "install.sh resolves a dependency from latest; pin it" >&2
+    exit 1
+  fi
+  # And each pin has to name something. Both forms count: K3S_VERSION is a plain
+  # assignment, GVISOR_RELEASE is overridable, and a step that only understood
+  # one of them would report a pin that is there as missing.
+  for v in K3S_VERSION GVISOR_RELEASE; do
+    val=$(sed -n -e "s/^$v=\${$v:-\(.*\)}/\1/p" -e "s/^$v=\(.*\)/\1/p" install.sh | head -1)
+    [ -n "$val" ] || { echo "install.sh: $v is not set at all" >&2; exit 1; }
+    case $val in
+      latest|"") echo "install.sh: $v resolves to $val" >&2; exit 1 ;;
+    esac
+    printf "  %-16s %s\n" "$v" "$val"
+  done
+'
+
 # ---- build ------------------------------------------------------------------
 run "go build" go build ./...
 run "web build" npm run build --prefix web

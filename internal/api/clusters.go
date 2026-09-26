@@ -294,7 +294,7 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 			byAddr[n.Addr] = n
 		}
 	}
-	var unmatched []string
+	var unmatched, gone []string
 	for _, s := range list {
 		if _, ok := saw[s.ID]; !ok {
 			unmatched = append(unmatched, s.ID)
@@ -311,9 +311,39 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 							saw[id] = n
 						}
 					}
+					// The provider answered, so an id it did not name is an
+					// instance that no longer exists. The record is dropped,
+					// because a row left behind by a worker that has gone is
+					// what makes a cluster undeletable: delete refuses while any
+					// worker is attached, and it counted one that had been
+					// terminated for an hour. Only pruned when the lookup
+					// succeeded - a failed lookup says nothing about which
+					// machines are real.
+					for _, id := range unmatched {
+						if _, alive := addrs[id]; alive {
+							continue
+						}
+						if err := c.reg.DropNode(cl.Name, id); err != nil {
+							log.Printf("cluster %s: forget worker %s: %v", cl.Name, id, err)
+							continue
+						}
+						gone = append(gone, id)
+					}
 				}
 			}
 		}
+	}
+	if len(gone) > 0 {
+		// Out of this response as well as the cache: a worker the provider no
+		// longer has is not a worker, and leaving it in the list would put back
+		// exactly the row the refresh just removed.
+		kept := list[:0]
+		for _, s := range list {
+			if !slices.Contains(gone, s.ID) {
+				kept = append(kept, s)
+			}
+		}
+		list = kept
 	}
 	for i := range list {
 		n, ok := saw[list[i].ID]
@@ -632,7 +662,16 @@ func (s *Server) clusters(h route) {
 		if !revoked && superseded != "" {
 			detail = "credentials rotated, but the cluster's previous API key was NOT revoked - check its key list"
 		}
-		detail += "; the running cluster keeps the old password until an operator applies these"
+		// The cost is stated here because it is not obvious and it is the operator's
+		// next surprise: from this point the control plane holds a password the
+		// running cluster does not accept, so every route that has to talk to the
+		// cluster answers 503 cluster_unreachable until an operator applies it. That
+		// is the deliberate trade - revoking the live password would lock everyone
+		// out including us - but a rotation that silently stops the control plane
+		// managing its own cluster reads as a fault rather than a choice.
+		detail += "; the running cluster keeps the old password until an operator applies these," +
+			" and until then this control plane cannot log in to it - the Nodes tab and" +
+			" anything else that asks the cluster will report it unreachable"
 		if err := c.reg.PhaseFor(name, cluster.OpRotate, cl.Status, cl.Phase, detail); err != nil {
 			return nil, err
 		}

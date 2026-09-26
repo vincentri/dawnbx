@@ -17,13 +17,15 @@ import (
 // --- a provider that answers without a cloud ---
 
 type fakeProv struct {
-	id        string
-	regions   []string
-	busy      string // a node id the provider refuses to remove
-	addErr    error
-	nodeID    string
-	nodeAddr  string // the address the cluster reaches that worker on
-	destroyed bool
+	id           string
+	regions      []string
+	busy         string // a node id the provider refuses to remove
+	addErr       error
+	nodeAddrsErr error             // when set, the provider cannot answer for a worker
+	nodeAddrs    map[string]string // id -> address, when a test needs more than nodeID
+	nodeID       string
+	nodeAddr     string // the address the cluster reaches that worker on
+	destroyed    bool
 }
 
 func (f *fakeProv) ID() string { return f.id }
@@ -62,15 +64,26 @@ func (f *fakeProv) AddNode(context.Context, provider.Handle, provider.NodeSpec, 
 	return f.nodeID, nil
 }
 func (f *fakeProv) NodeAddrs(_ context.Context, _ provider.Handle, nodes []string) (map[string]string, error) {
+	if f.nodeAddrsErr != nil {
+		return nil, f.nodeAddrsErr
+	}
+	// An id the map does not name is an instance the provider does not have,
+	// which is a different answer from one it has at some other address, and the
+	// two have to be sayable or the pruning cannot be tested.
+	if f.nodeAddrs != nil {
+		out := make(map[string]string, len(f.nodeAddrs))
+		for k, v := range f.nodeAddrs {
+			if slices.Contains(nodes, k) {
+				out[k] = v
+			}
+		}
+		return out, nil
+	}
 	out := map[string]string{}
 	for _, n := range nodes {
 		if n == f.nodeID {
 			out[n] = f.nodeAddr
-			continue
 		}
-		// Every other stored node gets its own address, so a test that puts two
-		// workers on a cluster is not quietly correlating them to one address.
-		out[n] = "10.9.9.9"
 	}
 	return out, nil
 }
@@ -87,6 +100,7 @@ func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) er
 // and the provider it was given, so a test can say who is asking.
 type controlPlane struct {
 	do      func(method, path, body string, hdr ...string) *httptest.ResponseRecorder
+	prov    *fakeProv
 	admin   []string
 	member  []string
 	db      *auth.DB
@@ -132,6 +146,7 @@ func testControl(t *testing.T, prov *fakeProv) *controlPlane {
 	do := doer(h, true)
 	return &controlPlane{
 		do:      do,
+		prov:    prov,
 		admin:   loginCookie(t, do, "admin", "admin-password"),
 		member:  loginCookie(t, do, "member", "member-password"),
 		db:      db,
