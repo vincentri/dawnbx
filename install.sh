@@ -488,6 +488,11 @@ After=k3s.service
 Wants=k3s.service
 RequiresMountsFor=$DATA
 [Service]
+# The server writes its SQLite database into the 0700 server/ directory, and
+# systemd's default umask is 022, so the database files came out 0644 - readable
+# by any account on the host, and it holds password and API-key hashes. 0077
+# keeps everything the process creates inside a directory that is already 0700.
+UMask=0077
 ExecStart=/usr/local/bin/dawnbx-server --data-dir $DATA --listen 127.0.0.1:8080$([ "$LOCAL" = 0 ] && echo " --https-listen :443")${DOMAIN:+ --domain $DOMAIN}
 Restart=always
 RestartSec=2
@@ -518,7 +523,6 @@ elif [ -n "$DOMAIN" ]; then
   else
     warn "could not reach $PUBLIC with a valid cert yet. Check: DNS A record for $DOMAIN points at this server's public IP; ports 80 and 443 are open in the cloud firewall / security group. The server retries on the next HTTPS request; errors: journalctl -u dawnbx"
   fi
-else
   PUBLIC=https://${NODE_IP:-<this-server-ip>}
 fi
 
