@@ -512,12 +512,13 @@ it. Appended here so they are fixed in the same pass rather than carried into an
       then returns `c`, the record read before the failure — so a caller that renders the returned
       value shows `provisioning` for a cluster that is already failed with a reason attached. Re-read
       after `fail`, and cover it with a test (defect).
-- [X] T116 Keep the SDK's `Client` exported, and say why. The finding was wrong: this is not an
-      unrequested public change made to serve a test, it is a broken API this feature introduced.
-      The cluster helpers `listClusters`, `getCluster` and `listClusterNodes` are exported and
-      take a `Client`, and there is no factory that hands one out — so with `Client` package-private
-      they were uncallable from outside the package. The export is now documented with that reason
-      at its definition, and `Sandbox` stays the way to *use* a cluster (defect, real).
+- [X] T116 Keep the SDK's `Client` exported, and say why. The finding as written was wrong: it
+      called the export an unrequested change made to serve a test. It was a broken API this feature
+      introduced, because the cluster helpers took a `Client` that nothing could hand out. Phase 9
+      resolved the underlying problem differently — the helpers are gone (T118), since they could
+      only ever receive 403 — and the export now stands on its own: a `Client` is how a caller
+      addresses a server, and `Sandbox` remains the way to *use* a cluster. Documented at its
+      definition (defect, real).
 - [X] T117 Correct what the constitution and the live tier claimed about the disk cap, and delete
       the field naming a mechanism nothing builds (defect, pre-existing). **The finding was partly
       wrong, and the correction matters more than the fix.** The cap *is* enforced: `DiskLimit` is
@@ -551,30 +552,30 @@ on the visible surface and left the one behind it.
 
 ### HIGH
 
-- [ ] T118 Remove the SDK cluster helpers, or give both clients a way to present a session. The
+- [X] T118 Remove the SDK cluster helpers, or give both clients a way to present a session. The
       three exported helpers target routes gated `adminOnly`→`signedIn`, which refuses any request
       carrying no user, and both clients send only `Authorization: Bearer`. They can therefore only
       ever receive 403, and the TypeScript docstring says so beside the code that ships them
       (contract "Read-only SDK surface", FR-013) (contradicts).
-- [ ] T119 Measure the stall against a phase change rather than the newest op row. `stalled()` reads
+- [X] T119 Measure the stall against a phase change rather than the newest op row. `stalled()` reads
       `LastProgress`, which is the newest `create` row, and `PhaseFor` writes a new row whenever the
       detail changes — which writing the stall note does. The note resets its own clock, so it is
       visible for one 5 s poll in every 20 minutes (T092) (partial).
-- [ ] T120 Gate the Settings **Nodes panel**, not only its trigger. Radix renders content by value,
+- [X] T120 Gate the Settings **Nodes panel**, not only its trigger. Radix renders content by value,
       and `/settings` accepts any `tab`, so `/ui/settings?tab=nodes` still mounts the panel, polls a
       503 route every 5 s and renders an empty grid with no error. Add a test at that URL (T097,
       US1/AC1) (partial).
-- [ ] T121 Wait for the stack to be gone before forgetting the record. `Destroy` issues `DeleteStack`
+- [X] T121 Wait for the stack to be gone before forgetting the record. `Destroy` issues `DeleteStack`
       with no waiter and `Delete` then forgets immediately, so FR-018's "MUST NOT delete the record
       until the provider confirms" and the docs' "kept until the provider confirms" are both false
       (FR-018, `docs/…/api.mdx:71`) (contradicts).
-- [ ] T122 Deliver the capability helpers T017–T019 describe, or amend those records. All three are
+- [X] T122 Deliver the capability helpers T017–T019 describe, or amend those records. All three are
       ticked and none of the `control_plane()`/`providers()` helpers exists in either SDK; what was
       built is the cluster CRUD read surface instead (Constitution III) (missing).
-- [ ] T123 Route `/` to `/clusters` in control-plane mode. The landing page is the sandboxes list,
+- [X] T123 Route `/` to `/clusters` in control-plane mode. The landing page is the sandboxes list,
       which polls a 503 route every 2 s and renders an error — so the target deployment mode opens
       on an error page (FR-001, US1/AC1) (partial).
-- [ ] T124 Refuse `0.0.0.0/0` for `VpcCidr`, as T096 did for `SshCidr`. The 6443 ingress writes
+- [X] T124 Refuse `0.0.0.0/0` for `VpcCidr`, as T096 did for `SshCidr`. The 6443 ingress writes
       that value straight into the rule, and the constitution says public 6443 is forbidden. The
       default is safe; the pattern permits what the prose forbids
       (Constitution, Host exposure) (missing).

@@ -489,3 +489,37 @@ func TestCreateRetryIsNotASecondClusterNorATeardown(t *testing.T) {
 	f.notCalled("DeleteStack")
 	f.notCalled("AmazonSSM.DeleteParameter")
 }
+
+// TestDestroyWaitsForTheStackToBeGone: a DeleteStack call that returns is a
+// request accepted, not a teardown finished. FR-018 promises the record is kept
+// until the provider confirms the resources are gone, and Forget follows this
+// call — so a caller that returned at the acknowledgement would drop the only
+// handle on a stack that is still being deleted.
+func TestDestroyWaitsForTheStackToBeGone(t *testing.T) {
+	var described int
+	f := newRudeFake(t, func(action string, _ []byte) (int, string) {
+		switch action {
+		case "GetCallerIdentity":
+			return 200, stsBody
+		case "DeleteStack":
+			return 200, query("DeleteStack", "")
+		case "DescribeStacks":
+			// The stack is still visible for the first two readings, then gone.
+			described++
+			if described <= 2 {
+				return 200, query("DescribeStacks", "<Stacks><member><StackName>s</StackName>"+
+					"<StackStatus>DELETE_IN_PROGRESS</StackStatus></member></Stacks>")
+			}
+			return gone("s")
+		}
+		return 200, "{}"
+	})
+	a := newAWS(t, f, nil)
+	if err := a.Destroy(testContext(t), provider.NewHandle([]byte(
+		`{"stack":"s","region":"eu-west-1","parameter":"/dawnbx/p"}`))); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if described < 3 {
+		t.Errorf("Destroy returned after %d reads; it must wait until the stack is gone", described)
+	}
+}

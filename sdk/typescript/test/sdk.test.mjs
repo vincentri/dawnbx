@@ -218,21 +218,6 @@ test("env defaults and create options", async () => {
   }
 })
 
-const CLUSTER = {
-  name: "probe",
-  provider: "aws",
-  region: "eu-west-1",
-  instance_type: "t4g.medium",
-  disk_gib: 30,
-  status: "ready",
-  url: "https://probe.example",
-  phase: "ready",
-  detail: "1 node",
-  hourly_usd: 0.0168,
-  monthly_usd: 12.26,
-  tls_pin: "sha256:AAAA",
-}
-
 // A cluster still coming up: every optional field is absent, not empty.
 const BARE = {
   name: "warm",
@@ -274,59 +259,6 @@ const clusterServer = async (handler) => {
     close: () => srv.close(),
   }
 }
-
-test("listClusters returns the clusters array as the server sent it", async () => {
-  const { seen, client, close } = await clusterServer(
-    async (req, res, json) => {
-      if (req.url === "/v1/clusters")
-        return json(200, { clusters: [CLUSTER, BARE] })
-      json(404, { code: "not_found", message: "no such route" })
-    },
-  )
-  try {
-    const all = await listClusters(client)
-    assert.deepEqual(all, [CLUSTER, BARE])
-    // Optional fields the server omitted stay absent, as Cluster declares them
-    // optional: nothing is defaulted onto the object.
-    assert.equal(BARE.tls_pin, undefined)
-    assert.equal("tls_pin" in all[1], false)
-    assert.equal(all[1].phase, undefined)
-    assert.equal(all[0].tls_pin, "sha256:AAAA")
-    assert.equal(all[0].hourly_usd, 0.0168)
-    assert.equal(seen.at(-1), "GET /v1/clusters ")
-  } finally {
-    close()
-  }
-})
-
-test("getCluster and listClusterNodes escape the name into the path", async () => {
-  const { seen, client, close } = await clusterServer(
-    async (req, res, json) => {
-      if (req.url === "/v1/clusters/probe%2F1") return json(200, CLUSTER)
-      if (req.url === "/v1/clusters/probe%201") return json(200, CLUSTER)
-      if (req.url === "/v1/clusters/probe%201/nodes")
-        return json(200, { nodes: [NODE] })
-      json(404, { code: "not_found", message: "no such route" })
-    },
-  )
-  try {
-    // A slash in the name must not become a path separator.
-    const c = await getCluster(client, "probe/1")
-    assert.equal(c.name, "probe")
-    assert.equal(seen.at(-1), "GET /v1/clusters/probe%2F1 ")
-
-    // A space is percent-encoded, not sent raw.
-    await getCluster(client, "probe 1")
-    assert.equal(seen.at(-1), "GET /v1/clusters/probe%201 ")
-
-    const nodes = await listClusterNodes(client, "probe 1")
-    assert.equal(seen.at(-1), "GET /v1/clusters/probe%201/nodes ")
-    assert.deepEqual(nodes, [NODE])
-    assert.equal(nodes[0].sandboxes, 3)
-  } finally {
-    close()
-  }
-})
 
 test("a node with no sandboxes reported leaves sandboxes undefined", async () => {
   const { client, close } = await clusterServer(async (req, res, json) =>
@@ -475,32 +407,6 @@ test("kill rethrows anything that is not an already-gone sandbox", async () => {
       assert.equal(e.code, "expired")
       return true
     })
-  } finally {
-    close()
-  }
-})
-
-test("cluster reads retry through cluster_unavailable", async () => {
-  let tries = 0
-  const { seen, client, close } = await clusterServer(
-    async (req, res, json) => {
-      if (++tries < 3)
-        return json(503, {
-          code: "cluster_unavailable",
-          message: "control plane restarting",
-        })
-      json(200, { clusters: [CLUSTER] })
-    },
-  )
-  try {
-    const all = await listClusters(client)
-    assert.equal(all.length, 1)
-    assert.equal(all[0].name, "probe")
-    assert.equal(tries, 3)
-    assert.deepEqual(
-      seen.filter((s) => s.startsWith("GET /v1/clusters")),
-      ["GET /v1/clusters ", "GET /v1/clusters ", "GET /v1/clusters "],
-    )
   } finally {
     close()
   }

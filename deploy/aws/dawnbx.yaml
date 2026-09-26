@@ -64,7 +64,7 @@ Parameters:
   VpcCidr:
     Type: String
     Default: ""
-    AllowedPattern: ^$|^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$
+    AllowedPattern: ^$|^(?!0\.0\.0\.0/0$)(?!0\.0\.0\.0/\d{1,2}$)\d{1,3}(\.\d{1,3}){3}/\d{1,2}$
     Description: >-
       CIDR allowed to reach the apiserver on 6443, e.g. 10.0.0.0/16. Empty uses
       the default VPC's 172.31.0.0/16. Never set 0.0.0.0/0: the apiserver holds

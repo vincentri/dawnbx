@@ -18,17 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-__all__ = [
-    "Cluster",
-    "ClusterNode",
-    "DawnbxError",
-    "ExecResult",
-    "Sandbox",
-    "SandboxInfo",
-    "get_cluster",
-    "list_clusters",
-    "list_nodes",
-]
+__all__ = ["DawnbxError", "ExecResult", "Sandbox", "SandboxInfo"]
 
 _UNSET: Any = object()  # distinguishes "not passed" from None (= keep forever / no limit)
 
@@ -276,75 +266,3 @@ class Sandbox:
 
     def __exit__(self, *exc: Any) -> None:
         self.kill()
-
-
-# --- control plane: read-only -------------------------------------------------
-# The cluster-management routes are administrator tooling, not the agent path, so
-# the SDK only reads them. Creating, rotating or deleting spends money or destroys
-# infrastructure, and those belong behind a human at the dashboard.
-
-
-@dataclass
-class Cluster:
-    name: str
-    provider: str
-    region: str
-    instance_type: str
-    disk_gib: int
-    status: str
-    url: str
-    phase: str = ""
-    detail: str = ""
-    hourly_usd: float = 0.0
-    monthly_usd: float = 0.0
-    tls_pin: str = ""
-
-
-@dataclass
-class ClusterNode:
-    id: str
-    instance_type: str
-    status: str
-    sandboxes: int = 0
-    detail: str = ""
-
-
-def _cluster(v: dict[str, Any]) -> Cluster:
-    return Cluster(
-        name=v["name"],
-        provider=v["provider"],
-        region=v["region"],
-        instance_type=v["instance_type"],
-        disk_gib=int(v.get("disk_gib", 0)),
-        status=v["status"],
-        url=v.get("url", ""),
-        phase=v.get("phase", ""),
-        detail=v.get("detail", ""),
-        hourly_usd=float(v.get("hourly_usd", 0)),
-        monthly_usd=float(v.get("monthly_usd", 0)),
-        tls_pin=v.get("tls_pin", ""),
-    )
-
-
-def list_clusters(c: _Client) -> list[Cluster]:
-    """Every cluster the control plane manages. Read-only; these routes are
-    administrator-only, so this needs an administrator session."""
-    return [_cluster(v) for v in c.req("GET", "/v1/clusters")["clusters"]]
-
-
-def get_cluster(c: _Client, name: str) -> Cluster:
-    return _cluster(c.req("GET", f"/v1/clusters/{name}"))
-
-
-def list_nodes(c: _Client, name: str) -> list[ClusterNode]:
-    rows = c.req("GET", f"/v1/clusters/{name}/nodes")["nodes"]
-    return [
-        ClusterNode(
-            id=v["id"],
-            instance_type=v["instance_type"],
-            status=v["status"],
-            sandboxes=int(v.get("sandboxes", 0)),
-            detail=v.get("detail", ""),
-        )
-        for v in rows
-    ]

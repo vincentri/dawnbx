@@ -39,8 +39,16 @@ export function Settings() {
   const me = useMe().data!;
   // The shell's own answer, so the two agree about which server this is rather
   // than each deciding from its own request.
-  const { controlPlane } = useServer();
-  const { tab = "keys" } = useSearch({ from: "/settings" });
+  const { settled, controlPlane } = useServer();
+  // A cluster and a probe still in flight both read as "not a control plane",
+  // so anything cluster-bound waits for the answer rather than rendering for a
+  // paint and then vanishing. The wait is one round trip at page load.
+  const onCluster = settled && !controlPlane;
+  // A cluster-bound tab requested directly on a control plane is not a tab that
+  // exists, so it falls back to one that does rather than rendering an empty
+  // panel that looks like "no workers".
+  const { tab: asked = "keys" } = useSearch({ from: "/settings" });
+  const tab = onCluster || asked !== "nodes" ? asked : "keys";
   const nav = useNavigate();
   return (
     <div className="mx-auto h-full max-w-5xl overflow-auto p-6">
@@ -54,7 +62,7 @@ export function Settings() {
               the server is running in, which a control plane does not have. On
               that server the tab would show an empty grid and no error, which
               reads as "no workers" rather than "there is no cluster here". */}
-          {me.admin && !controlPlane && <TabsTrigger value="nodes">Nodes</TabsTrigger>}
+          {me.admin && onCluster && <TabsTrigger value="nodes">Nodes</TabsTrigger>}
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
         <TabsContent value="keys">
@@ -71,9 +79,14 @@ export function Settings() {
             <TabsContent value="orgs">
               <Orgs />
             </TabsContent>
-            <TabsContent value="nodes">
-              <Nodes />
-            </TabsContent>
+            {/* Gated as well as the trigger: Radix renders content by value,
+                not by trigger presence, so /settings?tab=nodes would mount
+                this on a control plane and poll a route that answers 503. */}
+            {onCluster && (
+              <TabsContent value="nodes">
+                <Nodes />
+              </TabsContent>
+            )}
           </>
         )}
         <TabsContent value="account">

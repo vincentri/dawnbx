@@ -11,10 +11,10 @@ import {
 } from "@tanstack/react-router";
 import { type RenderResult, render } from "@testing-library/react";
 import { toast } from "sonner";
+import { IndexPage } from "@/components/index-page";
 import { Toaster } from "@/components/ui/sonner";
 import { type Principal, setSignedOut } from "@/lib/api";
 import { Clusters, clusterSearch } from "@/pages/clusters";
-import { Sandboxes } from "@/pages/sandboxes";
 import { Settings } from "@/pages/settings";
 import { Shell, signOut } from "@/pages/shell";
 import { TerminalPage } from "@/pages/terminal";
@@ -57,7 +57,7 @@ export function renderApp(
     createRoute({
       getParentRoute: () => rootRoute,
       path: "/",
-      component: Sandboxes,
+      component: IndexPage,
       validateSearch: (s: Record<string, unknown>): { id?: string } =>
         typeof s.id === "string" ? { id: s.id } : {},
     }),

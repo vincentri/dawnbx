@@ -876,3 +876,53 @@ func TestAFailedCreateHandsBackTheFailedRecord(t *testing.T) {
 // errNoCapacity is what a provider says when it will not launch a host right
 // now — no capacity in the zone, or an account quota.
 var errNoCapacity = errors.New("InsufficientInstanceCapacity: no capacity in eu-west-1a")
+
+// TestTheStallNoteSurvivesItsOwnClock: the note is a report about a lack of
+// movement, so recording it must not itself look like movement. The first version
+// of this check polled once and saw the note; a second poll a few seconds later
+// had cleared it, because writing the note created the history row the note
+// measured against. The operator would have seen it for one poll in twenty
+// minutes.
+func TestTheStallNoteSurvivesItsOwnClock(t *testing.T) {
+	p, reg, fp, _ := begun(t)
+	fp.setStates(provider.Status{State: provider.Bootstrapping}, provider.Status{State: provider.Bootstrapping})
+	ctx := context.Background()
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := reg.Get("probe1"); c.Detail != "" {
+		t.Fatalf("a cluster that just moved is already called out: %q", c.Detail)
+	}
+
+	p.StaleAfter = time.Minute
+	// Five minutes on, and then a few minutes more: the note has to still be
+	// there on the second poll, or it is describing a blip.
+	reg.SetClock(func() time.Time { return time.Unix(1750000000, 0).Add(5 * time.Minute) })
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := reg.Get("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.Detail, "no progress for") {
+		t.Fatalf("a cluster stuck for five minutes is not called out: %q", c.Detail)
+	}
+	if c.Status != StatusProvisioning {
+		t.Errorf("being stalled is not being failed: %s", c.Status)
+	}
+
+	// The clock moves on, the provider keeps saying "still working", and the note
+	// has to persist rather than resetting itself.
+	reg.SetClock(func() time.Time { return time.Unix(1750000000, 0).Add(9 * time.Minute) })
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reg.Get("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(after.Detail, "no progress for") {
+		t.Errorf("the note reset its own clock: %q", after.Detail)
+	}
+}

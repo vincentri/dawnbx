@@ -329,7 +329,11 @@ func (a *AWS) Destroy(ctx context.Context, h provider.Handle) error {
 	if err != nil {
 		return err
 	}
-	if err := a.deleteStack(ctx, c, ph); err != nil {
+	// settle, not deleteStack: it waits for the stack to actually be gone, which
+	// is what FR-018 promises before the record is forgotten. A DeleteStack call
+	// that returns is a request accepted, not a teardown finished, and forgetting
+	// the record on the strength of it would leave a stack nobody is tracking.
+	if err := a.settle(ctx, c, ph); err != nil {
 		return err
 	}
 	return parametersFor(c.ssm).deleteSecret(ctx, ph.Parameter)

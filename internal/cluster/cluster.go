@@ -311,15 +311,36 @@ func (r *Registry) Get(name string) (*Cluster, error) {
 // LastProgress is when the cluster last moved to a new phase, which is the only
 // movement worth measuring a stall against. The updated column moves on every
 // poll, so it cannot answer that question.
+//
+// It reads the operation history, and the phase of each row is what matters: a
+// row that only changed the detail — the stall note, most of all — is a report
+// about a lack of movement and must not count as movement. Counting it made the
+// note reset its own clock, so it was visible for one poll in every twenty
+// minutes. So the newest row whose phase differs from the cluster's current one
+// is the answer, and a run of detail-only rows is skipped.
 func (r *Registry) LastProgress(name string) (time.Time, error) {
-	ops, err := r.db.Ops(name, "create", 1)
+	c, err := r.db.GetCluster(name)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if len(ops) == 0 {
-		return time.Time{}, fmt.Errorf("%w: %s has no recorded progress", ErrNotFound, name)
+	ops, err := r.db.Ops(name, "create", 0)
+	if err != nil {
+		return time.Time{}, err
 	}
-	return ops[0].Created, nil
+	cur := c.Phase
+	// ops arrive newest first, so the first row that is not the current phase is
+	// the last time the phase was somewhere else.
+	for _, o := range ops {
+		if o.Phase != cur {
+			return o.Created, nil
+		}
+	}
+	// Every row shares the current phase, so the earliest of them is when it was
+	// entered. There is no "no progress" before the cluster's first phase.
+	if len(ops) > 0 {
+		return ops[len(ops)-1].Created, nil
+	}
+	return time.Time{}, fmt.Errorf("%w: %s has no recorded progress", ErrNotFound, name)
 }
 
 // ByURL finds a cluster by the URL it answers on. The provider hands worker

@@ -66,13 +66,20 @@ copies today, with nothing keeping them equal (`AGENTS.md`, contract section).
 `forbidden` and `invalid_request` are the codes already in use; the new ones follow the same
 `errf` construction at `internal/sandbox/sandbox.go:53`.
 
-## Read-only SDK surface
+## SDK surface: none, deliberately
 
-`AGENTS.md` requires a route change to touch both SDKs, and both are hand-written clients that
-today cover only `/v1/sandboxes*`. The cluster surface is operator tooling, not the agent path, so
-the SDKs get **read-only** helpers — `list_clusters`, `get_cluster`, `list_nodes` — over the same
-three GET routes. No SDK method creates, rotates or deletes anything, because those actions spend
-money or destroy infrastructure and belong behind a human at the dashboard (FR-005).
+Neither SDK wraps these routes, and that is the decision rather than an omission.
+
+Every route here is gated on an administrator's **dashboard session** — an API
+key is refused by `signedIn`, deliberately, so a leaked key cannot enumerate or
+destroy infrastructure. Both SDK clients can only present a bearer token, so a
+cluster helper in either would receive 403 on every call, forever.
+
+Teaching the SDKs about session cookies was considered and rejected: a library
+whose entire security model is "an API key" has no business holding a dashboard
+session, and `/v1/nodes`, `/v1/keys`, `/v1/orgs` and `/v1/users` are already
+session-only and already unwrapped for the same reason. Cluster management joins
+that set. It belongs to the dashboard, which has a session and a person behind it.
 
 ## What is not in this contract
 
