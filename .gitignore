@@ -2,6 +2,9 @@
 .claude/
 .gstack/
 .serena/
+.harness-eval/
+.omp/
+.specify/
 .DS_Store
 
 # build output
