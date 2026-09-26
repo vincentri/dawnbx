@@ -8,6 +8,7 @@ package cluster
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -169,6 +170,10 @@ func NewRegistry(db Store, seal *Sealer, admin string) *Registry {
 // SetClock replaces the clock, for tests.
 func (r *Registry) SetClock(f func() time.Time) { r.now = f }
 
+// Clock is the registry's clock, so a caller measures elapsed time the same way
+// the records were written.
+func (r *Registry) Clock() time.Time { return r.now() }
+
 // Validate checks a request against the provider's own catalogue, so a bad
 // request costs no cloud call at all.
 func (r *Registry) Validate(req CreateRequest, cat Catalogue) error {
@@ -275,11 +280,29 @@ func (r *Registry) Handle(name string) (provider.Handle, error) {
 func (r *Registry) Get(name string) (*Cluster, error) {
 	c, err := r.db.GetCluster(name)
 	if err != nil {
-		// The store decides how absence is spelled; here it only has to be a
-		// name this control plane can show an operator.
-		return nil, fmt.Errorf("%w: %s: %v", ErrNotFound, name, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
+		}
+		// Anything else is the store failing, not the cluster being absent, and
+		// the difference is what an operator needs: one says "create it", the
+		// other says "the control plane cannot read its own database".
+		return nil, fmt.Errorf("reading cluster %s: %w", name, err)
 	}
 	return fromAuth(c), nil
+}
+
+// LastProgress is when the cluster last moved to a new phase, which is the only
+// movement worth measuring a stall against. The updated column moves on every
+// poll, so it cannot answer that question.
+func (r *Registry) LastProgress(name string) (time.Time, error) {
+	ops, err := r.db.Ops(name, "create", 1)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(ops) == 0 {
+		return time.Time{}, fmt.Errorf("%w: %s has no recorded progress", ErrNotFound, name)
+	}
+	return ops[0].Created, nil
 }
 
 // ByURL finds a cluster by the URL it answers on. The provider hands worker

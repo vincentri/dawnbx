@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,10 @@ type memCreds struct {
 }
 
 var (
-	errNoRow = errors.New("sql: no rows in result set")
+	// errNoRow is the driver's own absence error, not a lookalike: auth.DB
+	// returns sql.ErrNoRows, and the registry tells absence from a failing
+	// store by exactly that.
+	errNoRow = sql.ErrNoRows
 	errDup   = errors.New("duplicate")
 )
 
@@ -702,5 +706,23 @@ func TestRemoteRefusesWithoutALogin(t *testing.T) {
 	}
 	if _, err := rem.Nodes(context.Background()); err == nil {
 		t.Error("the cluster API was called with no session")
+	}
+}
+
+// TestLastProgressOnAClusterWithNoHistory: a cluster whose first phase has not
+// been written has no progress to report, and saying so is better than
+// reporting the zero time and calling it old.
+func TestLastProgressOnAClusterWithNoHistory(t *testing.T) {
+	r, m := testRegistry(t)
+	if _, err := r.LastProgress("ghost"); err == nil {
+		t.Error("a cluster that does not exist reported progress")
+	}
+	if err := m.CreateCluster(auth.Cluster{Name: "fresh", Provider: "aws", Region: "eu-west-1",
+		InstanceType: "t4g.medium", DiskGiB: 30, Status: "provisioning", Created: time.Unix(1750000000, 0),
+		Updated: time.Unix(1750000000, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.LastProgress("fresh"); err == nil && !got.IsZero() {
+		t.Errorf("a cluster with no recorded phase reported progress at %v", got)
 	}
 }

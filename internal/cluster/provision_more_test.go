@@ -183,11 +183,12 @@ func TestRunRefusesAClusterItCannotRead(t *testing.T) {
 	m.failWith("GetCluster", errStoreDown)
 
 	err := p.Run(context.Background(), "probe1")
-	// The registry names the cluster an operator can look for and carries the
-	// store's own words, so an unreachable database is still visible in the
-	// message rather than looking like a cluster that does not exist.
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Run error %v, want a not-found the dashboard can render", err)
+	// A store that is down is not a cluster that is gone. The registry carries
+	// the store's own words so the cause is visible, but it does not rename the
+	// failure: a not-found here would send an operator to create a cluster that
+	// already exists.
+	if errors.Is(err, ErrNotFound) {
+		t.Fatalf("Run error %v, want the store's failure, not a missing cluster", err)
 	}
 	if !strings.Contains(err.Error(), errStoreDown.Error()) {
 		t.Errorf("error %q does not carry the store's own reason", err)
@@ -535,8 +536,14 @@ func TestDeleteRefusesAClusterItCannotRead(t *testing.T) {
 	m.failWith("GetCluster", errStoreDown)
 
 	err := p.Delete(context.Background(), "probe1")
-	if !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), errStoreDown.Error()) {
-		t.Fatalf("Delete error %v, want the store's reason surfaced as a not-found", err)
+	// A store that is down is not a cluster that is gone. Reporting it as
+	// not-found would tell an operator to create a cluster that already exists
+	// while the control plane cannot read its own database.
+	if errors.Is(err, ErrNotFound) {
+		t.Fatalf("a failing store was reported as a missing cluster: %v", err)
+	}
+	if !strings.Contains(err.Error(), errStoreDown.Error()) {
+		t.Fatalf("Delete error %v does not carry the store's own reason", err)
 	}
 	if fp.destroyed {
 		t.Error("a host was destroyed for a cluster that could not be read")
@@ -645,7 +652,7 @@ func TestDeleteForgetsAClusterThatNeverGotAHost(t *testing.T) {
 	}
 	if _, err := reg.Get("probe1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("the record survived a delete with nothing to release: %v", err)
-	}
+	} // absence and a store fault are now distinct, so this is a real check
 	if len(fp.seen) != before {
 		t.Errorf("a destroy was issued with no handle: %v", fp.seen[before:])
 	}
@@ -785,3 +792,87 @@ func TestWatchDoesNotSpinHotOnAFailingCluster(t *testing.T) {
 	}
 	_ = fp
 }
+
+// TestStalledClusterIsCalledOutRatherThanSpinneredAt: a cluster whose phase has
+// not moved for longer than the budget says so, and one that has moved does
+// not. The measurement is against the last phase change rather than the last
+// poll, because the updated column moves on every poll and would make a wedged
+// cluster and a healthy one indistinguishable.
+func TestStalledClusterIsCalledOutRatherThanSpinneredAt(t *testing.T) {
+	p, reg, fp, _ := begun(t)
+	fp.setStates(
+		provider.Status{State: provider.Bootstrapping},
+		provider.Status{State: provider.Bootstrapping},
+		provider.Status{State: provider.Bootstrapping},
+	)
+	ctx := context.Background()
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := reg.Get("probe1"); c.Detail != "" {
+		t.Fatalf("a cluster that just moved phase is already called out: %q", c.Detail)
+	}
+
+	// Move the clock past the budget without moving the phase.
+	p.StaleAfter = time.Minute
+	reg.SetClock(func() time.Time { return time.Unix(1750000000, 0).Add(2 * time.Minute) })
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := reg.Get("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != StatusProvisioning {
+		t.Fatalf("a stalled cluster was moved out of provisioning: %s", c.Status)
+	}
+	if !strings.Contains(c.Detail, "no progress for") {
+		t.Errorf("a stalled cluster is not called out: detail %q", c.Detail)
+	}
+}
+
+// TestLastProgressIsAPhaseChangeNotAPoll: the stall signal has to come from
+// something that only moves when the cluster actually progresses.
+func TestLastProgressIsAPhaseChangeNotAPoll(t *testing.T) {
+	_, reg, _, _ := begun(t)
+	before, err := reg.LastProgress("probe1")
+	if err != nil {
+		t.Fatalf("a cluster that has begun has a recorded start: %v", err)
+	}
+	// Polling moves updated, and must not move this.
+	if err := reg.Phase("probe1", StatusProvisioning, PhaseBootstrapping, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Phase("probe1", StatusProvisioning, PhaseBootstrapping, ""); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reg.LastProgress("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Before(before) {
+		t.Errorf("progress went backwards: %v then %v", before, after)
+	}
+}
+
+// TestAFailedCreateHandsBackTheFailedRecord: Begin marks the cluster failed when
+// the provider refuses, so the record it returns must say failed. A caller that
+// renders the returned value would otherwise show a dead cluster as provisioning.
+func TestAFailedCreateHandsBackTheFailedRecord(t *testing.T) {
+	p, _, fp, _ := newProv(t)
+	fp.createErr = errNoCapacity
+	got, err := p.Begin(context.Background(), okReq(), provCat())
+	if err != nil {
+		t.Fatalf("a refused create should still return the record, so the dashboard can show why: %v", err)
+	}
+	if got.Status != StatusFailed {
+		t.Fatalf("status %q, want %q: the cluster is already dead", got.Status, StatusFailed)
+	}
+	if got.Detail == "" {
+		t.Error("the record came back with no reason attached")
+	}
+}
+
+// errNoCapacity is what a provider says when it will not launch a host right
+// now — no capacity in the zone, or an account quota.
+var errNoCapacity = errors.New("InsufficientInstanceCapacity: no capacity in eu-west-1a")

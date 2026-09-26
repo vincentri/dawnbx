@@ -422,7 +422,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 
 ### MEDIUM
 
-- [ ] T092 Read `Provisioner.StaleAfter`, which is declared and defaulted but read nowhere, and
+- [X] T092 Read `Provisioner.StaleAfter`, which is declared and defaulted but read nowhere, and
       mark a cluster whose phase has not advanced as needing attention; or delete the field and
       the sentence that promises it (edge case, "exceeds its expected duration") (missing).
 - [ ] T093 Revoke the superseded API key on the cluster during rotation, or amend the spec edge
@@ -502,12 +502,12 @@ These were found by running the thing rather than by reading the artifacts, so t
 `FR-###` to trace to. Three are in code this feature added; one is pre-existing and unrelated to
 it. Appended here so they are fixed in the same pass rather than carried into another session.
 
-- [ ] T114 Stop a store failure looking like a missing cluster. `Registry.Get`
+- [X] T114 Stop a store failure looking like a missing cluster. `Registry.Get`
       (`internal/cluster/cluster.go:280`) wraps every store error as `ErrNotFound`, so a locked or
       unreadable database becomes a `404 not_found` at the API. Wrap the cause with `%w` and let
       the handler distinguish absence from failure, so a database problem is not reported to an
       operator as "no such cluster" (defect).
-- [ ] T115 Return the record as it stands after a failed create. `Provisioner.Begin`
+- [X] T115 Return the record as it stands after a failed create. `Provisioner.Begin`
       (`internal/cluster/provision.go:100-101`) calls `p.fail`, which marks the cluster failed, and
       then returns `c`, the record read before the failure — so a caller that renders the returned
       value shows `provisioning` for a cluster that is already failed with a reason attached. Re-read

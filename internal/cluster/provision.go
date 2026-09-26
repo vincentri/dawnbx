@@ -26,8 +26,11 @@ type Provisioner struct {
 	// PollEvery is how often an in-flight cluster is asked for its status. The
 	// dashboard's 60-second freshness budget (SC-003) is met comfortably by 5s.
 	PollEvery time.Duration
-	// StaleAfter is how long without progress before the phase is called out as
-	// needing attention, rather than left looking like it is still working.
+	// StaleAfter is how long a cluster may go without changing phase before the
+	// dashboard is told it needs attention, rather than left looking like it is
+	// still working. Measured against the last phase change: the updated column
+	// moves on every poll, so a wedged cluster and a healthy one look identical
+	// from it.
 	StaleAfter time.Duration
 	// StepTimeout bounds one Run. A provider may need to finish tearing a failed
 	// host down before it can report the failure, which is the adapter's promise
@@ -82,8 +85,7 @@ func (p *Provisioner) Begin(ctx context.Context, req CreateRequest, cat Catalogu
 	if err != nil {
 		return nil, err
 	}
-	c, err := p.reg.Create(req, *est, provider.Handle{})
-	if err != nil {
+	if _, err := p.reg.Create(req, *est, provider.Handle{}); err != nil {
 		return nil, err
 	}
 	if err := p.reg.SaveAdminPassword(req.Name, pw); err != nil {
@@ -97,8 +99,12 @@ func (p *Provisioner) Begin(ctx context.Context, req CreateRequest, cat Catalogu
 		DiskGiB: req.DiskGiB, Domain: req.Domain,
 	}, provider.Bootstrap{AdminPassword: pw})
 	if err != nil {
-		p.fail(ctx, req.Name, "the provider refused to create a host: "+err.Error())
-		return c, nil
+		// fail() has already marked the record failed and attached the reason,
+		// so the value handed back is re-read rather than the pre-failure one.
+		// A caller that renders it must not show "provisioning" for a cluster
+		// that is already dead.
+		_ = p.fail(ctx, req.Name, "the provider refused to create a host: "+err.Error())
+		return p.reg.Get(req.Name)
 	}
 	if err := p.reg.SetHandle(req.Name, handle); err != nil {
 		return nil, err
@@ -145,9 +151,9 @@ func (p *Provisioner) Run(ctx context.Context, name string) error {
 
 	switch st.State {
 	case provider.Creating:
-		return p.reg.Phase(name, StatusProvisioning, PhaseRequestingHost, "")
+		return p.reg.Phase(name, StatusProvisioning, PhaseRequestingHost, p.stalled(name))
 	case provider.Bootstrapping:
-		return p.reg.Phase(name, StatusProvisioning, PhaseBootstrapping, "")
+		return p.reg.Phase(name, StatusProvisioning, PhaseBootstrapping, p.stalled(name))
 	case provider.Failed:
 		// The provider has already settled its own teardown before saying this.
 		// We ask again, idempotently, because "no orphan resources" is a
@@ -163,6 +169,35 @@ func (p *Provisioner) Run(ctx context.Context, name string) error {
 	default:
 		return p.reg.Phase(name, StatusProvisioning, c.Phase, st.Reason)
 	}
+}
+
+// stalled is the detail a cluster carries when it has not moved phase for longer
+// than StaleAfter. It is a note, not a state: the cluster is still provisioning
+// and still worth waiting for, and the operator is told the difference rather
+// than being shown a spinner that means nothing.
+//
+// The measurement is the time since the last phase change. The updated column
+// moves on every poll, so measuring against it would make a wedged cluster and
+// a healthy one look identical - which is the whole failure this exists to fix.
+func (p *Provisioner) stalled(name string) string {
+	if p.StaleAfter <= 0 {
+		return ""
+	}
+	last, err := p.reg.LastProgress(name)
+	if err != nil {
+		return ""
+	}
+	now := p.reg.Clock()
+	if idle := now.Sub(last); idle < p.StaleAfter {
+		return ""
+	}
+	// Only a cluster still in flight is stalled. One that finished while the
+	// clock was being read is not.
+	if c, err := p.reg.Get(name); err == nil && c.Status != StatusProvisioning {
+		return ""
+	}
+	return "no progress for " + now.Sub(last).Round(time.Second).String() +
+		"; this usually needs a look, not more waiting"
 }
 
 // verify is the last stretch, and it is the only stretch that talks to the
