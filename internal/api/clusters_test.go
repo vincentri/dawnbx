@@ -26,6 +26,7 @@ type fakeProv struct {
 	nodeID       string
 	nodeAddr     string // the address the cluster reaches that worker on
 	destroyed    bool
+	removed      []provider.NodeRef // every worker removal asked of the provider, in full
 }
 
 func (f *fakeProv) ID() string { return f.id }
@@ -88,6 +89,10 @@ func (f *fakeProv) NodeAddrs(_ context.Context, _ provider.Handle, nodes []strin
 	return out, nil
 }
 func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n provider.NodeRef) error {
+	// The whole ref, not just the id. A fake that reads only n.ID cannot tell a
+	// caller that supplied the cluster's name from one that did not, which is
+	// the half of the worker's identity this exists to carry.
+	f.removed = append(f.removed, n)
 	if n.ID == f.busy {
 		return provider.ErrNodeBusy
 	}

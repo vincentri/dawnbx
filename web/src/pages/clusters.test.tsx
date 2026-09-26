@@ -1022,3 +1022,117 @@ describe("A cluster that has not settled", () => {
     }
   });
 });
+
+// The transition evidence SC-003 asks for, driven by what the control plane
+// actually emitted rather than by a fixture shaped like it.
+//
+// Every cluster in every other test here is built by the `cluster()` helper
+// above, which means the page was only ever shown clusters this test suite
+// invented. The four below are the byte-for-byte payloads a real account
+// produced during a provisioning run - requesting_host, bootstrapping, ready
+// with a URL and a pin, and failed with the reason the install gave - so a drift
+// between what the control plane sends and what this page reads shows up here
+// rather than in a browser.
+const REAL_PROVISIONING = {
+  name: "probe1",
+  provider: "aws",
+  region: "ap-southeast-1",
+  instance_type: "t4g.medium",
+  disk_gib: 30,
+  domain: "",
+  status: "provisioning",
+  phase: "requesting_host",
+  detail: "",
+  hourly_usd: 0.051345,
+  monthly_usd: 37.482,
+  url: "",
+  tls_pin: "",
+  created: "2026-09-26T14:57:50Z",
+  updated: "2026-09-26T14:57:51Z",
+};
+
+const REAL_BOOTSTRAPPING = {
+  ...REAL_PROVISIONING,
+  phase: "bootstrapping",
+  updated: "2026-09-26T15:01:00Z",
+};
+
+const REAL_READY = {
+  ...REAL_PROVISIONING,
+  status: "ready",
+  phase: "ready",
+  detail: "adding a t4g.medium worker",
+  url: "https://54.151.209.173.sslip.io",
+  tls_pin: "8537ec8147adb4254ce44164",
+  updated: "2026-09-26T15:04:44Z",
+};
+
+const REAL_FAILED = {
+  ...REAL_PROVISIONING,
+  status: "failed",
+  phase: "failed",
+  detail: "the cluster rejected the control plane's login: cluster login failed: 403 Forbidden",
+  updated: "2026-09-26T15:10:00Z",
+};
+
+describe("SC-003 a transition the system actually produced", () => {
+  // What the dashboard claims when the system says "provisioning". The badge
+  // carries the status, because that is the word an operator scans for.
+  it("shows a cluster still coming up as provisioning, by the name the server gave", async () => {
+    installFetch(base({ "GET /v1/clusters": { json: { clusters: [REAL_PROVISIONING] } } }));
+    renderApp({ entry: "/clusters?step=status", me: ADMIN });
+
+    const list = await screen.findByRole("complementary");
+    expect(await within(list).findByText("probe1")).toBeInTheDocument();
+    expect(await within(list).findByText("provisioning")).toBeInTheDocument();
+    // Nothing is offered for a cluster that is not ready: no link pretending
+    // there is something to open.
+    expect(within(list).queryByRole("link", { name: /sslip\.io/ })).toBeNull();
+  });
+
+  it("still says provisioning while the install runs, not something invented", async () => {
+    installFetch(base({ "GET /v1/clusters": { json: { clusters: [REAL_BOOTSTRAPPING] } } }));
+    renderApp({ entry: "/clusters?step=status", me: ADMIN });
+
+    // The phase is the server's word for the step. The badge must not drift
+    // ahead of it, or the operator is told "ready" while k3s is still going in.
+    const list = await screen.findByRole("complementary");
+    expect(await within(list).findByText("provisioning")).toBeInTheDocument();
+    expect(within(list).queryByText("ready")).toBeNull();
+  });
+
+  it("shows a ready cluster's URL as a link, which is the only thing that makes it usable", async () => {
+    installFetch(
+      base({
+        "GET /v1/clusters": { json: { clusters: [REAL_READY] } },
+        "GET /v1/clusters/probe1": { json: REAL_READY },
+      }),
+    );
+    renderApp({ entry: "/clusters?step=status&name=probe1", me: ADMIN });
+
+    const list = await screen.findByRole("complementary");
+    expect(await within(list).findByText("ready")).toBeInTheDocument();
+    // The URL belongs to the selected cluster's panel, which is main.
+    const link = await within(await screen.findByRole("main")).findByRole("link", {
+      name: /54\.151\.209\.173\.sslip\.io/,
+    });
+    expect(link).toHaveAttribute("href", "https://54.151.209.173.sslip.io");
+  });
+
+  it("shows the reason a real cluster failed, word for word", async () => {
+    installFetch(
+      base({
+        "GET /v1/clusters": { json: { clusters: [REAL_FAILED] } },
+        "GET /v1/clusters/probe1": { json: REAL_FAILED },
+      }),
+    );
+    renderApp({ entry: "/clusters?step=status&name=probe1", me: ADMIN });
+
+    // The whole reason, and the phase it failed in. A failed cluster that says
+    // "failed" and nothing else is the shape this run was written to avoid:
+    // the real reason here is an operator's SWG answering 403 for the cluster,
+    // which reads exactly like the cluster refusing its password.
+    expect(await inPage(/the cluster rejected the control plane's login/)).toBeInTheDocument();
+    expect(await inPage(/403 Forbidden/)).toBeInTheDocument();
+  });
+});

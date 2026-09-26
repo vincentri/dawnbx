@@ -599,3 +599,70 @@ func TestAWorkerIsNotForgottenWhenTheLookupFails(t *testing.T) {
 		t.Errorf("a worker was forgotten because the provider could not answer: %s", w.Body)
 	}
 }
+
+// TestRemovingAWorkerSuppliesTheNameTheClusterGaveIt: the control plane has to
+// hand the provider the worker's name as the cluster knows it, not only the id
+// the provider created it as.
+//
+// This is the half of T160 that had no test. The adapter half was covered, so
+// deleting `ClusterName: names[id]` from the remove route - leaving the field
+// permanently empty - passed every test in the package, because the fake read
+// only n.ID and never looked at the field the fix exists to carry. A fix whose
+// caller can drop half of it unnoticed is not a fix.
+func TestRemovingAWorkerSuppliesTheNameTheClusterGaveIt(t *testing.T) {
+	cp := testControl(t, &fakeProv{
+		id: "aws", regions: []string{"us-east-1"},
+		nodeAddrs: map[string]string{"i-0ad9fe756c55722b1": "172.31.22.242"},
+	})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	// The cluster names the worker by hostname; the provider, by instance id.
+	cp.liveCluster(t, "n1", cluster.RemoteNode{
+		Name: "ip-172-31-22-242", Addr: "172.31.22.242", Ready: true,
+	})
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-0ad9fe756c55722b1",
+		InstanceType: "t4g.medium", Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := cp.do("DELETE", "/v1/clusters/n1/nodes/i-0ad9fe756c55722b1", "", cp.admin...)
+	if w.Code != 204 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(cp.prov.removed) != 1 {
+		t.Fatalf("the provider was asked %d times, want once", len(cp.prov.removed))
+	}
+	got := cp.prov.removed[0]
+	if got.ID != "i-0ad9fe756c55722b1" {
+		t.Errorf("id = %q", got.ID)
+	}
+	if got.ClusterName != "ip-172-31-22-242" {
+		t.Errorf("cluster name = %q, want the name the cluster gave the worker; "+
+			"without it the cluster answers 404 for a worker it is holding", got.ClusterName)
+	}
+}
+
+// TestRemovingAWorkerTheClusterCannotNameStillSucceeds: when the cluster could
+// not be asked, there is no name to send, and the id is the right thing to fall
+// back to. The cluster's own 404 then says so - which is the operator being told,
+// rather than the adapter quietly terminating a machine nothing agreed to release.
+func TestRemovingAWorkerTheClusterCannotNameStillSucceeds(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	cp.liveCluster(t, "n1") // the cluster knows of no workers at all
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-orphan",
+		InstanceType: "t4g.medium", Status: "provisioning"}); err != nil {
+		t.Fatal(err)
+	}
+	// Unreachable, so the refresh could not name anything.
+	cp.prov.nodeAddrsErr = errors.New("cloud credentials expired")
+
+	w := cp.do("DELETE", "/v1/clusters/n1/nodes/i-orphan", "", cp.admin...)
+	if w.Code != 204 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(cp.prov.removed) != 1 || cp.prov.removed[0].ID != "i-orphan" {
+		t.Fatalf("the provider was not asked about the worker: %+v", cp.prov.removed)
+	}
+}

@@ -745,3 +745,29 @@ ImageId and a node list that answers with the provider's own id.
       the cluster's 404 says so rather than the adapter silently terminating a
       machine nothing agreed to release. This is T155's cause on the write path:
       the two sides never named a worker the same way (FR-010, blocks SC-004).
+## Phase 12: Convergence (fourth pass)
+
+- [X] T161 Assert that the API layer supplies the worker's cluster name. T160's fix has
+      two halves and only one is tested: the adapter honours `NodeRef.ClusterName`
+      (covered in `compute_test.go`), but deleting `ClusterName: names[id]` at
+      `internal/api/clusters.go` entirely still passes every test in the package,
+      because all three fakes read only `n.ID` and never look at the field the task
+      exists to carry. A test that fails when the name is not supplied is what stops
+      the fix regressing to the bug (Constitution IV, T160).
+- [X] T162 Correct the plan's installer decision. `plan.md` still reads
+      `install.sh + --bootstrap-parameter; awscli only when it is used`, but the code
+      has no awscli: it reads the parameter with a stdlib SigV4 signer using the
+      instance role, because Ubuntu 24.04 has no awscli package at all and the
+      apt-based route failed every install. The plan states a decision that was never
+      viable and is now contradicted by the code (plan: installer decision, T154).
+- [X] T163 Give SC-003 an evidence path. "The dashboard reflects a provisioning or
+      node-status transition" is checked today only as a `200` on `/ui/`, and the
+      live tier's fifteen checks cover install, firewall, gVisor, policy and pod
+      behaviour while touching cluster provisioning once, in a comment. No check
+      renders a transition in the UI, and every web test runs against a fake fetch, so
+      the surface an operator actually looks at is the one with no evidence (SC-003).
+- [X] T164 Verify the pinned gVisor installs, or record the bound. The pin to
+      `20260921.0` is asserted by the gate and the artifacts were confirmed to exist
+      for both arches, but no install has fetched that version, and neither the spec
+      nor the plan mentions gVisor at all - so there is no stated obligation the pin
+      is being held to beyond "it resolves" (Constitution V, T158).
