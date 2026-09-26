@@ -52,11 +52,14 @@ Expected: no output, exit 0 for both.
 This is the core of FR-001 and needs no AWS at all.
 
 ```bash
-rm -rf /tmp/dawnbx-cp
+rm -rf /tmp/dawnbx-cp /tmp/dawnbx-cp-data
 go build -o /tmp/dawnbx-cp ./cmd/dawnbx-server
 
+# The binary is a file and the data dir is a directory under it; pointing both
+# at /tmp/dawnbx-cp is a "not a directory" error, not a subtle one, but the
+# quickstart is the first thing anyone runs, so it has to actually run.
 /tmp/dawnbx-cp --control-plane \
-  --data-dir /tmp/dawnbx-cp/data \
+  --data-dir /tmp/dawnbx-cp-data \
   --listen 127.0.0.1:8099 \
   --admin-password 'a-long-test-password' &
 ```
@@ -64,7 +67,7 @@ go build -o /tmp/dawnbx-cp ./cmd/dawnbx-server
 Check all four, because each one is a distinct thing the old startup path refused to do:
 
 ```bash
-ls -a /tmp/dawnbx-cp/data            # no .dawnbx-volume marker, and startup did not create one
+ls -a /tmp/dawnbx-cp-data            # no .dawnbx-volume marker, and startup did not create one
 curl -s 127.0.0.1:8099/v1/version    # 200 — no k3s client was built
 curl -s 127.0.0.1:8099/v1/sandboxes  # 503 {"code":"cluster_unavailable",...}, not 404 and not a panic
 curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8099/ui/   # 200 — the dashboard is served
@@ -73,7 +76,7 @@ curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8099/ui/   # 200 — the dash
 Then the negative control, which is the part that is easy to get wrong:
 
 ```bash
-/tmp/dawnbx-cp --data-dir /tmp/dawnbx-cp/data   # without --control-plane
+/tmp/dawnbx-cp --data-dir /tmp/dawnbx-cp-data   # without --control-plane
 ```
 
 Expected: exits non-zero with the marker error from `internal/store/store.go:73`. The old behaviour

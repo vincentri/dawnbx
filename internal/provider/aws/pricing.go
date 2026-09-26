@@ -46,7 +46,9 @@ type priceList struct {
 	} `json:"product"`
 	Terms struct {
 		OnDemand map[string]struct {
-			Unit            string `json:"unit"`
+			// No `unit` here: an aws_v1 term has no such key. The unit is a
+			// property of each price dimension, which is why this struct has
+			// never carried one and why rate() must not look for it.
 			PriceDimensions map[string]struct {
 				Unit         string `json:"unit"`
 				PricePerUnit struct {
@@ -65,11 +67,11 @@ type priceList struct {
 // look plausible.
 func (p priceList) rate(unit string) (float64, bool) {
 	for _, term := range p.Terms.OnDemand {
-		if term.Unit != unit {
-			continue
-		}
 		for _, dim := range term.PriceDimensions {
-			if dim.Unit != "" && dim.Unit != unit {
+			// Matched on the dimension, which is where the unit actually is.
+			// A dimension with no unit is not a price for the unit asked for
+			// and is skipped rather than assumed.
+			if dim.Unit != unit {
 				continue
 			}
 			v, err := strconv.ParseFloat(dim.PricePerUnit.USD, 64)
@@ -166,7 +168,13 @@ func (c *clients) storageRate(ctx context.Context, region string) (float64, erro
 // charged twice for the same thing and only one of them is a line item an
 // operator can predict.
 func (c *clients) publicIPv4Rate(ctx context.Context, region string) (float64, error) {
+	// `group`, not `productFamily`: the AmazonVPC price list carries no
+	// productFamily attribute at all, so the obvious filter matches nothing and
+	// the estimate fails for a reason that has nothing to do with the price.
+	// The group holds the two variants AWS bills - IdleAddress and InUseAddress -
+	// which share a rate, and lowest picks it without depending on which a
+	// region happens to list first.
 	return c.lowestRate(ctx, svcVPC, region, unitHours, filters(region,
-		"productFamily", "Public IPv4 Address",
+		"group", "VPCPublicIPv4Address",
 	))
 }

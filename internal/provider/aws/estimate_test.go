@@ -16,23 +16,35 @@ func prices(t *testing.T, f *fake) {
 		if action != priceAction {
 			return 200, "{}"
 		}
-		volumes, family := false, ""
+		volumes, group, instance := false, "", false
 		for _, x := range jsonBody(t, body)["Filters"].([]any) {
 			kv := x.(map[string]any)
 			switch kv["Field"] {
 			case "volumeApiName":
 				volumes = true
-			case "productFamily":
-				family, _ = kv["Value"].(string)
+			// Keyed on what a real product carries. The AmazonVPC list has no
+			// productFamily attribute at all, so keying on one made this fake
+			// agree with the code by construction and hid the filter that matched
+			// nothing.
+			case "group":
+				group, _ = kv["Value"].(string)
+			case "instanceType":
+				instance = true
 			}
 		}
 		switch {
 		case volumes:
 			return 200, `{"PriceList":[` + quoteJSON(entry(unitGBMon, "0.08", nil)) + `]}`
-		case family == "Public IPv4 Address":
+		case group == "VPCPublicIPv4Address":
 			return 200, `{"PriceList":[` + quoteJSON(entry(unitHours, "0.005", nil)) + `]}`
+		case instance:
+			return 200, `{"PriceList":[` + quoteJSON(entry(unitHours, "0.0368", nil)) + `]}`
 		}
-		return 200, `{"PriceList":[` + quoteJSON(entry(unitHours, "0.0368", nil)) + `]}`
+		// An unrecognised filter set is a question this fake cannot answer, and
+		// answering it with the compute rate is how a wrong price gets a green
+		// test attached to it.
+		t.Errorf("unrecognised price filter set: volumes=%v group=%q instance=%v", volumes, group, instance)
+		return 200, `{"PriceList":[]}`
 	}
 }
 
