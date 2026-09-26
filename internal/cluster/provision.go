@@ -200,6 +200,16 @@ func (p *Provisioner) stalled(name string) string {
 		"; this usually needs a look, not more waiting"
 }
 
+// stalledNote is the stall signal as a suffix, for the phases that report a
+// specific error of their own: the operator gets both the reason and how long
+// it has persisted, instead of a reason that never changes.
+func stalledNote(p *Provisioner, name string) string {
+	if s := p.stalled(name); s != "" {
+		return "; " + s
+	}
+	return ""
+}
+
 // verify is the last stretch, and it is the only stretch that talks to the
 // cluster. A cluster is `ready` when its own API accepts the password the control
 // plane injected and issues a key of its own — which is a stronger claim than
@@ -215,7 +225,7 @@ func (p *Provisioner) verify(ctx context.Context, name string, c *Cluster, handl
 	rem := p.RemoteFor(st.URL)
 	pin, err := rem.EstablishPin(ctx, st.URL)
 	if err != nil {
-		return p.reg.Phase(name, StatusProvisioning, PhaseVerifying, err.Error())
+		return p.reg.Phase(name, StatusProvisioning, PhaseVerifying, err.Error()+stalledNote(p, name))
 	}
 	if err := p.reg.SetPin(name, pin); err != nil {
 		return err
@@ -225,8 +235,12 @@ func (p *Provisioner) verify(ctx context.Context, name string, c *Cluster, handl
 		return err
 	}
 	if err := rem.Login(ctx, pw); err != nil {
+		// A cluster that keeps refusing this control plane is stuck in exactly
+		// the way one that never finishes installing is, and it happens on this
+		// path just as much as on the boot path. The operator gets the reason
+		// and how long it has persisted, not a reason that never changes.
 		return p.reg.Phase(name, StatusProvisioning, PhaseVerifying,
-			"the cluster rejected the control plane's login: "+err.Error())
+			"the cluster rejected the control plane's login: "+err.Error()+stalledNote(p, name))
 	}
 
 	if err := p.reg.Phase(name, StatusProvisioning, PhaseMintingKey, ""); err != nil {
@@ -234,7 +248,7 @@ func (p *Provisioner) verify(ctx context.Context, name string, c *Cluster, handl
 	}
 	key, err := rem.MintAPIKey(ctx, "control-plane-"+name)
 	if err != nil {
-		return p.reg.Phase(name, StatusProvisioning, PhaseMintingKey, err.Error())
+		return p.reg.Phase(name, StatusProvisioning, PhaseMintingKey, err.Error()+stalledNote(p, name))
 	}
 	if err := p.reg.MintAPIKey(name, key); err != nil {
 		return err

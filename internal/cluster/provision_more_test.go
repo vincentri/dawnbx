@@ -926,3 +926,54 @@ func TestTheStallNoteSurvivesItsOwnClock(t *testing.T) {
 		t.Errorf("the note reset its own clock: %q", after.Detail)
 	}
 }
+
+// TestAClusterThatRefusesTheControlPlaneIsCalledOut: the boot path is not the
+// only place a cluster can stop advancing. Once the host is up, the remaining
+// work is the control plane talking to the cluster's own API, and a cluster that
+// keeps refusing that login is stuck in exactly the same way a cluster that
+// never finishes installing is. The first version of the stall note covered only
+// the two phases before the cluster is reached, so this one was silent.
+func TestAClusterThatRefusesTheControlPlaneIsCalledOut(t *testing.T) {
+	p, reg, fp, cl := newProv(t)
+	fp.setStates(provider.Status{State: provider.Ready, URL: "https://n1.example"})
+	cl.loginErr = errRefused
+
+	ctx := context.Background()
+	if _, err := p.Begin(ctx, okReq(), provCat()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := reg.Get("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Phase != PhaseVerifying {
+		t.Fatalf("phase %q, want %q", c.Phase, PhaseVerifying)
+	}
+	// The reason the operator needs.
+	if !strings.Contains(c.Detail, "rejected the control plane's login") {
+		t.Errorf("the reason is missing: %q", c.Detail)
+	}
+	// And how long it has been going on, once it has.
+	p.StaleAfter = time.Minute
+	reg.SetClock(func() time.Time { return time.Unix(1750000000, 0).Add(6 * time.Minute) })
+	if err := p.Run(ctx, "probe1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reg.Get("probe1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(after.Detail, "no progress for") {
+		t.Errorf("a cluster that keeps refusing the login is not called out: %q", after.Detail)
+	}
+	if after.Status != StatusProvisioning {
+		t.Errorf("being stuck is not being failed: %s", after.Status)
+	}
+}
+
+// errRefused is what a cluster says when it will not accept this control plane's
+// session — a wrong password, or an admin.env that was never applied.
+var errRefused = errors.New("401 unauthorized")
