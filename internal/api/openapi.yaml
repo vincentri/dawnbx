@@ -803,7 +803,7 @@ components:
 
     ClusterNode:
       type: object
-      required: [id, instance_type, status, sandboxes, created]
+      required: [id, instance_type, status, detail, sandboxes, created]
       properties:
         id:
           type: string

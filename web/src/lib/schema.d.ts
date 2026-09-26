@@ -1841,7 +1841,7 @@ export interface components {
        * @enum {string}
        */
       status: "provisioning" | "ready" | "failed";
-      detail?: string;
+      detail: string;
       /** @description last observed count; the cluster is the authority */
       sandboxes: number;
       /** Format: date-time */

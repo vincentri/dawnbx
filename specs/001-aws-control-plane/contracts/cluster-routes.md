@@ -17,6 +17,11 @@ copies today, with nothing keeping them equal (`AGENTS.md`, contract section).
 - Session-only: an API key cannot call any of these. `signedIn` refuses keys outright
   (`internal/api/manage.go:32-37`); the ones marked admin require `adminOnly`
   (`internal/api/manage.go:41-49`).
+- **Two of these are session-only rather than admin-only**: `GET /v1/control-plane` and
+  `GET /v1/providers`. They answer "which server is this" and "what can it provision
+  with", and neither spends money nor reads a cluster, so requiring an administrator would
+  gate a question every signed-in operator needs to see the answer to. The other thirteen
+  need an administrator.
 - Cookie-authed writes need `X-Dawnbx: 1` (`internal/api/api.go:246-250`). The dashboard client
   already sends it on every request (`web/src/lib/api.ts:8`).
 - **Path parameters are never named `id`.** `s.auth` routes any `{id}` parameter through

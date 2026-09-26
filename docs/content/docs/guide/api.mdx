@@ -4,9 +4,10 @@ description: Every route dawnbx exposes.
 ---
 
 All routes are under `/v1` and need `Authorization: Bearer <key>`, except where
-noted. Key, user, org and password routes need a dashboard session instead, and
-the cluster routes below need an administrator's dashboard session — an API key
-can never manage infrastructure.
+noted. Key, user, org and password routes need a dashboard session instead. The
+cluster routes below need a dashboard session too, and an API key can never
+manage infrastructure; all of them need an administrator's except the capability
+probe and the provider list, which read nothing and spend nothing.
 
 Errors are JSON:
 
