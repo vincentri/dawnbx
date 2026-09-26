@@ -27,6 +27,7 @@ cd ../dawnbx-<task>        # every command below runs here
 - `cd sdk/python && python3 -m unittest discover -s tests` — Python SDK
 - `npm run types:check --prefix docs` — docs site
 - `npm run build --prefix web` — **required for any `web/` change**, see §3
+- `python3 hack/check-harness-cites.py` — runs on every commit via `.githooks/pre-commit`; fails when a line in this file cites a file that is gone. Enable it once per clone with `git config core.hooksPath .githooks`. If it blocks you, the cite is stale or the sentence should go — do not widen the check to make it pass.
 
 Live tier, only for sandbox / k8s / quota work: `hack/dev-vm.sh` builds and installs into the Lima VM, `hack/verify.sh` runs inside it as root against k3s, gVisor, and a real sandbox pod. Neither is a lint gate.
 
