@@ -1,14 +1,14 @@
 import "./index.css";
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { setSignedOut } from "@/lib/api";
-import { Shell, signOut } from "@/pages/shell";
 import { Sandboxes } from "@/pages/sandboxes";
 import { Settings } from "@/pages/settings";
+import { Shell, signOut } from "@/pages/shell";
 import { TerminalPage } from "@/pages/terminal";
 
 const queryClient = new QueryClient({
@@ -24,13 +24,15 @@ const routeTree = root.addChildren([
     getParentRoute: () => root,
     path: "/",
     component: Sandboxes,
-    validateSearch: (s: Record<string, unknown>): { id?: string } => (typeof s.id === "string" ? { id: s.id } : {}),
+    validateSearch: (s: Record<string, unknown>): { id?: string } =>
+      typeof s.id === "string" ? { id: s.id } : {},
   }),
   createRoute({
     getParentRoute: () => root,
     path: "/settings",
     component: Settings,
-    validateSearch: (s: Record<string, unknown>): { tab?: string } => (typeof s.tab === "string" ? { tab: s.tab } : {}),
+    validateSearch: (s: Record<string, unknown>): { tab?: string } =>
+      typeof s.tab === "string" ? { tab: s.tab } : {},
   }),
   createRoute({ getParentRoute: () => root, path: "/terminal/$id", component: TerminalPage }),
 ]);

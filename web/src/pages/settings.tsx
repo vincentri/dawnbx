@@ -1,18 +1,38 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { cn } from "cn";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Confirm } from "@/components/confirm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, must, when, type Principal } from "@/lib/api";
+import { api, must, type Principal, when } from "@/lib/api";
 import { signOut, useMe } from "./shell";
 
 export function Settings() {
@@ -72,9 +92,20 @@ function Section(props: { title: string; desc?: string; children: React.ReactNod
 // One place to copy a secret or command; `small` for the long join command.
 function CopyValue({ value, small }: { value: string; small?: boolean }) {
   return (
-    <div className="flex gap-2">
-      <code className={cn("flex-1 rounded bg-muted px-2 py-1 font-mono break-all select-all", small && "text-xs")}>{value}</code>
-      <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(value).then(() => toast.success("Copied"))}>
+    <div key="cmd" className="flex gap-2">
+      <code
+        className={cn(
+          "flex-1 rounded bg-muted px-2 py-1 font-mono break-all select-all",
+          small && "text-xs",
+        )}
+      >
+        {value}
+      </code>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => navigator.clipboard.writeText(value).then(() => toast.success("Copied"))}
+      >
         Copy
       </Button>
     </div>
@@ -112,7 +143,10 @@ function Grid(props: { head: string[]; rows: React.ReactNode[][]; empty?: string
 }
 
 function OrgSelect(props: { value: string; onChange: (v: string) => void }) {
-  const orgs = useQuery({ queryKey: ["orgs"], queryFn: async () => (await must(api.GET("/v1/orgs"))).orgs });
+  const orgs = useQuery({
+    queryKey: ["orgs"],
+    queryFn: async () => (await must(api.GET("/v1/orgs"))).orgs,
+  });
   return (
     <Select value={props.value} onValueChange={props.onChange}>
       <SelectTrigger className="w-36" aria-label="org">
@@ -131,13 +165,21 @@ function OrgSelect(props: { value: string; onChange: (v: string) => void }) {
 
 function Keys({ me }: { me: Principal }) {
   const qc = useQueryClient();
-  const keys = useQuery({ queryKey: ["keys"], queryFn: async () => (await must(api.GET("/v1/keys"))).keys });
+  const keys = useQuery({
+    queryKey: ["keys"],
+    queryFn: async () => (await must(api.GET("/v1/keys"))).keys,
+  });
   const [name, setName] = useState("");
   const [ttl, setTtl] = useState("never");
   const [org, setOrg] = useState(me.org);
   const [token, setToken] = useState<string>();
   const create = useMutation({
-    mutationFn: () => must(api.POST("/v1/keys", { body: { name, ...(ttl !== "never" && { ttl }), ...(me.admin && { org }) } })),
+    mutationFn: () =>
+      must(
+        api.POST("/v1/keys", {
+          body: { name, ...(ttl !== "never" && { ttl }), ...(me.admin && { org }) },
+        }),
+      ),
     onSuccess: (r) => {
       setToken(r.key);
       setName("");
@@ -145,14 +187,18 @@ function Keys({ me }: { me: Principal }) {
     },
   });
   const revoke = useMutation({
-    mutationFn: (id: string) => must(api.DELETE("/v1/keys/{key}", { params: { path: { key: id } } })),
+    mutationFn: (id: string) =>
+      must(api.DELETE("/v1/keys/{key}", { params: { path: { key: id } } })),
     onSuccess: () => {
       setToken(undefined);
       qc.invalidateQueries({ queryKey: ["keys"] });
     },
   });
   return (
-    <Section title="API keys" desc="SDKs and the CLI use these (DAWNBX_API_KEY). The token is shown once.">
+    <Section
+      title="API keys"
+      desc="SDKs and the CLI use these (DAWNBX_API_KEY). The token is shown once."
+    >
       <form
         className="flex flex-wrap gap-2"
         onSubmit={(e) => {
@@ -160,7 +206,14 @@ function Keys({ me }: { me: Principal }) {
           create.mutate();
         }}
       >
-        <Input className="w-56" placeholder="name, e.g. ci" required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          className="w-56"
+          placeholder="name, e.g. ci"
+          required
+          maxLength={100}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         {me.admin && <OrgSelect value={org} onChange={setOrg} />}
         <Select value={ttl} onValueChange={setTtl}>
           <SelectTrigger className="w-40" aria-label="expires">
@@ -187,16 +240,26 @@ function Keys({ me }: { me: Principal }) {
         head={["ID", "Name", "Org", "Created", "Last used", "Expires", ""]}
         empty="No keys yet."
         rows={[...(keys.data ?? [])].reverse().map((k) => [
-          <span className="font-mono">{k.id}</span>,
+          <span key="id" className="font-mono">
+            {k.id}
+          </span>,
           k.name,
           k.org,
           when(k.created),
           when(k.last_used),
           k.expires ? when(k.expires) : "never",
           k.revoked ? (
-            <Badge variant="outline">revoked</Badge>
+            <Badge key="revoked" variant="outline">
+              revoked
+            </Badge>
           ) : (
-            <Confirm title={`Revoke "${k.name}"?`} body="Clients using it stop working within 30 seconds." action="Revoke" onConfirm={() => revoke.mutate(k.id)}>
+            <Confirm
+              key="revoke"
+              title={`Revoke "${k.name}"?`}
+              body="Clients using it stop working within 30 seconds."
+              action="Revoke"
+              onConfirm={() => revoke.mutate(k.id)}
+            >
               <Button size="xs" variant="destructive">
                 Revoke
               </Button>
@@ -209,13 +272,24 @@ function Keys({ me }: { me: Principal }) {
 }
 
 function Audit() {
-  const ev = useQuery({ queryKey: ["audit"], queryFn: async () => (await must(api.GET("/v1/audit"))).events });
+  const ev = useQuery({
+    queryKey: ["audit"],
+    queryFn: async () => (await must(api.GET("/v1/audit"))).events,
+  });
   return (
     <Section title="Audit log" desc="Latest 200 events.">
       <Grid
         head={["When", "Org", "Actor", "Action", "Target"]}
         empty="Nothing yet."
-        rows={(ev.data ?? []).map((e) => [when(e.at), e.org, e.actor, e.action, <span className="font-mono">{e.target}</span>])}
+        rows={(ev.data ?? []).map((e) => [
+          when(e.at),
+          e.org,
+          e.actor,
+          e.action,
+          <span key="target" className="font-mono">
+            {e.target}
+          </span>,
+        ])}
       />
     </Section>
   );
@@ -223,8 +297,16 @@ function Audit() {
 
 function Users({ me }: { me: Principal }) {
   const qc = useQueryClient();
-  const users = useQuery({ queryKey: ["users"], queryFn: async () => (await must(api.GET("/v1/users"))).users });
-  const [f, setF] = useState({ username: "", password: "", org: me.org, role: "member" as "member" | "admin" });
+  const users = useQuery({
+    queryKey: ["users"],
+    queryFn: async () => (await must(api.GET("/v1/users"))).users,
+  });
+  const [f, setF] = useState({
+    username: "",
+    password: "",
+    org: me.org,
+    role: "member" as "member" | "admin",
+  });
   const done = () => qc.invalidateQueries({ queryKey: ["users"] });
   const create = useMutation({
     mutationFn: () => must(api.POST("/v1/users", { body: { ...f, username: f.username.trim() } })),
@@ -234,7 +316,8 @@ function Users({ me }: { me: Principal }) {
     },
   });
   const del = useMutation({
-    mutationFn: (u: string) => must(api.DELETE("/v1/users/{username}", { params: { path: { username: u } } })),
+    mutationFn: (u: string) =>
+      must(api.DELETE("/v1/users/{username}", { params: { path: { username: u } } })),
     onSuccess: done,
   });
   return (
@@ -246,7 +329,15 @@ function Users({ me }: { me: Principal }) {
           create.mutate();
         }}
       >
-        <Input className="w-40" placeholder="username" required maxLength={64} autoComplete="off" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} />
+        <Input
+          className="w-40"
+          placeholder="username"
+          required
+          maxLength={64}
+          autoComplete="off"
+          value={f.username}
+          onChange={(e) => setF({ ...f, username: e.target.value })}
+        />
         <Input
           className="w-52"
           type="password"
@@ -259,7 +350,10 @@ function Users({ me }: { me: Principal }) {
           onChange={(e) => setF({ ...f, password: e.target.value })}
         />
         <OrgSelect value={f.org} onChange={(org) => setF({ ...f, org })} />
-        <Select value={f.role} onValueChange={(role) => setF({ ...f, role: role as typeof f.role })}>
+        <Select
+          value={f.role}
+          onValueChange={(role) => setF({ ...f, role: role as typeof f.role })}
+        >
           <SelectTrigger className="w-28" aria-label="role">
             <SelectValue />
           </SelectTrigger>
@@ -280,11 +374,18 @@ function Users({ me }: { me: Principal }) {
           u.role,
           when(u.created),
           u.username === me.user ? (
-            <span className="text-muted-foreground">you</span>
+            <span key="who" className="text-muted-foreground">
+              you
+            </span>
           ) : (
-            <div className="flex gap-2">
+            <div key="actions" className="flex gap-2">
               <ResetPassword username={u.username} />
-              <Confirm title={`Delete user ${u.username}?`} body="Their sessions end now. Their API keys keep working." action="Delete" onConfirm={() => del.mutate(u.username)}>
+              <Confirm
+                title={`Delete user ${u.username}?`}
+                body="Their sessions end now. Their API keys keep working."
+                action="Delete"
+                onConfirm={() => del.mutate(u.username)}
+              >
                 <Button size="xs" variant="destructive">
                   Delete
                 </Button>
@@ -301,7 +402,13 @@ function ResetPassword({ username }: { username: string }) {
   const [open, setOpen] = useState(false);
   const [pw, setPw] = useState("");
   const reset = useMutation({
-    mutationFn: () => must(api.POST("/v1/users/{username}/password", { params: { path: { username } }, body: { password: pw } })),
+    mutationFn: () =>
+      must(
+        api.POST("/v1/users/{username}/password", {
+          params: { path: { username } },
+          body: { password: pw },
+        }),
+      ),
     onSuccess: () => {
       setOpen(false);
       setPw("");
@@ -326,7 +433,16 @@ function ResetPassword({ username }: { username: string }) {
           <DialogHeader>
             <DialogTitle>New password for {username}</DialogTitle>
           </DialogHeader>
-          <Input type="password" placeholder="10 to 72 chars" required minLength={10} maxLength={72} autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
+          <Input
+            type="password"
+            placeholder="10 to 72 chars"
+            required
+            minLength={10}
+            maxLength={72}
+            autoComplete="new-password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+          />
           <DialogFooter>
             <Button type="submit" disabled={reset.isPending}>
               Set password
@@ -340,7 +456,10 @@ function ResetPassword({ username }: { username: string }) {
 
 function Orgs() {
   const qc = useQueryClient();
-  const orgs = useQuery({ queryKey: ["orgs"], queryFn: async () => (await must(api.GET("/v1/orgs"))).orgs });
+  const orgs = useQuery({
+    queryKey: ["orgs"],
+    queryFn: async () => (await must(api.GET("/v1/orgs"))).orgs,
+  });
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const create = useMutation({
@@ -360,15 +479,34 @@ function Orgs() {
           create.mutate();
         }}
       >
-        <Input className="w-40" placeholder="id, e.g. acme" required pattern="[a-z0-9][a-z0-9\-]{0,39}" value={id} onChange={(e) => setId(e.target.value)} />
-        <Input className="w-56" placeholder="display name (optional)" maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          className="w-40"
+          placeholder="id, e.g. acme"
+          required
+          pattern="[a-z0-9][a-z0-9\-]{0,39}"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+        />
+        <Input
+          className="w-56"
+          placeholder="display name (optional)"
+          maxLength={100}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         <Button type="submit" disabled={create.isPending}>
           Add org
         </Button>
       </form>
       <Grid
         head={["ID", "Name", "Created"]}
-        rows={(orgs.data ?? []).map((o) => [<span className="font-mono">{o.id}</span>, o.name, o.created.startsWith("1970") ? "–" : when(o.created)])}
+        rows={(orgs.data ?? []).map((o) => [
+          <span key="id" className="font-mono">
+            {o.id}
+          </span>,
+          o.name,
+          o.created.startsWith("1970") ? "–" : when(o.created),
+        ])}
       />
     </Section>
   );
@@ -376,30 +514,51 @@ function Orgs() {
 
 function Nodes() {
   const qc = useQueryClient();
-  const nodes = useQuery({ queryKey: ["nodes"], queryFn: async () => (await must(api.GET("/v1/nodes"))).nodes, refetchInterval: 5000 });
+  const nodes = useQuery({
+    queryKey: ["nodes"],
+    queryFn: async () => (await must(api.GET("/v1/nodes"))).nodes,
+    refetchInterval: 5000,
+  });
   const join = useMutation({ mutationFn: () => must(api.GET("/v1/nodes/join")) });
   const remove = useMutation({
-    mutationFn: (name: string) => must(api.DELETE("/v1/nodes/{name}", { params: { path: { name } } })),
+    mutationFn: (name: string) =>
+      must(api.DELETE("/v1/nodes/{name}", { params: { path: { name } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["nodes"] }),
   });
   const workers = nodes.data?.some((n) => n.role === "worker");
   return (
-    <Section title="Nodes" desc="Workers add room for sandboxes. Run the join command as root on a fresh Linux box.">
+    <Section
+      title="Nodes"
+      desc="Workers add room for sandboxes. Run the join command as root on a fresh Linux box."
+    >
       <div className="flex flex-col gap-2">
-        <Button variant="outline" className="w-fit" disabled={join.isPending} onClick={() => join.mutate()}>
+        <Button
+          variant="outline"
+          className="w-fit"
+          disabled={join.isPending}
+          onClick={() => join.mutate()}
+        >
           Show join command
         </Button>
-        {join.data && (
-          <CopyValue value={join.data.command} small />
-        )}
+        {join.data && <CopyValue value={join.data.command} small />}
       </div>
-      {nodes.data && !workers && <p className="text-sm text-muted-foreground">No workers yet; everything runs on this server.</p>}
+      {nodes.data && !workers && (
+        <p className="text-sm text-muted-foreground">
+          No workers yet; everything runs on this server.
+        </p>
+      )}
       <Grid
         head={["Name", "Role", "Status", "IP", "Sandboxes", "Kubelet", ""]}
         rows={(nodes.data ?? []).map((n) => [
           n.name,
           n.role,
-          n.ready ? <Badge>Ready</Badge> : <Badge variant="destructive">NotReady since {when(n.since)}</Badge>,
+          n.ready ? (
+            <Badge key="ready">Ready</Badge>
+          ) : (
+            <Badge key="notready" variant="destructive">
+              NotReady since {when(n.since)}
+            </Badge>
+          ),
           n.ip,
           n.sandboxes,
           n.kubelet,
@@ -442,7 +601,14 @@ function Account() {
           change.mutate();
         }}
       >
-        <Input type="password" placeholder="current password" required autoComplete="current-password" value={old} onChange={(e) => setOld(e.target.value)} />
+        <Input
+          type="password"
+          placeholder="current password"
+          required
+          autoComplete="current-password"
+          value={old}
+          onChange={(e) => setOld(e.target.value)}
+        />
         <Input
           type="password"
           placeholder="new password (10+ chars)"

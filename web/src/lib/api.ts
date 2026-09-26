@@ -17,12 +17,19 @@ api.use({
 });
 
 // must unwraps an openapi-fetch result, throwing the server's "message (hint)".
-export async function must<T>(p: Promise<{ data?: T; error?: unknown; response: Response }>): Promise<T> {
+export async function must<T>(
+  p: Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<T> {
   const { data, error, response } = await p;
-  if (response.status === 401 && !response.url.endsWith("/v1/login")) throw new Error("signed out (session expired); sign in again");
+  if (response.status === 401 && !response.url.endsWith("/v1/login"))
+    throw new Error("signed out (session expired); sign in again");
   if (!response.ok) {
     const e = error as components["schemas"]["Error"] | undefined;
-    throw new Error(e?.message ? e.message + (e.hint ? ` (${e.hint})` : "") : `${response.status} ${response.statusText}`);
+    throw new Error(
+      e?.message
+        ? e.message + (e.hint ? ` (${e.hint})` : "")
+        : `${response.status} ${response.statusText}`,
+    );
   }
   return data as T;
 }

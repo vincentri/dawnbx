@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,7 +12,13 @@ import {
 } from "@/components/ui/dialog";
 
 // Confirm wraps a trigger in a "are you sure" dialog; onConfirm runs on Yes.
-export function Confirm(props: { title: string; body?: ReactNode; action: string; onConfirm: () => void; children: ReactNode }) {
+export function Confirm(props: {
+  title: string;
+  body?: ReactNode;
+  action: string;
+  onConfirm: () => void;
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>

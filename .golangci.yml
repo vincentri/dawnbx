@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  disable:
+    # errcheck is off on purpose. This codebase is written in a deliberate
+    # best-effort style: fmt.Fprint* to the terminal, `defer x.Close()`,
+    # `tx.Rollback()` on the error path, audit rows that must not fail a
+    # request, and a dummy bcrypt compare to equalise login timing. Turning it
+    # on produced 50 findings that are all correct as written, and the only
+    # ways to silence them were 50 nolint comments or a config that lies about
+    # which functions are safe. staticcheck still catches the unchecked errors
+    # that actually matter.
+    - errcheck
+  enable:
+    - bodyclose
+    - misspell
+    - unconvert
+  exclusions:
+    rules:
+      # Test cleanup closes databases and bodies by hand; the checks do not apply.
+      - path: _test\.go
+        linters:
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt

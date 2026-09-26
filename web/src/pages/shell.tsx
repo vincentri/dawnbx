@@ -1,7 +1,7 @@
-import { useState } from "react";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { BoxIcon, LogOutIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -47,7 +47,11 @@ export function Shell() {
         </Link>
         <nav className="flex gap-1 text-sm">
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/" activeOptions={{ exact: true, includeSearch: false }} activeProps={{ className: "bg-muted" }}>
+            <Link
+              to="/"
+              activeOptions={{ exact: true, includeSearch: false }}
+              activeProps={{ className: "bg-muted" }}
+            >
               Sandboxes
             </Link>
           </Button>
@@ -68,13 +72,20 @@ export function Shell() {
 }
 
 function Status() {
-  const st = useQuery({ queryKey: ["status"], queryFn: () => must(api.GET("/v1/status")), refetchInterval: 5000 });
+  const st = useQuery({
+    queryKey: ["status"],
+    queryFn: () => must(api.GET("/v1/status")),
+    refetchInterval: 5000,
+  });
   if (!st.data) return <div className="flex-1" />;
   const s = st.data;
   return (
     <div className="flex-1 text-right text-xs text-muted-foreground">
-      {s.version} · <span className={s.free_pct < 15 ? "text-destructive" : ""}>{Math.round(s.free_pct)}% disk free</span> · warm{" "}
-      {s.warm}/{s.pool_size}
+      {s.version} ·{" "}
+      <span className={s.free_pct < 15 ? "text-destructive" : ""}>
+        {Math.round(s.free_pct)}% disk free
+      </span>{" "}
+      · warm {s.warm}/{s.pool_size}
     </div>
   );
 }
@@ -116,7 +127,13 @@ function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const login = useMutation({
-    mutationFn: () => must(api.POST("/v1/login", { body: { username: username.trim(), password }, params: { header: { "X-Dawnbx": "1" } } })),
+    mutationFn: () =>
+      must(
+        api.POST("/v1/login", {
+          body: { username: username.trim(), password },
+          params: { header: { "X-Dawnbx": "1" } },
+        }),
+      ),
     onSuccess: (p) => qc.setQueryData(["me"], p),
     onError: () => setPassword(""),
   });
@@ -139,7 +156,14 @@ function Login() {
           >
             <div className="grid gap-2">
               <Label htmlFor="user">Username</Label>
-              <Input id="user" autoComplete="username" autoFocus required value={username} onChange={(e) => setUsername(e.target.value)} />
+              <Input
+                id="user"
+                autoComplete="username"
+                autoFocus
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="pass">Password</Label>

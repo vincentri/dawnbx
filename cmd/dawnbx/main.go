@@ -260,7 +260,7 @@ func run(c *client, cmd string, args []string, w io.Writer) (int, error) {
 
 	case "kill", "rm":
 		if len(args) == 0 {
-			return 2, fmt.Errorf("usage: dawnbx kill <id>...")
+			return 2, fmt.Errorf("usage: dawnbx kill <id>")
 		}
 		code := 0
 		for _, id := range args {

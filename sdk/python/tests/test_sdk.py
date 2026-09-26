@@ -3,22 +3,30 @@
 import json
 import sys
 import threading
-from urllib.parse import parse_qs, urlsplit
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from dawnbx import DawnbxError, Sandbox  # noqa: E402
+from dawnbx import DawnbxError, Sandbox
 
-SB = {"id": "sb-abc123", "image": "python:3.12-slim", "status": "running", "network": "internet",
-      "created": "2026-09-25T00:00:00.123456789Z", "expires_at": None, "restarted_at": None}
+SB = {
+    "id": "sb-abc123",
+    "image": "python:3.12-slim",
+    "status": "running",
+    "network": "internet",
+    "created": "2026-09-25T00:00:00.123456789Z",
+    "expires_at": None,
+    "restarted_at": None,
+}
 
 
 class Fake(BaseHTTPRequestHandler):
-    seen: list = []
+    seen: ClassVar[list] = []
     get_tries = 0
-    files: dict = {}
+    files: ClassVar[dict] = {}
 
     def log_message(self, *a):
         pass
@@ -47,7 +55,9 @@ class Fake(BaseHTTPRequestHandler):
         if "/files" in p:
             key = parse_qs(urlsplit(p).query)["path"][0]
             if key not in Fake.files:
-                return self.reply(404, {"code": "file_not_found", "message": f"{key}: no such file"})
+                return self.reply(
+                    404, {"code": "file_not_found", "message": f"{key}: no such file"}
+                )
             return self.reply(200, raw=Fake.files[key].encode())
         if p == "/v1/sandboxes/sb-abc123" and self.command == "GET":
             Fake.get_tries += 1
@@ -83,11 +93,19 @@ class TestSDK(unittest.TestCase):
                 self.assertEqual(cm.exception.code, "file_not_found")
                 with self.assertRaises(DawnbxError) as cm:
                     sb.extend("1h")
-                self.assertEqual((cm.exception.code, cm.exception.hint, cm.exception.status), ("expired", "use ttl=None", 410))
+                self.assertEqual(
+                    (cm.exception.code, cm.exception.hint, cm.exception.status),
+                    ("expired", "use ttl=None", 410),
+                )
                 Sandbox.get("sb-abc123", **o)  # retried through two 503s
             # exiting the block -> DELETE; not_found is swallowed
             self.assertIn('POST /v1/sandboxes {"ttl": null}', Fake.seen[0])
-            self.assertTrue(any(s.startswith("PUT /v1/sandboxes/sb-abc123/files?path=a%2Fb.txt x") for s in Fake.seen))
+            self.assertTrue(
+                any(
+                    s.startswith("PUT /v1/sandboxes/sb-abc123/files?path=a%2Fb.txt x")
+                    for s in Fake.seen
+                )
+            )
             self.assertTrue(Fake.seen[-1].startswith("DELETE /v1/sandboxes/sb-abc123"))
             self.assertEqual(Fake.get_tries, 3)
         finally:
