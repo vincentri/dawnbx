@@ -222,3 +222,40 @@ func TestLoadSealerIgnoresAKeyFileWhenAnExplicitKeyIsConfigured(t *testing.T) {
 		t.Error("an explicit key still touched the key file")
 	}
 }
+
+// TestARawKeyEndingInWhitespaceIsNotTrimmed: the hand-placed-key test above
+// writes 32 random bytes, so it failed about one run in sixty-four - a CI run
+// hit it before a laptop did, and what it found was not a flake. decodeKey
+// trimmed the file before looking at it, so a valid raw key whose last byte
+// happened to be a space, tab, CR or LF became 31 bytes and the control plane
+// refused to start. About one generated key in sixty-four is affected, which is
+// the same as saying one fresh deployment in sixty-four was broken.
+//
+// The bytes are fixed here rather than random so the test fails for the reason
+// it names, every time.
+func TestARawKeyEndingInWhitespaceIsNotTrimmed(t *testing.T) {
+	for _, last := range []byte{' ', '\t', '\r', '\n', 0x00, 0xff} {
+		dir := t.TempDir()
+		keyFile := filepath.Join(dir, "key")
+		raw := make([]byte, keyLen)
+		if _, err := rand.Read(raw); err != nil {
+			t.Fatal(err)
+		}
+		raw[keyLen-1] = last
+		// Also a leading one, which the other end of trim would eat.
+		raw[0] = '\n'
+		if err := os.WriteFile(keyFile, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, err := LoadSealer("", keyFile)
+		if err != nil {
+			t.Fatalf("a raw 32-byte key ending in %q was rejected: %v", last, err)
+		}
+		// And it must be the key that was written, not a repaired one.
+		sealed := s.Seal([]byte("v"))
+		back, err := s.Open(sealed)
+		if err != nil || string(back) != "v" {
+			t.Fatalf("seal round trip: %v %q", err, back)
+		}
+	}
+}
