@@ -42,6 +42,10 @@ func NewSealer(key []byte) (*Sealer, error) {
 // ErrNoKey means no control-plane key was configured and none could be found.
 var ErrNoKey = errors.New("no control-plane key")
 
+// keyLen is the one length a control-plane key is, whichever form it arrives
+// in: raw bytes, or hex that decodes to them.
+const keyLen = 32
+
 // LoadSealer resolves the key from source, falling back to the key file, and
 // generates the file on first run. The value is never logged, only the path.
 func LoadSealer(source, keyFile string) (*Sealer, error) {
@@ -110,8 +114,15 @@ func trim(b []byte) []byte {
 // a hand-placed key still works. The hex is what the file is written as because
 // a binary key in a text file is unreviewable and gets mangled by every copy.
 func decodeKey(b []byte) []byte {
+	// A raw binary key is used byte for byte, and trimming it is wrong: a
+	// generated key ends in a space, tab, CR or LF about one time in sixty-four,
+	// and trimming turns a valid 32-byte key into 31 and refuses to start. The
+	// length is the whole test - a file already the right size is not text,
+	if len(b) == keyLen {
+		return b
+	}
 	t := trim(b)
-	if len(t) == 32 {
+	if len(t) == keyLen {
 		return t
 	}
 	raw, err := hex.DecodeString(string(t))
