@@ -87,8 +87,8 @@ func (f *fakeProv) NodeAddrs(_ context.Context, _ provider.Handle, nodes []strin
 	}
 	return out, nil
 }
-func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) error {
-	if n == f.busy {
+func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n provider.NodeRef) error {
+	if n.ID == f.busy {
 		return provider.ErrNodeBusy
 	}
 	return nil

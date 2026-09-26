@@ -380,7 +380,7 @@ func (a *AWS) AddNode(ctx context.Context, h provider.Handle, spec provider.Node
 // sandboxes, and a node that does is left exactly as it was: no terminate call
 // is made, and the caller's 409 carries the cluster's own answer rather than a
 // guess from a count that was cached somewhere.
-func (a *AWS) RemoveNode(ctx context.Context, h provider.Handle, node string) error {
+func (a *AWS) RemoveNode(ctx context.Context, h provider.Handle, node provider.NodeRef) error {
 	ph, err := fromHandle(h)
 	if err != nil {
 		return err
@@ -405,13 +405,22 @@ func (a *AWS) RemoveNode(ctx context.Context, h provider.Handle, node string) er
 	if url == "" {
 		return fmt.Errorf("%w: cluster %s has no url yet", provider.ErrNotFound, ph.Stack)
 	}
-	if err := a.release(ctx, url, node); err != nil {
+	// The cluster releases by the name it gave the machine; this adapter
+	// terminates by the id it created it as. Falling back to the id when the
+	// cluster's name is unknown is deliberate: the cluster answers 404 and the
+	// operator is told, rather than the adapter quietly terminating a machine
+	// the cluster never agreed to release.
+	name := node.ClusterName
+	if name == "" {
+		name = node.ID
+	}
+	if err := a.release(ctx, url, name); err != nil {
 		if errors.Is(err, provider.ErrNodeBusy) {
-			return fmt.Errorf("%w: %s", provider.ErrNodeBusy, node)
+			return fmt.Errorf("%w: %s", provider.ErrNodeBusy, node.ID)
 		}
 		return err
 	}
-	return c.terminate(ctx, node)
+	return c.terminate(ctx, node.ID)
 }
 
 // SetBootstrap re-delivers a rotated credential by overwriting the same

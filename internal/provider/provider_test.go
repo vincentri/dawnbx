@@ -110,9 +110,9 @@ func (f *fakeProvider) NodeAddrs(_ context.Context, _ Handle, nodes []string) (m
 	}
 	return out, nil
 }
-func (f *fakeProvider) RemoveNode(_ context.Context, _ Handle, node string) error {
-	f.calls = append(f.calls, "RemoveNode:"+node)
-	if node == "busy" {
+func (f *fakeProvider) RemoveNode(_ context.Context, _ Handle, node NodeRef) error {
+	f.calls = append(f.calls, "RemoveNode:"+node.ID)
+	if node.ID == "busy" {
 		return ErrNodeBusy
 	}
 	return nil

@@ -198,7 +198,7 @@ func TestRemoveNodeRefusesABusyNodeWithoutTerminatingIt(t *testing.T) {
 			return provider.ErrNodeBusy
 		}
 	})
-	err := a.RemoveNode(testContext(t), clusterHandle(), "i-0abc")
+	err := a.RemoveNode(testContext(t), clusterHandle(), provider.NodeRef{ID: "i-0abc"})
 	if !errors.Is(err, provider.ErrNodeBusy) {
 		t.Fatalf("error = %v, want ErrNodeBusy", err)
 	}
@@ -216,7 +216,7 @@ func TestRemoveNodeTerminatesOnceTheClusterHasReleasedIt(t *testing.T) {
 	a := newAWS(t, e.f, func(o *Options) {
 		o.Release = func(context.Context, string, string) error { return nil }
 	})
-	if err := a.RemoveNode(testContext(t), clusterHandle(), "i-0abc"); err != nil {
+	if err := a.RemoveNode(testContext(t), clusterHandle(), provider.NodeRef{ID: "i-0abc"}); err != nil {
 		t.Fatal(err)
 	}
 	e.f.called("TerminateInstances")
@@ -333,7 +333,7 @@ func TestRemoveNodeAsksTheStackForTheURL(t *testing.T) {
 	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
 		`"security_group":"sg-0abc","launch_template":"lt-0abc"}`))
 
-	if err := a.RemoveNode(testContext(t), h, "i-0abc"); err != nil {
+	if err := a.RemoveNode(testContext(t), h, provider.NodeRef{ID: "i-0abc"}); err != nil {
 		t.Fatal(err)
 	}
 	if got == "" {
@@ -358,11 +358,60 @@ func TestRemoveNodeSaysSoWhenTheClusterHasNoURLAnywhere(t *testing.T) {
 	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
 		`"security_group":"sg-0abc","launch_template":"lt-0abc"}`))
 
-	err := a.RemoveNode(testContext(t), h, "i-0abc")
+	err := a.RemoveNode(testContext(t), h, provider.NodeRef{ID: "i-0abc"})
 	if err == nil {
 		t.Fatal("a cluster with no address anywhere was accepted")
 	}
 	if asked {
 		t.Error("the cluster was asked with no address to ask at")
+	}
+}
+
+// TestRemoveNodeReleasesByTheNameTheClusterGaveIt: the cluster is asked to let
+// go of the machine by the name it knows it as, and the adapter terminates the
+// instance by the id it created it as.
+//
+// These are different strings - a cluster calls a worker ip-172-31-22-242 and
+// the provider calls it i-0ad9fe756c55722b1 - and sending the provider's name to
+// the cluster's own API is a 404 from a cluster that was holding the worker.
+func TestRemoveNodeReleasesByTheNameTheClusterGaveIt(t *testing.T) {
+	e, _ := newEC2(t)
+	released := ""
+	a := newAWS(t, e.f, func(o *Options) {
+		o.Release = func(_ context.Context, _, node string) error {
+			released = node
+			return nil
+		}
+	})
+	err := a.RemoveNode(testContext(t), clusterHandle(), provider.NodeRef{
+		ID: "i-05b784e4f419f7664", ClusterName: "ip-172-31-22-242",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released != "ip-172-31-22-242" {
+		t.Errorf("released %q, want the name the cluster gave the worker", released)
+	}
+	e.f.called("TerminateInstances")
+}
+
+// TestRemoveNodeFallsBackToTheIDWhenTheNameIsUnknown: an unreachable cluster
+// leaves no name to send, and the id is then the best thing available. The
+// cluster's 404 says so, which is better than the adapter terminating a machine
+// the cluster never agreed to release.
+func TestRemoveNodeFallsBackToTheIDWhenTheNameIsUnknown(t *testing.T) {
+	e, _ := newEC2(t)
+	released := ""
+	a := newAWS(t, e.f, func(o *Options) {
+		o.Release = func(_ context.Context, _, node string) error {
+			released = node
+			return nil
+		}
+	})
+	if err := a.RemoveNode(testContext(t), clusterHandle(), provider.NodeRef{ID: "i-0abc"}); err != nil {
+		t.Fatal(err)
+	}
+	if released != "i-0abc" {
+		t.Errorf("released %q, want the id when no name is known", released)
 	}
 }

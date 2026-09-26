@@ -581,9 +581,9 @@ func (f *fakeProv) AddNode(context.Context, provider.Handle, provider.NodeSpec, 
 	f.seen = append(f.seen, "AddNode")
 	return "i-fake", nil
 }
-func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) error {
-	f.seen = append(f.seen, "RemoveNode:"+n)
-	if n == "busy" {
+func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n provider.NodeRef) error {
+	f.seen = append(f.seen, "RemoveNode:"+n.ID)
+	if n.ID == "busy" {
 		return provider.ErrNodeBusy
 	}
 	return nil

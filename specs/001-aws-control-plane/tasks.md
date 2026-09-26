@@ -735,3 +735,13 @@ ImageId and a node list that answers with the provider's own id.
       about a cluster at "" and answered "no cluster is registered at " for a
       cluster it had finished provisioning a minute earlier. AddNode already
       read the stack for this; RemoveNode did not (FR-010, blocks SC-004).
+
+- [X] T160 Release a worker by the name the cluster gave it. A worker has two
+      names and only the caller can connect them: the provider's id and whatever
+      the cluster called the machine. Removal sent the provider's name to the
+      cluster's own API, which answered 404 for a worker it was holding. The
+      provider is asked with both now - it releases by the cluster's name and
+      terminates by its own id, falling back to the id when no name is known so
+      the cluster's 404 says so rather than the adapter silently terminating a
+      machine nothing agreed to release. This is T155's cause on the write path:
+      the two sides never named a worker the same way (FR-010, blocks SC-004).
