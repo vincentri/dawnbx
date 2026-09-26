@@ -130,7 +130,7 @@ func (p *Provisioner) Run(ctx context.Context, name string) error {
 		return err
 	}
 	switch c.Status {
-	case StatusReady, StatusFailed, StatusDeleting, StatusDeleted:
+	case StatusReady, StatusFailed, StatusDeleting:
 		return nil
 	}
 	handle, err := p.reg.Handle(name)
@@ -276,12 +276,8 @@ func (p *Provisioner) fail(ctx context.Context, name, reason string) error {
 // Delete destroys a cluster and forgets it. It refuses while workers remain,
 // because removing the control-plane node from under a joined worker strands it.
 func (p *Provisioner) Delete(ctx context.Context, name string) error {
-	c, err := p.reg.Get(name)
-	if err != nil {
+	if _, err := p.reg.Get(name); err != nil {
 		return err
-	}
-	if c.Status == StatusDeleted {
-		return nil
 	}
 	nodes, err := p.reg.Nodes(name)
 	if err != nil {

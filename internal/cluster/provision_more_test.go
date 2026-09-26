@@ -199,7 +199,7 @@ func TestRunRefusesAClusterItCannotRead(t *testing.T) {
 }
 
 func TestRunLeavesSettledClustersAlone(t *testing.T) {
-	for _, status := range []string{StatusReady, StatusFailed, StatusDeleting, StatusDeleted} {
+	for _, status := range []string{StatusReady, StatusFailed, StatusDeleting} {
 		t.Run(status, func(t *testing.T) {
 			p, reg, fp, _ := begun(t)
 			if err := reg.Phase("probe1", status, "x", ""); err != nil {
@@ -550,17 +550,23 @@ func TestDeleteRefusesAClusterItCannotRead(t *testing.T) {
 	}
 }
 
-func TestDeleteIsANoOpForAnAlreadyDeletedCluster(t *testing.T) {
-	p, reg, fp, _ := begun(t)
-	if err := reg.Phase("probe1", StatusDeleted, "", ""); err != nil {
+// A repeated delete is a real case - an operator clicking twice, or a retry
+// after a timeout - and it is safe because Destroy settles the stack before it
+// returns, so the second call waits on a teardown that is already under way
+// rather than starting another. The short-circuit this replaced was for a
+// `deleted` state nothing writes, so it never covered this.
+func TestDeleteIsIdempotentForAClusterAlreadyGoing(t *testing.T) {
+	p, reg, _, _ := begun(t)
+	if err := reg.Phase("probe1", StatusDeleting, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	before := len(fp.seen)
 	if err := p.Delete(context.Background(), "probe1"); err != nil {
-		t.Fatal(err)
+		t.Fatalf("the first delete: %v", err)
 	}
-	if len(fp.seen) != before {
-		t.Errorf("an already deleted cluster was destroyed again: %v", fp.seen[before:])
+	// The record is gone, so the second call says so rather than acting on
+	// something that no longer exists.
+	if err := p.Delete(context.Background(), "probe1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a second delete returned %v, want the cluster to be already gone", err)
 	}
 }
 

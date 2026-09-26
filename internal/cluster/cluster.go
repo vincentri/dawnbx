@@ -27,7 +27,6 @@ const (
 	StatusReady        = "ready"
 	StatusFailed       = "failed"
 	StatusDeleting     = "deleting"
-	StatusDeleted      = "deleted"
 )
 
 // Phase values, appended to cluster_ops as the state machine advances. The names
