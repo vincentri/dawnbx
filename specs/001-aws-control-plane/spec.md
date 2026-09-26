@@ -203,6 +203,16 @@ start provisioning.
 - **FR-017**: The system MUST obtain AWS provisioning status through the
   control plane's configured credential source and MUST NOT require the control
   plane to accept public inbound status reports from provisioned hosts.
+- **FR-018**: The system MUST let an authorized operator delete a cluster from
+  the dashboard, MUST require an explicit confirmation, and MUST refuse while
+  workers are still attached. It MUST remove the cluster's paid resources and
+  MUST NOT delete the record until the provider confirms they are gone.
+
+**Why FR-018 exists.** The assumption below scoped the delete *dashboard flow*
+out, "unless later planning includes it". Building it proved that leaving it out
+is not neutral: a cluster that failed to provision keeps its name and its record
+forever, and the failure panel's only advice is to delete it. So it is in, as
+FR-018, and the assumption is amended to say so.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -271,6 +281,7 @@ start provisioning.
   Azure are deliberately visible but disabled, not partial implementations.
 - SSH and other out-of-band host access remain available only for rescue work,
   such as a wedged node, full disk, or failed upgrade.
-- Cluster deletion is included in the provider lifecycle boundary to prevent a
-  provider design that cannot clean up resources, but a dashboard delete-cluster
-  workflow is outside this feature unless later planning includes it.
+- Cluster deletion is included in the provider lifecycle boundary, and the
+  dashboard flow for it is now in scope as FR-018. It was originally excluded on
+  the understanding that the failure panel would have another way to suggest;
+  it does not.

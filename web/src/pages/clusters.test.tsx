@@ -27,8 +27,12 @@ const cluster = (over: Record<string, unknown> = {}) => ({
   disk_gib: 30,
   domain: "",
   status: "ready",
+  phase: "",
+  detail: "",
   hourly_usd: 0.02,
   monthly_usd: 14.6,
+  url: "https://boxy.example",
+  tls_pin: "",
   created: "2026-09-26T10:00:00Z",
   updated: "2026-09-26T10:05:00Z",
   ...over,
@@ -949,5 +953,66 @@ describe("Moving around", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith("sha256/PIN");
+  });
+});
+
+// --- a cluster that has not settled -------------------------------------------
+
+describe("A cluster that has not settled", () => {
+  // The overrides describe the cluster; the routes describe the server. They
+  // are separate because one of these tests is about what the page does with a
+  // value the server sent, not about a request it made.
+  const at = (over: Record<string, unknown>) => {
+    const calls = installFetch(base({ [`GET ${CLUSTER_PATH}`]: { json: cluster(over) } }));
+    const view = renderApp({ entry: "/clusters?step=status&name=boxy", me: ADMIN });
+    return { ...view, calls };
+  };
+
+  // T091: the server puts a non-secret diagnostic in detail while a cluster is
+  // still provisioning — an unreachable provider, a login the cluster refused.
+  // Before this the only place detail was rendered was the failure panel, so a
+  // wedged cluster showed a calm "provisioning" with no reason at all.
+  it("says why a cluster is stuck while it is still in flight", async () => {
+    at({
+      status: "provisioning",
+      phase: "verifying",
+      detail: "cannot reach the provider: refused",
+    });
+    expect(await screen.findByText(/cannot reach the provider: refused/)).toBeInTheDocument();
+    expect(screen.getByText(/still in flight/)).toBeInTheDocument();
+  });
+
+  it("does not call a ready cluster in flight", async () => {
+    at({ status: "ready" });
+    expect(await screen.findByText("boxy")).toBeInTheDocument();
+    expect(screen.queryByText(/still in flight/)).not.toBeInTheDocument();
+  });
+
+  // T098: a delete returns the cluster in `deleting`, and the poll used to stop
+  // on the first refetch, so the screen sat on "deleting" for ever.
+  it("keeps watching a cluster that is being deleted", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { calls } = at({ status: "deleting" });
+      await screen.findByText("boxy");
+      const seen = countTo(calls, "GET", CLUSTER_PATH);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(countTo(calls, "GET", CLUSTER_PATH)).toBeGreaterThan(seen);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops watching a cluster that has settled", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { calls } = at({ status: "ready" });
+      await screen.findByText("boxy");
+      const seen = countTo(calls, "GET", CLUSTER_PATH);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(countTo(calls, "GET", CLUSTER_PATH)).toBe(seen);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

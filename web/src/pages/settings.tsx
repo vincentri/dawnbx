@@ -33,10 +33,13 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, must, type Principal, when } from "@/lib/api";
-import { signOut, useMe } from "./shell";
+import { signOut, useMe, useServer } from "./shell";
 
 export function Settings() {
   const me = useMe().data!;
+  // The shell's own answer, so the two agree about which server this is rather
+  // than each deciding from its own request.
+  const { controlPlane } = useServer();
   const { tab = "keys" } = useSearch({ from: "/settings" });
   const nav = useNavigate();
   return (
@@ -47,7 +50,11 @@ export function Settings() {
           <TabsTrigger value="audit">Audit log</TabsTrigger>
           {me.admin && <TabsTrigger value="users">Users</TabsTrigger>}
           {me.admin && <TabsTrigger value="orgs">Orgs</TabsTrigger>}
-          {me.admin && <TabsTrigger value="nodes">Nodes</TabsTrigger>}
+          {/* Nodes is the one tab that is cluster-bound: it polls the runtime
+              the server is running in, which a control plane does not have. On
+              that server the tab would show an empty grid and no error, which
+              reads as "no workers" rather than "there is no cluster here". */}
+          {me.admin && !controlPlane && <TabsTrigger value="nodes">Nodes</TabsTrigger>}
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
         <TabsContent value="keys">

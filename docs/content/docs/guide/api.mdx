@@ -68,7 +68,7 @@ path of its own.
 | `GET /v1/providers/{p}/regions`, `/instance-types?region=` | what that provider offers, and what it costs here |
 | `POST /v1/providers/{p}/estimate` | price a configuration; creates nothing, and its `quote_id` is what `POST /v1/clusters` demands |
 | `GET` / `POST /v1/clusters` | admin: list, and start provisioning `{"name", "region", "instance_type", "disk_gib", "domain", "quote_id"}` |
-| `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it (`409` while workers are attached) |
+| `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it. The dashboard does this behind a confirmation; the route refuses with `409 cluster_has_nodes` while workers are attached, and the record is kept until the provider confirms the resources are gone |
 | `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's API key and admin password, in plaintext; `409` until the cluster is `ready` |
 | `POST /v1/clusters/{name}/rotate` | admin, audited: mint a new password and key |
 | `GET` / `POST /v1/clusters/{name}/nodes` | admin: list workers, add one |

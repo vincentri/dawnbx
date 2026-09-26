@@ -20,11 +20,25 @@ import { api, must, type Principal } from "@/lib/api";
 // /v1/status to report. The probe is what tells the nav which it is; a
 // cluster answers control_plane false, and a server too old to answer is
 // treated as a cluster rather than as an error the operator must clear.
-function useControlPlane() {
+export function useControlPlane() {
   return useQuery({
     queryKey: ["control-plane"],
     queryFn: () => must(api.GET("/v1/control-plane")),
   });
+}
+
+// useServer is the one answer the nav and the settings page both use.
+//
+// Both parts matter, and they are not the same question. `settled` is "the
+// probe has answered", which a surface needs before it shows anything: a
+// cluster and a probe still in flight both read as "not a control plane", so
+// gating on control_plane alone flashes a surface and then hides it.
+// `controlPlane` is the settled answer, and a probe that errored counts as a
+// cluster — offering a link the server would answer 503 is worse than a missing
+// one.
+export function useServer() {
+  const cp = useControlPlane();
+  return { settled: !cp.isPending, controlPlane: !cp.isPending && cp.data?.control_plane === true };
 }
 
 // useMe is the signed-in dashboard user, or null. API keys can't use the dashboard.
@@ -48,11 +62,7 @@ export function signOut(qc: QueryClient) {
 
 export function Shell() {
   const me = useMe();
-  const cp = useControlPlane();
-  // A settled probe decides, and a probe that errored counts as a cluster:
-  // offering a link the server would answer 503 is worse than a missing one.
-  const settled = !cp.isPending;
-  const controlPlane = settled && cp.data?.control_plane === true;
+  const { settled, controlPlane } = useServer();
   if (me.isPending) return null;
   if (!me.data) return <Login />;
   const clusters = (

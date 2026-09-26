@@ -414,7 +414,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
       `web/src/pages/clusters.tsx:481-483`. The value lives only inside the adapter's opaque
       handle, and the contract states the only provider facts the API exposes are `provider` and
       `tls_pin` (Constitution, provider neutrality) (contradicts).
-- [ ] T091 Render a provisioning cluster's `detail` whenever it is non-empty and the cluster has
+- [X] T091 Render a provisioning cluster's `detail` whenever it is non-empty and the cluster has
       not failed, and add a needs-attention affordance for a cluster whose phase has stopped
       advancing. `internal/cluster/provision.go:143,193` write that detail while still
       provisioning, and the status panel never shows it, so an unreachable cluster reads as a
@@ -440,13 +440,13 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
       `SshCidr` pattern. The adapter's own documentation says that value would make the rescue
       path a permanent one, and only non-emptiness is checked (Operational Constraints, host
       exposure) (missing).
-- [ ] T097 Gate the Settings **Nodes** tab on the control-plane capability probe, or surface its
+- [X] T097 Gate the Settings **Nodes** tab on the control-plane capability probe, or surface its
       503. In control-plane mode it polls a cluster-bound route every five seconds and renders an
       empty grid with no error, which reads as a working feature (FR-001, US1/AC1) (partial).
-- [ ] T098 Keep polling while a cluster is `deleting`, not only while it is `provisioning`, or the
+- [X] T098 Keep polling while a cluster is `deleting`, not only while it is `provisioning`, or the
       screen sits on "deleting" for ever because the first refetch ends the poll (SC-003)
       (partial).
-- [ ] T099 Decide the dashboard delete-cluster flow explicitly: either scope it into the spec with
+- [X] T099 Decide the dashboard delete-cluster flow explicitly: either scope it into the spec with
       a requirement, or remove the button and rewrite the failure panel's next step, which
       currently depends on it. The spec called this flow out of scope and no FR asked for it, so
       leaving it undocumented makes a later contract review treat it as intended surface (spec
@@ -492,7 +492,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 - [ ] T112 Move worker add/remove orchestration out of the HTTP layer into `internal/cluster`, or
       amend `plan.md`'s Project Structure, which lists a `nodes.go` that does not exist and
       contradicts its own rationale for where orchestration lives (plan, structure) (partial).
-- [ ] T113 Make the route-tree guard test compare components as well as paths, or say in its
+- [X] T113 Make the route-tree guard test compare components as well as paths, or say in its
       comment that it compares only paths, so a route present in both trees with a different
       component is not mistaken for agreement (web, tests) (partial).
 

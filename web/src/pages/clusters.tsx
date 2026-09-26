@@ -443,14 +443,23 @@ function Picker(props: {
   );
 }
 
+// isInFlight is the states worth waiting on: a cluster that has not finished
+// being made, and one that has not finished being removed. Anything else is an
+// answer, and a poll would only be refreshing a value that will not change.
+function isInFlight(status: string | undefined) {
+  return status === "provisioning" || status === "deleting";
+}
+
 function Status({ name: id, go }: { name: string; go: Go }) {
   const qc = useQueryClient();
   const cluster = useQuery({
     queryKey: ["cluster", id],
     queryFn: () => must(api.GET("/v1/clusters/{name}", clusterPath(id))),
     // SC-003 allows 60s; a 5s poll lands a phase change well inside it and
-    // stops as soon as the outcome is known.
-    refetchInterval: (q) => (q.state.data?.status === "provisioning" ? 5000 : false),
+    // stops as soon as the outcome is known. `deleting` is still in flight —
+    // the teardown is running — so it is watched too, or the screen would sit on
+    // "deleting" for ever.
+    refetchInterval: (q) => (isInFlight(q.state.data?.status) ? 5000 : false),
   });
   const destroy = useMutation({
     mutationFn: () => must(api.DELETE("/v1/clusters/{name}", clusterPath(id))),
@@ -477,6 +486,15 @@ function Status({ name: id, go }: { name: string; go: Go }) {
             </div>
             <Timeline c={c} />
             <Failure c={c} />
+            {/* The detail is also the only place a cluster that is stuck but not
+                failed says why. Without it a wedged cluster renders as a calm
+                "provisioning: verifying" with no reason and no action. */}
+            {c.status !== "failed" && c.detail && (
+              <p className="text-sm text-muted-foreground">
+                {c.detail}
+                {isInFlight(c.status) && " — still in flight, but this is why."}
+              </p>
+            )}
             {c.url && (
               <a
                 className="font-mono underline underline-offset-2"
@@ -801,8 +819,7 @@ function ClusterList() {
   const clusters = useQuery({
     queryKey: ["clusters"],
     queryFn: async () => (await must(api.GET("/v1/clusters"))).clusters,
-    refetchInterval: (q) =>
-      (q.state.data ?? []).some((c) => c.status === "provisioning") ? 5000 : false,
+    refetchInterval: (q) => ((q.state.data ?? []).some((c) => isInFlight(c.status)) ? 5000 : false),
   });
   const nav = useNavigate();
   return (
