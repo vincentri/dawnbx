@@ -6,6 +6,8 @@ Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `int
 
 Never edit, build, test, or commit in the primary checkout, and never on `main`. One worktree per task.
 
+**Never push, and never open a PR, without an explicit instruction in the current session.** Branches, merges, and anything else stay in the local repo. The remote is the user's call, every time.
+
 ```bash
 # from the primary checkout
 git fetch origin
