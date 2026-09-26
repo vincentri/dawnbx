@@ -19,9 +19,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Node 24, and deliberately the version the gate was developed against
+      # locally. The SDK test exercises the `await using` form the SDK's own
+      # docs recommend, which needs V8 from Node 24; on the 22 this used to pin,
+      # main was red with a parse error nobody could reproduce, because every
+      # laptop that ran hack/check.sh had 24. A pin the local gate does not
+      # share is worse than no pin.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - uses: actions/setup-python@v5
         with:
