@@ -133,6 +133,30 @@ Expected: `409 {"code":"quote_stale",...}`. And before any of that, `POST /v1/cl
 
 Run this in a throwaway account. It creates a billable instance.
 
+First there has to be a release for the control plane to hand the cluster. The
+stack curls `${ReleaseUrl}/install.sh` in user-data and `install.sh` then fetches
+`checksums.txt` and the two binaries from that same prefix, so without one the
+stack cannot finish installing. `.github/workflows/release.yml` cuts it on a
+tag, using `.goreleaser.yaml`:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0     # the workflow publishes the assets
+export RELEASE_URL=https://github.com/vincentri/dawnbx/releases/download/v0.1.0
+
+# and the control plane is started with it (see Tier 2):
+#   --release-url "$RELEASE_URL"
+```
+
+The four files it serves are `install.sh`, `checksums.txt`,
+`dawnbx-server-linux-arm64` and `dawnbx-linux-arm64`. Confirm a tag published
+before spending money:
+
+```bash
+for f in install.sh checksums.txt dawnbx-server-linux-arm64 dawnbx-linux-arm64; do
+  printf '%-28s %s\n' "$f" "$(curl -fsS -o /dev/null -w '%{http_code}' "$RELEASE_URL/$f")"
+done
+```
+
 ```bash
 # 1. create — returns provisioning, no SSH anywhere in this flow
 curl -s -b /tmp/dawnbx-cp/cookies -H 'X-Dawnbx: 1' -H 'Content-Type: application/json' \

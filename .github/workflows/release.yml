@@ -1,0 +1,62 @@
+name: release
+
+# The release base the control plane hands to a cluster it provisions.
+#
+# deploy/aws/dawnbx.yaml curls "${ReleaseUrl}/install.sh" in user-data, and
+# install.sh then fetches checksums.txt, dawnbx-server-linux-$GO_ARCH and
+# dawnbx-linux-$GO_ARCH from that same prefix, verifying each against the
+# checksum file. So the base is not a convenience: without it a stack cannot
+# finish installing, which is why the SSH-free path could not be exercised until
+# a release existed to point at.
+#
+# A GitHub release is exactly that shape - a flat, immutable, anonymously
+# fetchable prefix per tag - so no bucket, CDN or second repository is needed.
+# The build itself is .goreleaser.yaml's, not a second one written here: it
+# already fixes the artifact names install.sh downloads, stamps the version, and
+# carries install.sh and the CloudFormation template as release assets.
+#
+# --clean and no --clobber: a tag that already has a release fails rather than
+# replacing artifacts a cluster mid-install may still be fetching.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser reads tags for the changelog and version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # The gate runs before anything is published. A release is the one thing
+      # in this repository that leaves the machine, so it is cut from a tree
+      # that has already passed rather than from a branch tip that has not.
+      - name: gate
+        run: |
+          set -euo pipefail
+          go test ./...
+          shellcheck -S error install.sh
+
+      - name: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          go run github.com/goreleaser/goreleaser/v2@latest release --clean
+          echo "--- the base a cluster is pointed at:"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
