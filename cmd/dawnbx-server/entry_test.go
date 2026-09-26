@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -25,42 +23,20 @@ import (
 var mainRan bool
 
 // runMain calls main() with args and returns what it wrote to file descriptor 2.
-// Only the paths that return instead of log.Fatal can be reached this way; the
-// rest of main needs a k3s cluster, and a log.Fatal would take the test process
-// with it. main also registers its flags on the global CommandLine, so it can
-// be called only once per binary.
+// main() is a thin wrapper over serve, which the rest of these tests cover
+// directly; only the -version path returns instead of exiting. main also
+// registers its flags on the global CommandLine, so it can be called only once
+// per binary.
 func runMain(t *testing.T, args ...string) string {
 	t.Helper()
 	if mainRan {
 		t.Skip("main() registers its flags on the global CommandLine; it runs once per process")
 	}
 	mainRan = true
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The builtin println writes to fd 2, not to os.Stderr, so the descriptor
-	// itself has to be redirected.
-	saved, err := syscall.Dup(2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan string, 1)
-	go func() {
-		b, _ := io.ReadAll(r)
-		done <- string(b)
-	}()
-	if err := syscall.Dup2(int(w.Fd()), 2); err != nil {
-		t.Fatal(err)
-	}
 	oldArgs := os.Args
 	os.Args = append([]string{"dawnbx-server"}, args...)
-	main()
-	os.Args = oldArgs
-	w.Close()
-	syscall.Dup2(saved, 2)
-	syscall.Close(saved)
-	return <-done
+	defer func() { os.Args = oldArgs }()
+	return captureStderr(t, main)
 }
 
 // TestVersionFlagExitsBeforeAnythingElse: `dawnbx-server -version` is what an

@@ -1,4 +1,9 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+/* Scan the app's own sources, and not its tests: Tailwind's scanner reads any
+   candidate-looking token in a .ts/.tsx file, so a test mentioning "grid" used
+   to add a utility to the stylesheet the server ships. */
+@source "./**/*.{ts,tsx}";
+@source not "./**/*.test.{ts,tsx}";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";

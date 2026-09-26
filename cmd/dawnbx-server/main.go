@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"dawnbx/internal/api"
@@ -27,102 +29,215 @@ import (
 	"dawnbx/internal/store"
 )
 
-func main() {
-	data := flag.String("data-dir", "/var/lib/dawnbx", "data volume (must hold the .dawnbx-volume marker)")
-	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
-	httpsListen := flag.String("https-listen", "", "public HTTPS address, e.g. :443 (off when empty)")
-	domain := flag.String("domain", "", "get a Let's Encrypt cert for this name (needs ports 443 and 80 reachable); empty = self-signed cert from <data-dir>/server/tls")
-	kubeconfig := flag.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "k3s kubeconfig")
-	dbURL := flag.String("database-url", "", "postgres://... to share auth across API nodes (default: SQLite at <data-dir>/server/dawnbx.db)")
-	pool := flag.Int("pool", 2, "warm sandboxes kept running for instant create/fork (0 = off)")
-	version := flag.Bool("version", false, "print version and exit")
-	flag.Parse()
-	if *version {
+// config is the daemon's whole configuration: everything the flags resolve to.
+type config struct {
+	dataDir     string
+	listen      string
+	httpsListen string
+	domain      string
+	kubeconfig  string
+	dbURL       string
+	pool        int
+	version     bool
+}
+
+// parseFlags registers the flags on fs and resolves them into a config. fs is
+// flag.CommandLine in production, where Parse exits 2 with the usage text on a
+// bad flag, exactly as flag.Parse() did.
+func parseFlags(fs *flag.FlagSet, args []string) (config, error) {
+	data := fs.String("data-dir", "/var/lib/dawnbx", "data volume (must hold the .dawnbx-volume marker)")
+	listen := fs.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	httpsListen := fs.String("https-listen", "", "public HTTPS address, e.g. :443 (off when empty)")
+	domain := fs.String("domain", "", "get a Let's Encrypt cert for this name (needs ports 443 and 80 reachable); empty = self-signed cert from <data-dir>/server/tls")
+	kubeconfig := fs.String("kubeconfig", "/etc/rancher/k3s/k3s.yaml", "k3s kubeconfig")
+	dbURL := fs.String("database-url", "", "postgres://... to share auth across API nodes (default: SQLite at <data-dir>/server/dawnbx.db)")
+	pool := fs.Int("pool", 2, "warm sandboxes kept running for instant create/fork (0 = off)")
+	version := fs.Bool("version", false, "print version and exit")
+	// Parse first: the values are read through the pointers it fills in.
+	err := fs.Parse(args)
+	return config{
+		dataDir:     *data,
+		listen:      *listen,
+		httpsListen: *httpsListen,
+		domain:      *domain,
+		kubeconfig:  *kubeconfig,
+		dbURL:       *dbURL,
+		pool:        *pool,
+		version:     *version,
+	}, err
+}
+
+// serverDeps are the process-level dependencies of serve. The k8s client and
+// the socket opener are the only steps that need the machine, and the timers
+// are the ones the startup path waits on; a test supplies a fake clientset,
+// ephemeral ports and short durations instead of a real k3s and a minute of
+// wall clock.
+type serverDeps struct {
+	kube       func(kubeconfig string) (kubernetes.Interface, *rest.Config, error)
+	listen     func(addr string) (net.Listener, error)
+	reconcile  time.Duration
+	shutdown   time.Duration
+	readHeader time.Duration
+}
+
+func productionDeps() serverDeps {
+	return serverDeps{
+		kube: func(kubeconfig string) (kubernetes.Interface, *rest.Config, error) {
+			rc, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+			if err != nil {
+				return nil, nil, err
+			}
+			rc.QPS, rc.Burst = 50, 100
+			kube, err := kubernetes.NewForConfig(rc)
+			if err != nil {
+				return nil, nil, err
+			}
+			return kube, rc, nil
+		},
+		listen:     func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
+		reconcile:  30 * time.Second,
+		shutdown:   10 * time.Second,
+		readHeader: 10 * time.Second,
+	}
+}
+
+// site is one listener: the server and the way it is served. Plain HTTP, TLS
+// and the ACME challenge listener differ only in the second half.
+type site struct {
+	srv   *http.Server
+	serve func(*http.Server) error
+}
+
+// serve runs the daemon until ctx ends or a listener dies. Every step that
+// used to be a log.Fatal returns its error instead, so the whole startup path
+// is reachable from a test and main() is the only place that turns an error
+// into an exit code.
+func serve(ctx context.Context, cfg config, d serverDeps) error {
+	if cfg.version {
 		println(api.Version)
-		return
+		return nil
 	}
 	log.SetFlags(0) // journald timestamps
 
-	st, err := store.Open(*data)
+	st, err := store.Open(cfg.dataDir)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if *dbURL == "" {
-		*dbURL = filepath.Join(*data, "server", "dawnbx.db")
+	dbURL := cfg.dbURL
+	if dbURL == "" {
+		dbURL = filepath.Join(cfg.dataDir, "server", "dawnbx.db")
 	}
-	db, err := auth.Open(*dbURL)
+	db, err := auth.Open(dbURL)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
-	if err := db.ImportKeyFile(filepath.Join(*data, "server", "api-keys.json")); err != nil {
-		log.Fatalf("import installer API key: %v", err)
+	if err := db.ImportKeyFile(filepath.Join(cfg.dataDir, "server", "api-keys.json")); err != nil {
+		return fmt.Errorf("import installer API key: %v", err)
 	}
 	// The admin login comes from the env or install.sh's admin.env; the DB keeps only the bcrypt hash.
-	env := adminEnv(filepath.Join(*data, "server", "admin.env"))
+	env := adminEnv(filepath.Join(cfg.dataDir, "server", "admin.env"))
 	if pw := cmp.Or(os.Getenv("DAWNBX_ADMIN_PASSWORD"), env["DAWNBX_ADMIN_PASSWORD"]); pw != "" {
 		user := cmp.Or(os.Getenv("DAWNBX_ADMIN_USER"), env["DAWNBX_ADMIN_USER"], "admin")
 		if err := db.EnsureAdmin(user, pw); err != nil {
-			log.Fatalf("admin user: %v", err)
+			return fmt.Errorf("admin user: %v", err)
 		}
 	}
-	rc, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	kube, rc, err := d.kube(cfg.kubeconfig)
 	if err != nil {
-		log.Fatal(err)
-	}
-	rc.QPS, rc.Burst = 50, 100
-	kube, err := kubernetes.NewForConfig(rc)
-	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	m := sandbox.New(st, kube, rc)
-	m.PoolSize = *pool
+	m.PoolSize = cfg.pool
 	// k3s names the node after the hostname; sandboxes pinned to it use this disk.
 	m.Self, _ = os.Hostname()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go m.Run(ctx, 30*time.Second)
+	go m.Run(ctx, d.reconcile)
 
 	h := (&api.Server{M: m, Auth: db}).Handler()
-	servers := []*http.Server{{Addr: *listen, Handler: h, ReadHeaderTimeout: 10 * time.Second}}
-	listens := []func(*http.Server) error{(*http.Server).ListenAndServe}
-	if *httpsListen != "" {
-		tc, acme, err := tlsConfig(*domain, filepath.Join(*data, "server", "tls"))
+	sites := []site{{
+		srv:   &http.Server{Addr: cfg.listen, Handler: h, ReadHeaderTimeout: d.readHeader},
+		serve: plainServe(d),
+	}}
+	if cfg.httpsListen != "" {
+		tc, acme, err := tlsConfig(cfg.domain, filepath.Join(cfg.dataDir, "server", "tls"))
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
-		servers = append(servers, &http.Server{Addr: *httpsListen, Handler: h, TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second})
-		listens = append(listens, func(s *http.Server) error { return s.ListenAndServeTLS("", "") })
+		sites = append(sites, site{
+			srv:   &http.Server{Addr: cfg.httpsListen, Handler: h, TLSConfig: tc, ReadHeaderTimeout: d.readHeader},
+			serve: tlsServe(d),
+		})
 		if acme != nil {
 			// HTTP-01 challenges + redirect to https. TLS-ALPN-01 on 443 also works, so this is best effort.
-			servers = append(servers, &http.Server{Addr: ":80", Handler: acme, ReadHeaderTimeout: 10 * time.Second})
-			listens = append(listens, func(s *http.Server) error {
-				if err := s.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-					log.Printf("port 80: %v (ACME falls back to TLS-ALPN on 443)", err)
-				}
-				return http.ErrServerClosed
+			sites = append(sites, site{
+				srv:   &http.Server{Addr: ":80", Handler: acme, ReadHeaderTimeout: d.readHeader},
+				serve: acmeServe(d),
 			})
 		}
 	}
 	go func() {
 		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		sctx, cancel := context.WithTimeout(context.Background(), d.shutdown)
 		defer cancel()
-		for _, s := range servers {
-			s.Shutdown(sctx)
+		for _, s := range sites {
+			s.srv.Shutdown(sctx)
 		}
 	}()
-	errc := make(chan error, len(servers))
-	for i, s := range servers {
-		log.Printf("dawnbx-server %s listening on %s, data %s", api.Version, s.Addr, *data)
-		go func() { errc <- listens[i](s) }()
+	errc := make(chan error, len(sites))
+	for _, s := range sites {
+		log.Printf("dawnbx-server %s listening on %s, data %s", api.Version, s.srv.Addr, cfg.dataDir)
+		go func() { errc <- s.serve(s.srv) }()
 	}
-	for range servers {
+	for range sites {
 		if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Print(err)
-			os.Exit(1)
+			return err
 		}
+	}
+	return nil
+}
+
+// plainServe, tlsServe and acmeServe are the three ways a site is served.
+// Opening the socket is d.listen, so a test can hand out its own ports.
+func plainServe(d serverDeps) func(*http.Server) error {
+	return func(s *http.Server) error {
+		ln, err := d.listen(s.Addr)
+		if err != nil {
+			return err
+		}
+		return s.Serve(ln)
+	}
+}
+
+func tlsServe(d serverDeps) func(*http.Server) error {
+	return func(s *http.Server) error {
+		ln, err := d.listen(s.Addr)
+		if err != nil {
+			return err
+		}
+		// Empty names: the certificate comes from s.TLSConfig, from disk or ACME.
+		return s.ServeTLS(ln, "", "")
+	}
+}
+
+// acmeServe keeps a port 80 failure from taking the server down: the
+// challenge may still be answered by TLS-ALPN on 443.
+func acmeServe(d serverDeps) func(*http.Server) error {
+	return func(s *http.Server) error {
+		if err := plainServe(d)(s); !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("port 80: %v (ACME falls back to TLS-ALPN on 443)", err)
+		}
+		return http.ErrServerClosed
+	}
+}
+
+func main() {
+	// flag.CommandLine is ExitOnError, so a bad flag exits 2 from Parse.
+	cfg, _ := parseFlags(flag.CommandLine, os.Args[1:])
+	if err := serve(context.Background(), cfg, productionDeps()); err != nil {
+		log.Fatal(err)
 	}
 }
 

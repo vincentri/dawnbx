@@ -4,6 +4,13 @@
 #
 #   bash hack/check.sh
 #
+# The live tier is opt-in because it needs a Lima VM and touches real k3s:
+#   CHECK_LIVE=1 bash hack/check.sh
+# It (re)installs this checkout into a Lima VM and runs hack/verify.sh inside
+# it as root, against real gVisor, real quotas and a real sandbox pod. That is
+# the only coverage the k8s edges of internal/sandbox get; see the coverage
+# floors in hack/coverage-floor.txt for why they are not unit tested.
+#
 # A fresh worktree needs its dependencies first:
 #   npm ci --prefix web && npm ci --prefix sdk/typescript && npm ci --prefix docs
 #   python3 -m venv .venv && .venv/bin/pip install coverage
@@ -100,6 +107,13 @@ stale=$(git status --porcelain internal/api/ui)
 }
 
 run "agent rules cites" python3 hack/check-harness-cites.py
+
+# ---- optional live tier ------------------------------------------------------
+if [ "${CHECK_LIVE:-0}" = 1 ]; then
+  command -v limactl >/dev/null || { echo "CHECK_LIVE=1 needs limactl"; exit 2; }
+  run "live: install into the Lima VM" bash hack/dev-vm.sh
+  run "live: hack/verify.sh in the VM" bash -c 'limactl shell dawnbx -- sudo bash -c "cd /root && bash" < hack/verify.sh'
+fi
 
 if [ "$fail" -ne 0 ]; then
   printf '\ncheck.sh: FAILED\n'

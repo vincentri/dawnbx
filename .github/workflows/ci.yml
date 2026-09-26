@@ -1,0 +1,63 @@
+name: gate
+
+# The same gate the pre-push hook runs, so a hook-less clone and a laptop both
+# get the same floors. See hack/check.sh and hack/coverage-floor.txt.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Versions match what the gate was developed and verified against
+      # locally; bump them deliberately, not on every run.
+      - name: install linters
+        run: |
+          set -euo pipefail
+          go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.14.0
+          pip install --user ruff==0.16.9 cfn-lint==1.57.0
+          echo "$(go env GOPATH)/bin:$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: install dependencies
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          npm ci --prefix sdk/typescript
+          npm ci --prefix docs
+          python3 -m venv .venv
+          .venv/bin/pip install coverage
+
+      - name: shell and CloudFormation lint
+        run: |
+          set -euo pipefail
+          # Errors only: install.sh's `ls | grep` idiom and verify.sh's eval'd
+          # command string both warn, and neither is a defect.
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S error install.sh hack/*.sh
+          cfn-lint deploy/aws/dawnbx.yaml
+
+      - name: gate
+        run: bash hack/check.sh
+
+      # The live tier needs a Lima VM and real k3s, so it is not in this job.
+      # It runs on demand: CHECK_LIVE=1 bash hack/check.sh

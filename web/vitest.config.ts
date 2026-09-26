@@ -16,7 +16,7 @@ export default defineConfig({
     restoreMocks: true,
     coverage: {
       provider: "v8",
-      include: ["src/lib/**/*.ts", "src/pages/**/*.tsx"],
+      include: ["src/lib/**/*.ts", "src/pages/**/*.tsx", "src/components/**/*.tsx"],
       exclude: ["src/lib/schema.d.ts"],
       reporter: ["text", "json-summary"],
     },
