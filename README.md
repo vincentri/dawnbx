@@ -5,6 +5,9 @@ container on k3s with its own `/workspace`, which you can run commands in, read
 and write files in, and fork. You get an HTTP API, a CLI, Python and TypeScript
 SDKs, and a web dashboard with a terminal and file upload.
 
+Full documentation: [docs/](./docs) builds the docs site with Fumadocs
+(`cd docs && npm install && npm run dev`).
+
 ## Install
 
 On a Linux server (amd64 or arm64):
