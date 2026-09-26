@@ -649,3 +649,15 @@ on the visible surface and left the one behind it.
       it is neither exported nor shared (contradicts).
 - [X] T151 Give a stalled cluster a distinct badge in the list as well as the panel. The list
       cannot tell a wedged cluster from a healthy one (T091) (partial).
+
+## Phase 10: Convergence
+
+- [ ] T152 Stand up the release base the provisioning path depends on. `deploy/aws/dawnbx.yaml:182`
+      curls `${ReleaseUrl}/install.sh` in user-data and `install.sh:466-478` then fetches
+      `checksums.txt`, `dawnbx-server-linux-$GO_ARCH` and `dawnbx-linux-$GO_ARCH` from the same
+      base, verifying each against the checksum file. Nothing publishes those four artifacts: the
+      repository is private, CI has no release job, and the documented install path is
+      `sudo ./install.sh` from a clone. The happy path therefore depends on a distribution
+      mechanism that does not exist, which is why `quickstart.md` Tier 4 has never been run. The
+      adapter itself is sound; it is the thing it hands the instance that is missing (FR-009,
+      blocks SC-001..SC-010).
