@@ -263,21 +263,24 @@ func (c *Control) remote(ctx context.Context, cl *cluster.Cluster) (*cluster.Rem
 // cluster is unreachable" and "this cluster has no workers" the same response.
 // The second is the reading that leaves an operator waiting on a repair that
 // is already broken.
-func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Node, error) {
+func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Node, map[string]string, error) {
 	list, err := c.reg.Nodes(cl.Name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	// names maps a stored id to the name the cluster itself uses, for the
+	// callers that have to speak the cluster's language rather than ours.
+	names := map[string]string{}
 	if cl.Status != cluster.StatusReady || cl.URL == "" {
-		return list, nil
+		return list, names, nil
 	}
 	rem, err := c.remote(ctx, cl)
 	if err != nil {
-		return list, clusterUnreachable(cl, err)
+		return list, names, clusterUnreachable(cl, err)
 	}
 	live, err := rem.Nodes(ctx)
 	if err != nil {
-		return list, clusterUnreachable(cl, err)
+		return list, names, clusterUnreachable(cl, err)
 	}
 	saw := make(map[string]cluster.RemoteNode, len(live))
 	for _, n := range live {
@@ -309,6 +312,7 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 					for _, id := range unmatched {
 						if n, ok := byAddr[addrs[id]]; ok {
 							saw[id] = n
+							names[id] = n.Name
 						}
 					}
 					// The provider answered, so an id it did not name is an
@@ -365,7 +369,7 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 			log.Printf("cluster %s: cache sandbox count for %s: %v", cl.Name, list[i].ID, err)
 		}
 	}
-	return list, nil
+	return list, names, nil
 }
 
 // --- routes ---
@@ -687,7 +691,7 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, err
 		}
-		list, err := c.nodes(r.Context(), cl)
+		list, _, err := c.nodes(r.Context(), cl)
 		if err != nil {
 			return nil, err
 		}
@@ -767,7 +771,7 @@ func (s *Server) clusters(h route) {
 		// would make a worker permanently unremovable while the cluster's HTTPS
 		// is broken, which is the same broken state an operator is trying to
 		// escape. The staleness is logged rather than hidden.
-		list, err := c.nodes(r.Context(), cl)
+		list, names, err := c.nodes(r.Context(), cl)
 		if err != nil {
 			if !errors.Is(err, errUnreachable) {
 				return nil, err
@@ -797,7 +801,7 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, err
 		}
-		if err := prov.RemoveNode(r.Context(), handle, id); err != nil {
+		if err := prov.RemoveNode(r.Context(), handle, provider.NodeRef{ID: id, ClusterName: names[id]}); err != nil {
 			if errors.Is(err, provider.ErrNodeBusy) {
 				return nil, nodeHolds(id, held)
 			}

@@ -157,7 +157,13 @@ type Provider interface {
 	AddNode(ctx context.Context, h Handle, spec NodeSpec, boot Bootstrap) (string, error)
 	// RemoveNode destroys one worker. It returns ErrNodeBusy when the host
 	// refuses, and the caller surfaces that rather than overriding it.
-	RemoveNode(ctx context.Context, h Handle, node string) error
+	//
+	// A worker has two names and the caller is the only thing that can connect
+	// them: ID is the provider's, ClusterName is whatever the cluster itself
+	// called the machine. The cluster is asked to release the second and the
+	// provider terminates the first, and sending either one for both means a
+	// 404 from a cluster that was holding the worker all along.
+	RemoveNode(ctx context.Context, h Handle, node NodeRef) error
 	// SetBootstrap re-delivers a rotated credential to an existing host.
 	SetBootstrap(ctx context.Context, h Handle, boot Bootstrap) error
 	// NodeAddrs maps the provider's own names for workers to the address the
@@ -171,6 +177,12 @@ type Provider interface {
 	// boundary instead of leaking a cloud's idea of addressing into the shared
 	// cluster code.
 	NodeAddrs(ctx context.Context, h Handle, nodes []string) (map[string]string, error)
+}
+
+// NodeRef names one worker as both sides know it.
+type NodeRef struct {
+	ID          string // the provider's name for the machine
+	ClusterName string // the cluster's own name for it, when it is known
 }
 
 var (

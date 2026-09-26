@@ -86,7 +86,7 @@ func TestOperationsRefuseAnUnreadableHandle(t *testing.T) {
 	if _, err := a.AddNode(ctx, bad, provider.NodeSpec{InstanceType: "t4g.medium", DiskGiB: 30}, provider.Bootstrap{}); !errors.Is(err, provider.ErrNotFound) {
 		t.Errorf("AddNode: %v, want ErrNotFound", err)
 	}
-	if err := a.RemoveNode(ctx, bad, "i-1"); !errors.Is(err, provider.ErrNotFound) {
+	if err := a.RemoveNode(ctx, bad, provider.NodeRef{ID: "i-1"}); !errors.Is(err, provider.ErrNotFound) {
 		t.Errorf("RemoveNode: %v, want ErrNotFound", err)
 	}
 	if err := a.SetBootstrap(ctx, bad, provider.Bootstrap{AdminPassword: "x"}); !errors.Is(err, provider.ErrNotFound) {
