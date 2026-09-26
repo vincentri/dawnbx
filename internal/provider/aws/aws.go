@@ -29,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
@@ -415,6 +416,44 @@ func (a *AWS) SetBootstrap(ctx context.Context, h provider.Handle, boot provider
 		return err
 	}
 	return parametersFor(c.ssm).putSecret(ctx, ph.Parameter, boot.AdminPassword)
+}
+
+// NodeAddrs maps instance ids to the private address the cluster reaches them
+// on. EC2 keeps a terminated instance describable for about an hour, so an id
+// that no longer exists is left out of the answer rather than reported as an
+// error: a worker that is gone is not a failure of this lookup, it is the thing
+// the caller is about to clean up.
+func (a *AWS) NodeAddrs(ctx context.Context, h provider.Handle, nodes []string) (map[string]string, error) {
+	ph, err := fromHandle(h)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return map[string]string{}, nil
+	}
+	c, err := a.forRegion(ph.Region)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: nodes,
+		Filters: []ec2types.Filter{{
+			Name:   aws.String("instance-state-name"),
+			Values: []string{"pending", "running", "stopping", "stopped"},
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe workers on %s: %w", ph.Stack, err)
+	}
+	addrs := make(map[string]string, len(nodes))
+	for _, r := range out.Reservations {
+		for _, in := range r.Instances {
+			if ip := aws.ToString(in.PrivateIpAddress); ip != "" {
+				addrs[aws.ToString(in.InstanceId)] = ip
+			}
+		}
+	}
+	return addrs, nil
 }
 
 // forRegion returns the clients for a region, building them once. A handle names

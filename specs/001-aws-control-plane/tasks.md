@@ -672,3 +672,41 @@ on the visible surface and left the one behind it.
       CLI name with the server name. The history was audited before the repository was made
       public: the only AWS key in 70 commits is AWS's own documentation example, in three test
       fixtures.
+
+## Phase 11: Convergence (live-account pass)
+
+Found by provisioning, adding a worker to, and rotating credentials on a real
+cluster. Every one of these was invisible to the gate, because the fakes stood in
+for the parts that were broken: a fake EC2 client accepts a request with no
+ImageId and a node list that answers with the provider's own id.
+
+- [X] T153 Give the launch template an ImageId. A worker is launched from
+      `Lt`, and `RunInstances` takes no ImageId of its own, so every add failed
+      with "The request must contain the parameter ImageId". The host was
+      unaffected - it gets its AMI from the `Server` resource - so no host-side
+      check could see it (FR-010, blocks SC-004).
+- [X] T154 Base64-encode the worker's user data. `RunInstances` requires it and
+      does not do it for you; CloudFormation encodes its own, which is exactly
+      why the host installed and the worker did not. The test asserted the plain
+      text, so it agreed with the bug; it now asserts the wire format and then
+      decodes (FR-010).
+- [X] T155 Correlate a stored worker with the node the cluster reports. A
+      cluster names nodes by hostname and the provider names them by what it
+      created, so matching on name alone never matched: a worker that had joined
+      and was reported ready by the cluster stayed `provisioning` for ever.
+      `RemoteNode` carries the node's address, the provider answers with the
+      address for ids it recognises, and the two are matched only when the name
+      does not. A worker the cluster does not know still reports its own status
+      (FR-010, blocks SC-004).
+- [ ] T156 Drop a node record whose instance is gone. A terminated worker leaves
+      a row that blocks cluster deletion with `cluster_has_nodes`, so a cluster
+      whose host has already gone cannot be deleted at all - the destroy refuses,
+      and the refuse is what keeps the stack alive. Verified by hand on a real
+      account: the teardown had to be completed with the AWS CLI (US3).
+- [ ] T157 Say what rotation costs the control plane. Rotation mints a new
+      password into the bootstrap parameter and revokes the old API key, and the
+      running cluster keeps the old password until an operator applies the new
+      one - which means the control plane cannot log in to the cluster it just
+      rotated, and answers 503 `cluster_unreachable` on every node call until
+      then. That is the deliberate trade (revoking the live password would lock
+      everyone out) but the dashboard does not say it (US2, FR-011).

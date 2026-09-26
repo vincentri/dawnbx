@@ -22,6 +22,7 @@ type fakeProv struct {
 	busy      string // a node id the provider refuses to remove
 	addErr    error
 	nodeID    string
+	nodeAddr  string // the address the cluster reaches that worker on
 	destroyed bool
 }
 
@@ -59,6 +60,19 @@ func (f *fakeProv) AddNode(context.Context, provider.Handle, provider.NodeSpec, 
 		return "", f.addErr
 	}
 	return f.nodeID, nil
+}
+func (f *fakeProv) NodeAddrs(_ context.Context, _ provider.Handle, nodes []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, n := range nodes {
+		if n == f.nodeID {
+			out[n] = f.nodeAddr
+			continue
+		}
+		// Every other stored node gets its own address, so a test that puts two
+		// workers on a cluster is not quietly correlating them to one address.
+		out[n] = "10.9.9.9"
+	}
+	return out, nil
 }
 func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) error {
 	if n == f.busy {

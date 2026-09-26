@@ -102,6 +102,14 @@ func (f *fakeProvider) AddNode(context.Context, Handle, NodeSpec, Bootstrap) (st
 	f.calls = append(f.calls, "AddNode")
 	return "i-fake", nil
 }
+func (f *fakeProvider) NodeAddrs(_ context.Context, _ Handle, nodes []string) (map[string]string, error) {
+	f.calls = append(f.calls, "NodeAddrs")
+	out := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		out[n] = "10.0.0.1"
+	}
+	return out, nil
+}
 func (f *fakeProvider) RemoveNode(_ context.Context, _ Handle, node string) error {
 	f.calls = append(f.calls, "RemoveNode:"+node)
 	if node == "busy" {

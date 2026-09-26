@@ -111,13 +111,17 @@ func TestRemoveWorkerStillProceedsOnTheCachedList(t *testing.T) {
 // TestNodeRefreshTakesTheClustersOwnCount: when the cluster does answer, its
 // count replaces the cache. The cluster is the authority, and the refusal to
 // remove a busy worker depends on never overriding it.
+//
+// The names deliberately differ, because that is what really happens: a cluster
+// names its nodes by hostname and the provider names them by what it created.
+// An earlier version of this test had the stand-in answer with the provider's
+// own id, which is why it passed while a real worker stayed provisioning for
+// ever.
 func TestNodeRefreshTakesTheClustersOwnCount(t *testing.T) {
-	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}, nodeID: "i-1", nodeAddr: "10.0.0.1"})
 	cp.provisioningCluster(t, "n1")
 	cp.readyCluster(t, "n1")
-	// A stand-in that answers the node list, so the winning path is exercised
-	// end to end rather than mocked out.
-	cp.liveCluster(t, "n1", cluster.RemoteNode{Name: "i-1", Ready: true, Sandboxes: 5})
+	cp.liveCluster(t, "n1", cluster.RemoteNode{Name: "ip-10-0-0-2", Addr: "10.0.0.1", Ready: true, Sandboxes: 5})
 	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-1", InstanceType: "t4g.medium",
 		Status: "ready", Sandboxes: 0}); err != nil { // stale cache
 		t.Fatal(err)
@@ -129,6 +133,72 @@ func TestNodeRefreshTakesTheClustersOwnCount(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"sandboxes":5`) {
 		t.Errorf("the cluster's own count did not win over the cache: %s", w.Body)
+	}
+}
+
+// TestAJoinedWorkerReachesReadyByAddress: a worker that has actually joined
+// stops saying provisioning.
+//
+// This is the shape a real cluster produces and no test had: the provider calls
+// the machine i-0ad9fe756c55722b1, the cluster calls it ip-172-31-22-242, and
+// matching the two on name alone finds nothing. The worker had joined, the
+// cluster reported it ready, and the dashboard said provisioning for ever -
+// which is the one reading that tells an operator to wait for a join that had
+// already happened.
+func TestAJoinedWorkerReachesReadyByAddress(t *testing.T) {
+	cp := testControl(t, &fakeProv{
+		id: "aws", regions: []string{"us-east-1"},
+		nodeID: "i-0ad9fe756c55722b1", nodeAddr: "172.31.22.242",
+	})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	// Exactly what the cluster reported on the box that found this: a hostname
+	// that is not the instance id, and the private address underneath it.
+	cp.liveCluster(t, "n1", cluster.RemoteNode{
+		Name: "ip-172-31-22-242", Addr: "172.31.22.242", Ready: true, Sandboxes: 0,
+	})
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-0ad9fe756c55722b1",
+		InstanceType: "t4g.medium", Status: "provisioning"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), `"status":"ready"`) {
+		t.Errorf("a worker the cluster reports ready is still not ready here: %s", w.Body)
+	}
+	// And the cache agrees, so the answer survives the cluster being
+	// unreachable on the next read.
+	stored, err := cp.reg.Nodes("n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].Status != "ready" {
+		t.Errorf("the cached status was not updated: %+v", stored)
+	}
+}
+
+// TestAWorkerTheClusterDoesNotKnowStaysUnproven: correlation must not invent a
+// match. A stored worker with no node behind it keeps its own status, because a
+// green tick for a machine the cluster cannot see is the claim this whole fix
+// exists to stop making.
+func TestAWorkerTheClusterDoesNotKnowStaysUnproven(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}, nodeID: "i-other", nodeAddr: "10.0.0.9"})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	cp.liveCluster(t, "n1", cluster.RemoteNode{Name: "ip-172-31-22-242", Addr: "172.31.22.242", Ready: true})
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-0ad9fe756c55722b1",
+		InstanceType: "t4g.medium", Status: "provisioning"}); err != nil {
+		t.Fatal(err)
+	}
+	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), `"status":"provisioning"`) {
+		t.Errorf("a worker the cluster does not know was reported ready: %s", w.Body)
 	}
 }
 
