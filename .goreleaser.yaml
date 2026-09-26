@@ -1,6 +1,6 @@
 version: 2
 # Plain binaries named <binary>-<os>-<arch> plus checksums.txt: the names
-# install.sh --release-url and deploy/aws/dawnbx.yaml download.
+# install.sh --release-url download.
 # The dashboard (web/) builds into internal/api/ui, which the server embeds.
 before:
   hooks:
@@ -28,6 +28,5 @@ checksum:
 release:
   extra_files:
     - glob: install.sh
-    - glob: deploy/aws/dawnbx.yaml
 changelog:
   disable: true
