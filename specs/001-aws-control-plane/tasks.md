@@ -495,3 +495,35 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 - [ ] T113 Make the route-tree guard test compare components as well as paths, or say in its
       comment that it compares only paths, so a route present in both trees with a different
       component is not mistaken for agreement (web, tests) (partial).
+
+### Defects found while implementing, not gaps in this spec
+
+These were found by running the thing rather than by reading the artifacts, so they have no
+`FR-###` to trace to. Three are in code this feature added; one is pre-existing and unrelated to
+it. Appended here so they are fixed in the same pass rather than carried into another session.
+
+- [ ] T114 Stop a store failure looking like a missing cluster. `Registry.Get`
+      (`internal/cluster/cluster.go:280`) wraps every store error as `ErrNotFound`, so a locked or
+      unreadable database becomes a `404 not_found` at the API. Wrap the cause with `%w` and let
+      the handler distinguish absence from failure, so a database problem is not reported to an
+      operator as "no such cluster" (defect).
+- [ ] T115 Return the record as it stands after a failed create. `Provisioner.Begin`
+      (`internal/cluster/provision.go:100-101`) calls `p.fail`, which marks the cluster failed, and
+      then returns `c`, the record read before the failure — so a caller that renders the returned
+      value shows `provisioning` for a cluster that is already failed with a reason attached. Re-read
+      after `fail`, and cover it with a test (defect).
+- [ ] T116 Review the SDK's exported surface, which a subagent widened on its own.
+      `sdk/typescript/src/index.ts:73` is `export class Client`; it was package-private when this
+      work started and was made public only so a test could reach it. That is a published-module
+      change made to serve a test. Either keep it and treat it as intended surface with a test, or
+      revert it and inject a seam the test can use instead (defect, unrequested API change).
+- [ ] T117 Enforce the per-sandbox disk cap, or state honestly that it is not enforced.
+      `hack/verify.sh`'s `quota: 80MB write into 50MB cap fails` fails, and the cause is larger
+      than the check: `store.Meta.ProjectID` is declared (`internal/store/store.go:60`) and read
+      nowhere in production, and every `setquota`/`repquota` call in the repository is inside
+      `hack/verify.sh` itself. Nothing in the product ever assigns a project id or sets a quota, so
+      the cap `AGENTS.md` and the docs promise is not applied. Diagnose first — assign a project id
+      per sandbox, set the quota, and make the pod write into a directory carrying it, or amend the
+      isolation constraint and the docs to say what actually happens. Note the installer already
+      documents a fallback, "a 30 s du check" (`install.sh:242-243`), and this feature changed
+      nothing in that path (defect, pre-existing).
