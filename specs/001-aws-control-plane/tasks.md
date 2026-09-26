@@ -381,3 +381,117 @@ with credentials — enough to stop using SSH for the happy path.
   and never served.
 - If a task turns out to need a change to `research.md` D1 or D10, stop: that is a design change,
   not an implementation one, and it goes back through the spec.
+
+---
+
+## Phase 8: Convergence
+
+Produced by `/speckit.converge` after the implementation. Every item below is a gap between
+`spec.md` / `plan.md` / the contract and the code as it stands, found by reading the code rather
+than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then LOW.
+
+### CRITICAL
+
+- [ ] T087 Serve the phase-one provider roster from `GET /v1/providers` so `aws` is available
+      and `gcp`/`azure` are listed as unavailable, with no adapter behind them (FR-002, US4/AC1-2,
+      SC-006) (missing). Today `internal/api/clusters.go:149-153` returns one entry built from the
+      single injected adapter, so User Story 4 never occurs against a real server: the picker shows
+      one button, and only a test fixture ever supplies the disabled rows. Also decide whether
+      `provider.Registry` is the mechanism or is removed (C25).
+
+### HIGH
+
+- [ ] T088 Delete the stray `clusterName` and `provider` keys that sit as direct children of
+      `components` in `internal/api/openapi.yaml:574-575` — the document is not valid OpenAPI 3.1
+      — then validate it with a spec linter rather than relying on `npm run gen` surviving it
+      (Constitution III, one contract) (contradicts).
+- [ ] T089 Reconcile `InstanceTypePrice.region` with the code: either add `region` to
+      `provider.HostSize` and set it in the adapter, or drop it from `required` and document the
+      top-level `region` the handler already returns. Today the contract requires a field nothing
+      marshals, which makes `web/src/pages/clusters.tsx:392` dead (contract, SC-009) (contradicts).
+- [ ] T090 Remove `public_ip` from the `Cluster` schema in `internal/api/openapi.yaml` and in
+      `contracts/openapi-delta.yaml`, and delete the dead branch at
+      `web/src/pages/clusters.tsx:481-483`. The value lives only inside the adapter's opaque
+      handle, and the contract states the only provider facts the API exposes are `provider` and
+      `tls_pin` (Constitution, provider neutrality) (contradicts).
+- [ ] T091 Render a provisioning cluster's `detail` whenever it is non-empty and the cluster has
+      not failed, and add a needs-attention affordance for a cluster whose phase has stopped
+      advancing. `internal/cluster/provision.go:143,193` write that detail while still
+      provisioning, and the status panel never shows it, so an unreachable cluster reads as a
+      healthy one (US2/AC1, FR-008) (partial).
+
+### MEDIUM
+
+- [ ] T092 Read `Provisioner.StaleAfter`, which is declared and defaulted but read nowhere, and
+      mark a cluster whose phase has not advanced as needing attention; or delete the field and
+      the sentence that promises it (edge case, "exceeds its expected duration") (missing).
+- [ ] T093 Revoke the superseded API key on the cluster during rotation, or amend the spec edge
+      case to say the old key is left in place and say so in the dashboard. Rotation currently
+      mints a new key under the same name and revokes nothing, and `Remote` has no revoke method
+      although the cluster exposes `DELETE /v1/keys/{key}` (edge case, FR-006) (partial).
+- [ ] T094 Expose `Capabilities.Delivery` on a response and render it on the cluster status page,
+      or delete the field and the claim that the dashboard reports the mechanism. It is
+      write-only today (research D10) (partial).
+- [ ] T095 Record the `add_node`, `remove_node`, `delete` and `rotate` operation kinds the data
+      model defines, and expose the history it says the "what happened" view reads; or drop `kind`
+      and the unused `Registry.Ops` reader. Only `create` is ever written and nothing reads the
+      history in production (data-model.md, FR-008) (partial).
+- [ ] T096 Reject `0.0.0.0/0` as an SSH CIDR in `awsprov.New` and tighten the template's
+      `SshCidr` pattern. The adapter's own documentation says that value would make the rescue
+      path a permanent one, and only non-emptiness is checked (Operational Constraints, host
+      exposure) (missing).
+- [ ] T097 Gate the Settings **Nodes** tab on the control-plane capability probe, or surface its
+      503. In control-plane mode it polls a cluster-bound route every five seconds and renders an
+      empty grid with no error, which reads as a working feature (FR-001, US1/AC1) (partial).
+- [ ] T098 Keep polling while a cluster is `deleting`, not only while it is `provisioning`, or the
+      screen sits on "deleting" for ever because the first refetch ends the poll (SC-003)
+      (partial).
+- [ ] T099 Decide the dashboard delete-cluster flow explicitly: either scope it into the spec with
+      a requirement, or remove the button and rewrite the failure panel's next step, which
+      currently depends on it. The spec called this flow out of scope and no FR asked for it, so
+      leaving it undocumented makes a later contract review treat it as intended surface (spec
+      Assumptions) (unrequested).
+- [ ] T100 Document `409 quote_stale` and `400 provider_unavailable` on `POST /v1/clusters` in
+      `internal/api/openapi.yaml`, which is the only cluster operation whose description omits its
+      non-2xx outcomes (contract) (partial).
+- [ ] T101 Add the nine missing cluster routes to the `README.md` table, or state that the cluster
+      section is a deliberate subset. The file calls itself a copy of the docs with nothing keeping
+      the two equal, and the copy has drifted (contract) (partial).
+- [ ] T102 Correct `docs/content/docs/guide/api.mdx` to say a dashboard session, with admin
+      required for everything except the capability probe and the provider list; or add
+      `adminOnly` to those two handlers. Both routes call `signedIn` only (contract, docs vs
+      code) (contradicts).
+
+### LOW
+
+- [ ] T103 Add `phase`, `detail`, `url` and `tls_pin` to the `Cluster` `required` list: the struct
+      always marshals them, and leaving them optional forces guards in the dashboard for fields
+      that are always present (contract) (partial).
+- [ ] T104 Narrow the `ClusterNode.status` enum to the states the API can return, or earn the
+      other three. The dashboard polls on `removing`, which is never written (contract) (partial).
+- [ ] T105 Drop `enum: [aws]` from the `provider` path parameter, which makes the contract's own
+      documented `400 provider_unavailable` unreachable from a generated client and forces a cast in
+      the dashboard (contract) (contradicts).
+- [ ] T106 Either add the `internal/cluster` import scan that `AGENTS.md:17` claims exists, or
+      correct that sentence: only `TestPackageImportsNoAdapter` reads imports today, and it covers
+      `internal/provider` alone (Constitution, provider neutrality) (contradicts).
+- [ ] T107 Qualify `AGENTS.md:12`'s blanket "never a provider's resource names": a worker is
+      identified by the value the adapter returned, which is rendered in the dashboard. Use the
+      wording `contracts/cluster-routes.md` already uses (Constitution, provider neutrality)
+      (contradicts).
+- [ ] T108 Document `DAWNBX_BOOTSTRAP_PARAMETER` in `install.sh --help`, or drop the env default so
+      `--bootstrap-parameter` is the only gate. Research D2 says the flag alone gates the path
+      (research D2) (contradicts).
+- [ ] T109 Fix the comment at `internal/provider/aws/compute.go:30-33`: a worker inherits the
+      launch template's IMDS settings, not an instance profile, because the profile is set on the
+      instance rather than the template (contradicts).
+- [ ] T110 Take the lowest matching on-demand price rather than the first, or amend research D9 to
+      say "the first matching term" (research D9) (partial).
+- [ ] T111 Resolve the dead code Principle V forbids: `provider.Registry`, `Provider.StatusNode`,
+      `nodeFailed` and `nodeRemoving` have no production caller (Constitution V) (unrequested).
+- [ ] T112 Move worker add/remove orchestration out of the HTTP layer into `internal/cluster`, or
+      amend `plan.md`'s Project Structure, which lists a `nodes.go` that does not exist and
+      contradicts its own rationale for where orchestration lives (plan, structure) (partial).
+- [ ] T113 Make the route-tree guard test compare components as well as paths, or say in its
+      comment that it compares only paths, so a route present in both trees with a different
+      component is not mistaken for agreement (web, tests) (partial).
