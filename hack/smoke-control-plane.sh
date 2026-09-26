@@ -66,6 +66,19 @@ check "clusters list, admin session" "200" "$(curl -s -o /dev/null -w '%{http_co
 # they already have.
 prov=$(curl -s -b "$DIR/cookies" -H 'X-Dawnbx: 1' "$base/v1/providers")
 check "providers answers with a providers array" "1" "$(printf '%s' "$prov" | grep -c '"providers"')"
+# The dashboard's picker can only offer GCP and Azure as future choices if the
+# server says they exist. A page test that stubs the fetch cannot prove this, so
+# the running server does.
+# This control plane is started without cloud credentials, so aws is listed
+# too and nothing is available. That is the honest answer for this process: the
+# roster is what the build knows about, availability is what it can do, and a
+# lapsed credential must show as unavailable rather than vanish. The case where
+# aws *is* available is covered in internal/api, with a working adapter.
+for id in aws gcp azure; do
+  check "$id is listed" "1" "$(printf '%s' "$prov" | grep -c "\"id\":\"$id\"")"
+  check "$id is not available without credentials" "1" \
+    "$(printf '%s' "$prov" | grep -c "\"id\":\"$id\",\"available\":false")"
+done
 check "an unavailable provider is refused, not empty-listed" "400" \
   "$(curl -s -o /dev/null -w '%{http_code}' -b "$DIR/cookies" -H 'X-Dawnbx: 1' \
      -H 'Content-Type: application/json' -d '{}' "$base/v1/providers/gcp/estimate")"

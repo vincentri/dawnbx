@@ -174,30 +174,74 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// Registry holds the providers a process was built with. Phase one registers
-// exactly one; the type exists so registering another is a map insert.
+// Registry holds the providers a process was built with, and the ones it knows
+// about but cannot build with yet.
+//
+// The second kind matters as much as the first. A provider this build cannot
+// provision is still a provider the operator is thinking about, and hiding it
+// makes the dashboard's picker a single button with no explanation. Declaring
+// it costs one line and lets the UI show GCP and Azure as choices it cannot
+// take yet, which is what the spec asks for. Adding a real adapter later is a
+// Register where a Declare was, and nothing else changes.
 type Registry struct {
-	mu   sync.RWMutex
-	all  map[string]Provider
-	seen []string // registration order, for a stable listing
+	mu    sync.RWMutex
+	all   map[string]Provider
+	order []Listed // registration order, for a stable listing
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry { return &Registry{all: map[string]Provider{}} }
 
-// Register adds a provider. A duplicate id is a programming error and panics at
-// startup rather than silently shadowing an earlier adapter.
+// Register adds a provider this build can provision with.
+//
+// Registering a provider that was already declared is the upgrade path, not a
+// mistake: a control plane declares the whole roadmap up front, then registers
+// the adapter it could actually build. A provider it could not build stays in
+// the listing as unavailable rather than disappearing, because a picker that
+// loses AWS when its credentials lapse is claiming dawnbx dropped a cloud.
 func (r *Registry) Register(p Provider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.all[p.ID()]; dup {
 		panic("provider registered twice: " + p.ID())
 	}
+	if i := r.indexOf(p.ID()); i >= 0 {
+		r.all[p.ID()] = p
+		r.order[i] = Listed{ID: p.ID(), Available: p.Capabilities().Available}
+		return
+	}
 	r.all[p.ID()] = p
-	r.seen = append(r.seen, p.ID())
+	r.order = append(r.order, Listed{ID: p.ID(), Available: p.Capabilities().Available})
 }
 
-// Get returns a provider, or ErrUnavailable.
+// Declare records a provider this build knows about and cannot use. It appears
+// in the listing with available false, and every route that takes it refuses
+// with ErrUnavailable rather than returning an empty result.
+func (r *Registry) Declare(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, dup := r.all[id]; dup {
+		panic("provider registered twice: " + id)
+	}
+	if r.indexOf(id) >= 0 {
+		panic("provider declared twice: " + id)
+	}
+	r.order = append(r.order, Listed{ID: id, Available: false})
+}
+
+// indexOf reports where id sits in the listing, or -1. The caller holds r.mu.
+func (r *Registry) indexOf(id string) int {
+	for i, l := range r.order {
+		if l.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// Get returns a provider this build can provision with, or ErrUnavailable. A
+// declared-but-unusable provider is refused exactly like an unknown one, so
+// there is no second way to ask for a cloud this build does not have.
 func (r *Registry) Get(id string) (Provider, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -208,6 +252,25 @@ func (r *Registry) Get(id string) (Provider, error) {
 	return p, nil
 }
 
+// Available returns the one provider this build can provision with, or nil.
+// Phase one has exactly one by design; a second available provider is a
+// programming error rather than a silent coin flip.
+func (r *Registry) Available() (Provider, error) {
+	var found Provider
+	for _, l := range r.order {
+		if !l.Available {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("more than one provider is available: %s and %s", found.ID(), l.ID)
+		}
+		if p, err := r.Get(l.ID); err == nil {
+			found = p
+		}
+	}
+	return found, nil
+}
+
 // Listed is one row of the provider list the dashboard renders. A provider that
 // is not available is still listed, with available false, so the UI can show
 // GCP and Azure as future choices rather than hiding them.
@@ -216,22 +279,28 @@ type Listed struct {
 	Available bool   `json:"available"`
 }
 
-// List returns every registered provider in registration order, available or not.
+// List returns every provider in registration order, available or not.
+//
+// It never returns nil. An empty registry marshals as [] rather than null, so
+// the dashboard can render an empty state and the API answers "there are none"
+// instead of "there is no answer" — which are different claims, and only the
+// first is true.
 func (r *Registry) List() []Listed {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]Listed, 0, len(r.seen))
-	for _, id := range r.seen {
-		out = append(out, Listed{ID: id, Available: r.all[id].Capabilities().Available})
-	}
+	out := make([]Listed, len(r.order))
+	copy(out, r.order)
 	return out
 }
 
-// IDs returns the registered provider ids, sorted. Handy in tests.
+// IDs returns the known provider ids, sorted. Handy in tests.
 func (r *Registry) IDs() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := append([]string(nil), r.seen...)
+	out := make([]string, 0, len(r.order))
+	for _, l := range r.order {
+		out = append(out, l.ID)
+	}
 	sort.Strings(out)
 	return out
 }

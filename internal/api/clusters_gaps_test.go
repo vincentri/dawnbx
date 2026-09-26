@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -248,3 +249,100 @@ func TestProviderUnavailableIsRefusedNotEmpty(t *testing.T) {
 // The registry's own listing rules (an unavailable provider is listed, not
 // hidden; IDs are sorted) are covered in internal/provider/provider_test.go,
 // where Registry and its double live.
+
+// TestProvidersListComesFromTheRegistryNotTheAdapter: the dashboard's picker can
+// only show GCP and Azure as choices it cannot take if the server sends them.
+// A stubbed fetch in the page's own test cannot prove that, because the stub is
+// the thing being asserted — so this reads the route's real answer.
+func TestProvidersListComesFromTheRegistryNotTheAdapter(t *testing.T) {
+	// A control plane with a working provider: all three rows, one available.
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	w := cp.do("GET", "/v1/providers", "", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var got struct {
+		Providers []struct {
+			ID        string `json:"id"`
+			Available bool   `json:"available"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]bool{}
+	for _, p := range got.Providers {
+		byID[p.ID] = p.Available
+	}
+	if len(got.Providers) != 3 {
+		t.Errorf("the picker should be able to show three choices, got %+v", got.Providers)
+	}
+	if !byID["aws"] {
+		t.Errorf("the one provider this build can use is not marked available: %+v", got.Providers)
+	}
+	for _, id := range []string{"gcp", "azure"} {
+		if _, listed := byID[id]; !listed {
+			t.Errorf("%s is missing from the list, so the picker cannot show it as a future choice: %+v", id, got.Providers)
+		}
+		if byID[id] {
+			t.Errorf("%s is marked available, but this build has no adapter for it: %+v", id, got.Providers)
+		}
+	}
+
+	// A control plane whose credentials are not working still lists all three,
+	// with none available. An empty list would say "there is nothing", which is
+	// a different and wrong claim.
+	bare := testControl(t, nil)
+	w = bare.do("GET", "/v1/providers", "", bare.admin...)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"gcp"`) {
+		t.Errorf("a control plane with no credentials should still list what it knows about: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), `"available":true`) {
+		t.Errorf("nothing is available without a provider, but the list claims otherwise: %s", w.Body)
+	}
+}
+
+// TestControlAccessorsRefuseRatherThanPanic: a Control whose registry is nil is
+// what a half-wired server looks like. Every accessor must answer with the
+// refusal an operator can act on, because a panic here takes down the process
+// that owns the clusters it already manages.
+func TestControlAccessorsRefuseRatherThanPanic(t *testing.T) {
+	for name, c := range map[string]*Control{
+		"nil control":    nil,
+		"no registry":    {},
+		"empty registry": NewControl(nil, provider.NewRegistry(), nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := c.usable(); err == nil {
+				t.Error("usable() handed out a provider with no registry")
+			}
+			if c.available() {
+				t.Error("available() is true with no provider")
+			}
+			if got := c.providers(); got == nil {
+				t.Error("providers() returned nil, which a caller must nil-check")
+			}
+			if _, err := c.one(); err == nil {
+				t.Error("one() handed out a provider with no registry")
+			}
+		})
+	}
+}
+
+// TestControlProvidersListsTheRosterEvenWithNothingUsable: the listing route is
+// how an operator learns what the product plans to support, so it must answer
+// even when the answer is "none of them yet".
+func TestControlProvidersListsTheRosterEvenWithNothingUsable(t *testing.T) {
+	r := provider.NewRegistry()
+	r.Declare("gcp")
+	r.Declare("azure")
+	c := NewControl(nil, r, nil)
+	if got := c.providers(); len(got) != 2 {
+		t.Errorf("providers() = %+v, want the two declared", got)
+	}
+	for _, p := range c.providers() {
+		if p.Available {
+			t.Errorf("%s is listed as available with no adapter behind it", p.ID)
+		}
+	}
+}

@@ -253,6 +253,14 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 	// sandbox counts, never the cloud: that keeps the k3s knowledge inside the
 	// cluster and gives FR-011 the cluster's own 409 rather than a cached guess.
 	signer := signerFor(registry)
+	// The registry is the one place that knows which providers exist. Phase one
+	// builds one; the other two are declared so the dashboard can show them as
+	// choices it cannot take yet, which is what the spec asks for and what an
+	// operator needs to know the product has a roadmap rather than a gap.
+	prow := provider.NewRegistry()
+	prow.Declare("aws")
+	prow.Declare("azure")
+	prow.Declare("gcp")
 	prov, err := wireCloud(ctx, cfg, d, signer)
 	if err != nil {
 		// A control plane with no working cloud credentials is still useful: it
@@ -261,15 +269,16 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 		// without a restart loop.
 		log.Printf("no cloud provider available (%v); cluster management is disabled until it is fixed", err)
 	} else {
+		prow.Register(prov)
 		provisioner := cluster.NewProvisioner(registry, prov)
 		provisioner.SetClientFactory(func(url string) cluster.ClusterClient { return cluster.NewRemote(url) })
 		ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		go provisioner.Watch(ctx)
-		srv := &api.Server{Auth: db, Control: api.NewControl(registry, prov, provisioner)}
+		srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, provisioner)}
 		return listen(ctx, cfg, d, srv.ControlPlaneHandler())
 	}
-	srv := &api.Server{Auth: db, Control: api.NewControl(registry, nil, nil)}
+	srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, nil)}
 	return listen(ctx, cfg, d, srv.ControlPlaneHandler())
 }
 

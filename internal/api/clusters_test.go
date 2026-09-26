@@ -102,12 +102,19 @@ func testControl(t *testing.T, prov *fakeProv) *controlPlane {
 	// No sandbox.Manager: a control plane has no runtime, and giving it one
 	// would register the runtime's own worker routes over the 503s.
 	srv := &Server{Auth: db}
+	// The same roster the process builds: one provider it can use, two it knows
+	// about and cannot. A test that stubs only the adapter would pass while the
+	// listing route was wrong, which is how US4 went missing in the first place.
+	known := provider.NewRegistry()
+	known.Declare("azure")
+	known.Declare("gcp")
 	if prov != nil {
-		srv.Control = NewControl(reg, prov, cluster.NewProvisioner(reg, prov))
+		known.Register(prov)
+		srv.Control = NewControl(reg, known, cluster.NewProvisioner(reg, prov))
 	} else {
 		// A control plane whose cloud credentials are not working still has to
 		// serve, so the wiring is there with nothing behind it.
-		srv.Control = NewControl(reg, nil, nil)
+		srv.Control = NewControl(reg, known, nil)
 	}
 	h := srv.ControlPlaneHandler()
 	do := doer(h, true)

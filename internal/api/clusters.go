@@ -25,18 +25,17 @@ import (
 // credentials from.
 type Control struct {
 	reg         *cluster.Registry
-	prov        provider.Provider
+	known       *provider.Registry
 	provisioner *cluster.Provisioner
 }
 
-// NewControl wires the cluster routes. prov and p may be nil: a control plane
-// whose cloud credentials are not working still lists what it already manages
-// and says why it cannot make more, instead of refusing to start. seal is
-// accepted so the wiring lives in one call, but nothing here seals: every
-// secret on this path is opened and stored by cluster.Registry, which already
-// holds the sealer.
-func NewControl(reg *cluster.Registry, prov provider.Provider, p *cluster.Provisioner) *Control {
-	return &Control{reg: reg, prov: prov, provisioner: p}
+// NewControl wires the cluster routes. p may be nil: a control plane whose
+// cloud credentials are not working still lists what it already manages and
+// says why it cannot make more, instead of refusing to start. The provider
+// registry is how that statement is made honestly — it knows which providers
+// this build knows about, and which of them it can actually use.
+func NewControl(reg *cluster.Registry, providers *provider.Registry, p *cluster.Provisioner) *Control {
+	return &Control{reg: reg, known: providers, provisioner: p}
 }
 
 // minDiskGiB is the smallest disk any cluster or worker may be given. It is
@@ -123,34 +122,50 @@ func noCluster() error {
 // --- dependencies ---
 
 func (c *Control) available() bool {
-	return c != nil && c.prov != nil && c.prov.Capabilities().Available
+	_, err := c.usable()
+	return err == nil
+}
+
+// usable is the one provider this build can provision with right now, or the
+// refusal. It is a question about the registry rather than about a field, so a
+// provider that failed to configure and a provider this build does not have are
+// the same answer to a create: no.
+func (c *Control) usable() (provider.Provider, error) {
+	if c == nil || c.known == nil {
+		return nil, providerUnavailable("")
+	}
+	p, err := c.known.Available()
+	if err != nil || p == nil {
+		return nil, providerUnavailable("")
+	}
+	return p, nil
 }
 
 // provider resolves the {provider} path value. Anything this build cannot
 // provision with is refused, so the route never returns an empty list that
 // could be mistaken for "nothing here".
 func (c *Control) providerFor(id string) (provider.Provider, error) {
-	if !c.available() || c.prov.ID() != id {
+	p, err := c.usable()
+	if err != nil || p.ID() != id {
 		return nil, providerUnavailable(id)
 	}
-	return c.prov, nil
+	return p, nil
 }
 
 // one is the provider a create uses. The create body has no provider field —
 // naming one would be a second way to ask for a cloud this build may not have —
 // so a control plane with no available provider simply cannot create.
-func (c *Control) one() (provider.Provider, error) {
-	if !c.available() {
-		return nil, providerUnavailable("")
-	}
-	return c.prov, nil
-}
+func (c *Control) one() (provider.Provider, error) { return c.usable() }
 
+// providers lists every provider this build knows about, available or not. A
+// provider it cannot use is still listed, because the dashboard's picker is how
+// an operator learns that GCP is coming rather than missing. An empty list would
+// say "there is nothing", which is a different and wrong claim.
 func (c *Control) providers() []provider.Listed {
-	if !c.available() {
+	if c == nil || c.known == nil {
 		return []provider.Listed{}
 	}
-	return []provider.Listed{{ID: c.prov.ID(), Available: true}}
+	return c.known.List()
 }
 
 // cluster fetches one cluster, or the 404 the rest of the API already speaks.
@@ -175,21 +190,29 @@ func (c *Control) cluster(name string) (*cluster.Cluster, error) {
 // is a 400 naming the field rather than a 500 from a provider that choked on
 // input nobody validated.
 func (c *Control) prepare(ctx context.Context, region, instanceType string, diskGiB int) (cluster.Catalogue, error) {
+	// Resolved once, not per message: the provider is the thing that will have to
+	// honour every answer below, so the name in an error and the source of the
+	// catalogue are the same object.
+	prov, err := c.usable()
+	if err != nil {
+		return cluster.Catalogue{}, err
+	}
+	regions := prov.Capabilities().Regions
+	where := "GET /v1/providers/" + prov.ID() + "/regions lists the ones on offer"
 	if region == "" {
-		return cluster.Catalogue{}, bad("region is required", "GET /v1/providers/"+c.prov.ID()+"/regions lists the ones on offer")
+		return cluster.Catalogue{}, bad("region is required", where)
 	}
-	if !slices.Contains(c.prov.Capabilities().Regions, region) {
-		return cluster.Catalogue{}, bad(fmt.Sprintf("region %q is not one %s can provision in", region, c.prov.ID()),
-			"GET /v1/providers/"+c.prov.ID()+"/regions lists the ones on offer")
+	if !slices.Contains(regions, region) {
+		return cluster.Catalogue{}, bad(fmt.Sprintf("region %q is not one %s can provision in", region, prov.ID()), where)
 	}
-	sizes, err := c.prov.HostSizes(ctx, region)
+	sizes, err := prov.HostSizes(ctx, region)
 	if err != nil {
 		return cluster.Catalogue{}, unreachable(err)
 	}
-	cat := cluster.Catalogue{Regions: c.prov.Capabilities().Regions, Sizes: sizes, MinDisk: minDiskGiB}
+	cat := cluster.Catalogue{Regions: regions, Sizes: sizes, MinDisk: minDiskGiB}
 	if !slices.ContainsFunc(sizes, func(s provider.HostSize) bool { return s.ID == instanceType }) {
 		return cat, bad(fmt.Sprintf("instance type %q is not offered in %s", instanceType, region),
-			"GET /v1/providers/"+c.prov.ID()+"/instance-types?region="+region+" lists the sizes on offer")
+			"GET /v1/providers/"+prov.ID()+"/instance-types?region="+region+" lists the sizes on offer")
 	}
 	if diskGiB < minDiskGiB {
 		return cat, bad(fmt.Sprintf("disk must be at least %d GiB", minDiskGiB), "")
@@ -272,8 +295,8 @@ func (s *Server) clusters(h route) {
 			return nil, err
 		}
 		ids := []string{}
-		if c.available() {
-			ids = append(ids, c.prov.ID())
+		if p, err := c.usable(); err == nil {
+			ids = append(ids, p.ID())
 		}
 		return map[string]any{"control_plane": true, "providers": ids, "version": Version}, nil
 	})
@@ -498,7 +521,11 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, err
 		}
-		if err := c.prov.SetBootstrap(r.Context(), handle, provider.Bootstrap{AdminPassword: pw}); err != nil {
+		prov, err := c.usable()
+		if err != nil {
+			return nil, err
+		}
+		if err := prov.SetBootstrap(r.Context(), handle, provider.Bootstrap{AdminPassword: pw}); err != nil {
 			return nil, unreachable(err)
 		}
 		// The new key is minted by the cluster, through a session opened with
@@ -572,7 +599,11 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, err
 		}
-		id, err := c.prov.AddNode(r.Context(), handle,
+		prov, err := c.usable()
+		if err != nil {
+			return nil, err
+		}
+		id, err := prov.AddNode(r.Context(), handle,
 			provider.NodeSpec{InstanceType: req.InstanceType, DiskGiB: req.DiskGiB},
 			provider.Bootstrap{AdminPassword: pw})
 		if err != nil {
@@ -623,7 +654,11 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, err
 		}
-		if err := c.prov.RemoveNode(r.Context(), handle, id); err != nil {
+		prov, err := c.usable()
+		if err != nil {
+			return nil, err
+		}
+		if err := prov.RemoveNode(r.Context(), handle, id); err != nil {
 			if errors.Is(err, provider.ErrNodeBusy) {
 				return nil, nodeHolds(id, held)
 			}

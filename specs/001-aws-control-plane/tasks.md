@@ -392,7 +392,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 
 ### CRITICAL
 
-- [ ] T087 Serve the phase-one provider roster from `GET /v1/providers` so `aws` is available
+- [X] T087 Serve the phase-one provider roster from `GET /v1/providers` so `aws` is available
       and `gcp`/`azure` are listed as unavailable, with no adapter behind them (FR-002, US4/AC1-2,
       SC-006) (missing). Today `internal/api/clusters.go:149-153` returns one entry built from the
       single injected adapter, so User Story 4 never occurs against a real server: the picker shows
@@ -487,7 +487,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
       instance rather than the template (contradicts).
 - [ ] T110 Take the lowest matching on-demand price rather than the first, or amend research D9 to
       say "the first matching term" (research D9) (partial).
-- [ ] T111 Resolve the dead code Principle V forbids: `provider.Registry`, `Provider.StatusNode`,
+- [X] T111 Resolve the dead code Principle V forbids: `provider.Registry`, `Provider.StatusNode`,
       `nodeFailed` and `nodeRemoving` have no production caller (Constitution V) (unrequested).
 - [ ] T112 Move worker add/remove orchestration out of the HTTP layer into `internal/cluster`, or
       amend `plan.md`'s Project Structure, which lists a `nodes.go` that does not exist and
