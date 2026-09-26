@@ -3,6 +3,7 @@
 import json
 import sys
 import threading
+from urllib.parse import parse_qs, urlsplit
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,6 +18,7 @@ SB = {"id": "sb-abc123", "image": "python:3.12-slim", "status": "running", "netw
 class Fake(BaseHTTPRequestHandler):
     seen: list = []
     get_tries = 0
+    files: dict = {}
 
     def log_message(self, *a):
         pass
@@ -40,9 +42,13 @@ class Fake(BaseHTTPRequestHandler):
         if p.endswith("/exec"):
             return self.reply(200, {"exit_code": 3, "stdout": "hi\n", "stderr": ""})
         if "/files" in p and self.command == "PUT":
+            Fake.files[parse_qs(urlsplit(p).query)["path"][0]] = body
             return self.reply(204)
         if "/files" in p:
-            return self.reply(200, raw=body.encode() or "héllo".encode())
+            key = parse_qs(urlsplit(p).query)["path"][0]
+            if key not in Fake.files:
+                return self.reply(404, {"code": "file_not_found", "message": f"{key}: no such file"})
+            return self.reply(200, raw=Fake.files[key].encode())
         if p == "/v1/sandboxes/sb-abc123" and self.command == "GET":
             Fake.get_tries += 1
             if Fake.get_tries < 3:
@@ -56,6 +62,9 @@ class Fake(BaseHTTPRequestHandler):
 
 
 class TestSDK(unittest.TestCase):
+    def setUp(self):
+        Fake.seen, Fake.get_tries, Fake.files = [], 0, {}
+
     def test_flow(self):
         srv = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -68,7 +77,10 @@ class TestSDK(unittest.TestCase):
                 r = sb.exec("echo hi; exit 3")
                 self.assertEqual((r.exit_code, r.stdout), (3, "hi\n"))
                 sb.files.write("a/b.txt", "x")
-                self.assertEqual(sb.files.read("a/b.txt"), "héllo")
+                self.assertEqual(sb.files.read("a/b.txt"), "x")
+                with self.assertRaises(DawnbxError) as cm:
+                    sb.files.read("nope.txt")
+                self.assertEqual(cm.exception.code, "file_not_found")
                 with self.assertRaises(DawnbxError) as cm:
                     sb.extend("1h")
                 self.assertEqual((cm.exception.code, cm.exception.hint, cm.exception.status), ("expired", "use ttl=None", 410))

@@ -32,6 +32,8 @@ func setup(t *testing.T) (*Manager, *fake.Clientset) {
 	kube := fake.NewClientset()
 	m := New(st, kube, nil)
 	t.Cleanup(m.refill.Wait) // before TempDir removal and the next test's globals
+	freePct, diskUsage, copyTree := FreePct, DiskUsage, CopyTree
+	t.Cleanup(func() { FreePct, DiskUsage, CopyTree = freePct, diskUsage, copyTree })
 	FreePct = func(string) (float64, error) { return 50, nil }
 	DiskUsage = func(string) int64 { return 0 }
 	return m, kube

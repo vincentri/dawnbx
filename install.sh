@@ -8,7 +8,7 @@
 #   --yes                non-interactive (also formats a blank --data-device)
 #   --data-dir PATH      where sandboxes live (default /var/lib/dawnbx)
 #   --data-device DEV    block device for the data dir; formatted only if blank
-#   --adopt-data         allow a non-empty data dir without an dawnbx marker
+#   --adopt-data         allow a non-empty data dir without a dawnbx marker
 #   --domain NAME        Let's Encrypt cert for NAME (DNS must point here, ports 80+443 open);
 #                        without it HTTPS uses a self-signed cert (env DAWNBX_DOMAIN)
 #   --release-url URL    download dawnbx binaries + checksums.txt from URL (env DAWNBX_RELEASE_URL)
@@ -221,10 +221,7 @@ else
 fi
 mkdir -p "$DATA/sb"
 
-QUOTA=off
-if findmnt -no OPTIONS --target "$DATA" | grep -q prjquota; then
-  QUOTA=on
-else
+if ! findmnt -no OPTIONS --target "$DATA" | grep -q prjquota; then
   warn "no ext4 project quota on $DATA; per-sandbox disk cap falls back to a 30 s du check (dawnbx doctor shows how to fix)"
 fi
 
@@ -275,7 +272,6 @@ if [ "$LOCAL" = 0 ]; then
       -keyout "$SRV/tls/key.pem" -out "$SRV/tls/cert.pem" 2>/dev/null
   fi
 fi
-printf 'quota=%s\n' "$QUOTA" >"$SRV/config"
 fi # server identity
 umask 022
 

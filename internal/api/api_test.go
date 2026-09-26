@@ -28,6 +28,7 @@ import (
 )
 
 // testDB is a SQLite auth DB where "dawnbx_good" is the installer key.
+
 func testDB(t *testing.T) *auth.DB {
 	dir := t.TempDir()
 	db, err := auth.Open(filepath.Join(dir, "dawnbx.db"))
@@ -42,6 +43,23 @@ func testDB(t *testing.T) *auth.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+// doer builds a request helper; alwaysX sends the CSRF header the dashboard
+// client adds, which cookie-auth tests need on every write.
+func doer(h http.Handler, alwaysX bool) func(method, path, body string, hdr ...string) *httptest.ResponseRecorder {
+	return func(method, path, body string, hdr ...string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if alwaysX {
+			req.Header.Set("X-Dawnbx", "1")
+		}
+		for i := 0; i < len(hdr); i += 2 {
+			req.Header.Set(hdr[i], hdr[i+1])
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
 }
 
 func testManager(t *testing.T) (*sandbox.Manager, *store.Store) {
@@ -161,15 +179,7 @@ func TestOrgsSessionsKeys(t *testing.T) {
 	st.Create(store.Meta{ID: mine, Image: "x", Created: time.Now(), Status: sandbox.StatusRunning}) // pre-org = default
 	st.Create(store.Meta{ID: theirs, Image: "x", Created: time.Now(), Status: sandbox.StatusRunning, Org: "acme"})
 
-	do := func(method, path, body string, hdr ...string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		for i := 0; i < len(hdr); i += 2 {
-			req.Header.Set(hdr[i], hdr[i+1])
-		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		return w
-	}
+	do := doer(h, false)
 	bearer := func(k string) []string { return []string{"Authorization", "Bearer " + k} }
 
 	// Keys see only their org; other orgs' sandboxes look missing.
@@ -237,16 +247,7 @@ func TestUsersOrgsLockout(t *testing.T) {
 	db := testDB(t)
 	db.EnsureAdmin("admin", "admin-password")
 	h := (&Server{M: m, Auth: db}).Handler()
-	do := func(method, path, body string, hdr ...string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("X-Dawnbx", "1")
-		for i := 0; i < len(hdr); i += 2 {
-			req.Header.Set(hdr[i], hdr[i+1])
-		}
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		return w
-	}
+	do := doer(h, true)
 	login := func(user, pw string) []string {
 		w := do("POST", "/v1/login", `{"username":"`+user+`","password":"`+pw+`"}`)
 		if w.Code != 200 {
