@@ -23,6 +23,10 @@ cd ../dawnbx-<task>        # every command below runs here
 
 ## 2. Checks
 
+**Nothing gets pushed until the whole gate is green.** `bash hack/check.sh` runs all of it in one command — gofmt, `go vet`, the Go build and tests, the dashboard typecheck and build, both SDK suites, the docs typecheck, and the cite check. `.githooks/pre-push` runs it and refuses the push. If a fresh worktree stops it on missing `node_modules`, run the three `npm ci --prefix` commands in §1 rather than skipping the gate.
+
+There is no eslint, prettier, or ruff in this repo. `gofmt` and `tsc` are the entire lint story; adding a real linter is a deliberate decision, not an oversight to fix.
+
 - `go build ./... && go test ./...` — server, CLI, core
 - `npm run typecheck --prefix web` — dashboard
 - `npm test --prefix sdk/typescript` — TS SDK (type-checks, then tests `dist/`)
