@@ -583,13 +583,13 @@ on the visible surface and left the one behind it.
 
 ### MEDIUM
 
-- [ ] T125 Either expose the operation history the comment claims the dashboard reads, or delete
+- [X] T125 Either expose the operation history the comment claims the dashboard reads, or delete
       `Registry.Ops` and the claim. `cluster_ops` is written and never read in production
       (T095) (partial).
 - [X] T126 Repair `hack/smoke-control-plane.sh` and wire it into the gate. T094's `delivery` field
       landed between `id` and `available`, so the script's grep can never match and three checks
       fail; it is not in `hack/check.sh`, which is why nothing noticed (contradicts).
-- [ ] T127 Delete `nodeFailed`, `nodeRemoving` and `Provider.StatusNode`. All three are declared
+- [X] T127 Delete `nodeFailed`, `nodeRemoving` and `Provider.StatusNode`. All three are declared
       with no production caller, and their only users are tests (T111, Principle V) (unrequested).
 - [X] T128 Extend `install.sh --help` to `sed -n '2,28p'`. It currently stops two lines before
       the `DAWNBX_BOOTSTRAP_PARAMETER` entry it is meant to document (T108) (partial).
@@ -601,11 +601,11 @@ on the visible surface and left the one behind it.
 - [X] T131 Declare `region` on the instance-types route or stop advertising it. Both doc tables
       promise `?region=`, the contract declares no such parameter, so the generated client cannot
       send it and the dashboard prices the provider's first region (contract, docs) (contradicts).
-- [ ] T132 Reword the rotate confirmation to match the handler. It still says the old pair survives
+- [X] T132 Reword the rotate confirmation to match the handler. It still says the old pair survives
       until applied, while T093 now revokes the old API key (contradicts).
-- [ ] T133 Drop `deleted` from `Cluster.status` or record it before forgetting. Nothing writes it —
+- [X] T133 Drop `deleted` from `Cluster.status` or record it before forgetting. Nothing writes it —
       the same defect T104 fixed on `ClusterNode.status` and left here (T104) (contradicts).
-- [ ] T134 Render a terminal "this cluster is gone" state after a delete, instead of letting the
+- [X] T134 Render a terminal "this cluster is gone" state after a delete, instead of letting the
       follow-up refetch 404 through the generic error path and read as a destructive failure
       (FR-018) (partial).
 - [X] T135 Add one OpenAPI lint step to `hack/check.sh` and CI. T088's second clause — validate
@@ -619,7 +619,7 @@ on the visible surface and left the one behind it.
 - [X] T138 Fix the vacuous assertion at `clusters.test.tsx:163`: it counts calls against the array
       `installFetch` just returned, which resets the log first, so it cannot fail. Principle IV
       bans a test that merely proves a mock was called (partial).
-- [ ] T139 Render the delivery guarantee where the operator actually is. It shows only on the
+- [X] T139 Render the delivery guarantee where the operator actually is. It shows only on the
       provider step *after* a choice is made, and choosing navigates away from it (T094) (partial).
 - [X] T140 Carry the worker-handle exception into the constitution's neutrality bullet and reconcile
       `cluster-routes.md`, which grants it at `:29-32` and denies it at `:90-91`. Constitution
@@ -633,19 +633,19 @@ on the visible surface and left the one behind it.
       (partial).
 - [X] T143 Add the `admin:` markers to the README's provider rows and carry the session wording
       across from `api.mdx` (contradicts).
-- [ ] T144 Add `delivery` to the three example rows in `contracts/cluster-routes.md:39` (contradicts).
+- [X] T144 Add `delivery` to the three example rows in `contracts/cluster-routes.md:39` (contradicts).
 - [X] T145 Do T082's nodes.mdx pointer, or amend its record. The route rows are documented only in
       `api.mdx` (contradicts).
-- [ ] T146 Show the rescue-only sentence for any non-empty `detail`, not only inside the failure
+- [X] T146 Show the rescue-only sentence for any non-empty `detail`, not only inside the failure
       panel, so a ready cluster with a detail still has the guidance (US2/AC3) (partial).
 - [X] T147 Gate the Clusters nav link on admin, or have the page match the nav. A member is offered
       a link that refuses them (unrequested).
 - [X] T148 Send `VpcCidr` from the adapter or document the `172.31.0.0/16` requirement. Today a
       worker added to a cluster in any other CIDR cannot reach 6443 and reports nothing
       (research D7, FR-010) (partial).
-- [ ] T149 Add the shared `Error` response to the three unauthenticated operations, or state in
+- [X] T149 Add the shared `Error` response to the three unauthenticated operations, or state in
       the contract why they are exempt (contradicts).
-- [ ] T150 Fix `provider_test.go:120`: the comment says the fake is exported for other packages and
+- [X] T150 Fix `provider_test.go:120`: the comment says the fake is exported for other packages and
       it is neither exported nor shared (contradicts).
-- [ ] T151 Give a stalled cluster a distinct badge in the list as well as the panel. The list
+- [X] T151 Give a stalled cluster a distinct badge in the list as well as the panel. The list
       cannot tell a wedged cluster from a healthy one (T091) (partial).
