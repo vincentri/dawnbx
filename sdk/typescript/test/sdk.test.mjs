@@ -95,3 +95,118 @@ test("create, exec, files, errors, dispose", async () => {
     srv.close()
   }
 })
+
+const STOPPED = { ...sb1, status: "stopped" }
+const CHILD = { ...STOPPED, id: "sb-child1", parent: "sb-abc123" }
+
+test("list, fork, start and refresh", async () => {
+  const seen = []
+  const srv = createServer(async (req, res) => {
+    let body = ""
+    for await (const c of req) body += c
+    seen.push(`${req.method} ${req.url} ${body}`)
+    const json = (s, v) => {
+      res.writeHead(s, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(v))
+    }
+    if (req.url === "/v1/sandboxes" && req.method === "GET")
+      return json(200, { sandboxes: [sb1, CHILD] })
+    if (req.url.endsWith("/fork")) return json(200, { sandboxes: [CHILD] })
+    if (req.url.endsWith("/start")) return json(200, sb1)
+    json(200, STOPPED)
+  })
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  const o = { url: `http://127.0.0.1:${srv.address().port}`, apiKey: "k" }
+  try {
+    const all = await Sandbox.list(o)
+    assert.deepEqual(
+      all.map((s) => [s.id, s.parent]),
+      [
+        ["sb-abc123", undefined],
+        ["sb-child1", "sb-abc123"],
+      ],
+    )
+    assert.ok(all[0].created instanceof Date)
+
+    const sb = await Sandbox.get("sb-abc123", o)
+    const kids = await sb.fork(2, { ttl: null })
+    assert.deepEqual(
+      kids.map((k) => k.id),
+      ["sb-child1"],
+    )
+    assert.equal(
+      seen.at(-1),
+      `POST /v1/sandboxes/sb-abc123/fork {"count":2,"ttl":null}`,
+    )
+
+    await sb.fork(1)
+    assert.equal(seen.at(-1), `POST /v1/sandboxes/sb-abc123/fork {"count":1}`)
+
+    await sb.start()
+    assert.equal(sb.info.status, "running")
+    const fresh = await sb.refresh()
+    assert.equal(fresh.status, "stopped")
+    assert.equal(sb.info.status, "stopped")
+  } finally {
+    srv.close()
+  }
+})
+
+test("an unreachable server raises connection_failed", async () => {
+  // Port 1 is reserved and never listening, so the client exhausts its retries.
+  await assert.rejects(
+    Sandbox.list({ url: "http://127.0.0.1:1", apiKey: "k" }),
+    (e) => {
+      assert.ok(e instanceof DawnbxError)
+      assert.equal(e.code, "connection_failed")
+      assert.match(e.message, /cannot reach/)
+      assert.match(e.hint, /DAWNBX_URL/)
+      return true
+    },
+  )
+})
+
+test("env defaults and create options", async () => {
+  const seen = []
+  const srv = createServer(async (req, res) => {
+    let body = ""
+    for await (const c of req) body += c
+    seen.push(`${req.method} ${req.url} ${body}`)
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(
+      JSON.stringify(req.url === "/v1/sandboxes" ? { sandboxes: [sb1] } : sb1),
+    )
+  })
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  const prevUrl = process.env.DAWNBX_URL
+  const prevKey = process.env.DAWNBX_API_KEY
+  process.env.DAWNBX_URL = `http://127.0.0.1:${srv.address().port}`
+  process.env.DAWNBX_API_KEY = "env-key"
+  try {
+    // No url/apiKey passed: both come from the environment.
+    await Sandbox.list()
+    assert.equal(seen.at(-1), "GET /v1/sandboxes ")
+
+    await Sandbox.create({
+      image: "python:3.12",
+      ttl: "30m",
+      network: "none",
+      cpu: "2",
+      memory: "2Gi",
+    })
+    assert.equal(
+      seen.at(-1),
+      `POST /v1/sandboxes {"image":"python:3.12","network":"none","cpu":"2","memory":"2Gi","ttl":"30m"}`,
+    )
+
+    // A bare create sends only the fields the caller set.
+    await Sandbox.create()
+    assert.equal(seen.at(-1), "POST /v1/sandboxes {}")
+  } finally {
+    if (prevUrl === undefined) delete process.env.DAWNBX_URL
+    else process.env.DAWNBX_URL = prevUrl
+    if (prevKey === undefined) delete process.env.DAWNBX_API_KEY
+    else process.env.DAWNBX_API_KEY = prevKey
+    srv.close()
+  }
+})

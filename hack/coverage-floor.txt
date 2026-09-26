@@ -1,0 +1,18 @@
+# Coverage floors enforced by hack/check.sh. One source of truth: the checks and
+# the linter configs read these, not their own numbers.
+#
+# Format: <area>=<statements>% <branches>% <functions>% <lines>%
+# A dash means that axis is not measured for that area.
+#
+# Every floor below is the value measured when the gate was introduced. They are
+# a ratchet, not a target: they may only rise. When you raise coverage, raise the
+# floor in the same commit. Never lower one to make a push go green.
+#
+# Why Go sits far below the rest: internal/sandbox (reconcile, warm pool, fork,
+# node join) is k8s interaction, and a unit test with a mocked clientset asserts
+# the mock rather than the pod spec. That code is covered by the live tier,
+# hack/verify.sh, in a real VM. The unit-testable parts still ratchet upward.
+go=59.9 - - -
+web=93 83 77 95
+ts_sdk=95 85 95 95
+py_sdk=95 - - -

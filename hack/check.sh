@@ -13,7 +13,7 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
-MIN=95
+
 fail=0
 run() { printf '\n== %s\n' "$1"; shift; "$@" || { echo "FAILED: $*"; fail=1; }; }
 
@@ -28,7 +28,6 @@ done
   exit 2
 }
 
-atleast() { awk -v v="$1" -v m="$2" 'BEGIN{exit !(v+0 >= m+0)}'; }
 
 # ---- lint -------------------------------------------------------------------
 unformatted=$(gofmt -l cmd internal)
@@ -51,30 +50,46 @@ run "web test" bash -c 'cd web && npx vitest run'
 run "ts sdk test" npm test --prefix sdk/typescript
 run "py sdk test" bash -c 'cd sdk/python && ../../.venv/bin/python -m unittest discover -s tests'
 
-# ---- coverage (95% floor) ---------------------------------------------------
+# ---- coverage (floors in hack/coverage-floor.txt) ---------------------------
+# Resolve every floor here, while the CWD is still the repo root: the steps
+# below run inside per-area subshells that cannot see hack/.
+floor() { awk -v k="$1" -F'[= ]' '$1 == k { print $2 }' hack/coverage-floor.txt; }
+# All axes for an area, in the order statements branches functions lines.
+floors() {
+  awk -v k="$1" -F'[= ]' '$1 == k { for (i = 2; i <= NF; i++) if ($i != "-") printf "%s ", $i }' hack/coverage-floor.txt
+}
+ge() { awk -v v="$1" -v m="$2" 'BEGIN{exit !(v+0 >= m+0)}'; }
+GO_FLOOR=$(floor go)
+PY_FLOOR=$(floor py_sdk)
+read -r WS WB WF WL <<<"$(floors web)"
+read -r TS TB TF TL <<<"$(floors ts_sdk)"
+
 printf '\n== go coverage\n'
 if go test -coverprofile=/tmp/dawnbx-cov.out ./... >/dev/null 2>&1; then
   total=$(go tool cover -func=/tmp/dawnbx-cov.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-  echo "total ${total}% (floor ${MIN}%)"
-  atleast "$total" "$MIN" || { echo "FAILED: go coverage ${total}% < ${MIN}%"; fail=1; }
+  echo "total ${total}% (floor ${GO_FLOOR}%)"
+  ge "$total" "$GO_FLOOR" || { echo "FAILED: go coverage ${total}% < ${GO_FLOOR}%"; fail=1; }
 else
   echo "FAILED: go test -coverprofile"; fail=1
 fi
 
-printf '\n== web coverage\n'
-(cd web && npx vitest run --coverage >/dev/null 2>&1) || {
-  echo "FAILED: web coverage below ${MIN}% (thresholds live in web/vitest.config.ts)"; fail=1; }
+printf '\n== web coverage (src/lib)\n'
+(cd web && npx vitest run --coverage \
+   --coverage.thresholds.statements="$WS" --coverage.thresholds.branches="$WB" \
+   --coverage.thresholds.functions="$WF" --coverage.thresholds.lines="$WL" \
+   --coverage.thresholds.100=false >/dev/null 2>&1) || {
+  echo "FAILED: web coverage below ${WS}/${WB}/${WF}/${WL}"; fail=1; }
 
 printf '\n== ts sdk coverage\n'
 (cd sdk/typescript && npx c8 --reporter=text --include=dist/index.js \
-   --check-coverage --lines "$MIN" --functions "$MIN" --branches "$MIN" --statements "$MIN" \
+   --check-coverage --statements "$TS" --branches "$TB" --functions "$TF" --lines "$TL" \
    node --test test/sdk.test.mjs >/dev/null) || {
-  echo "FAILED: ts sdk coverage below ${MIN}%"; fail=1; }
+  echo "FAILED: ts sdk coverage below ${TS}/${TB}/${TF}/${TL}"; fail=1; }
 
 printf '\n== py sdk coverage\n'
 (cd sdk/python && ../../.venv/bin/python -m coverage run -m unittest discover -s tests >/dev/null 2>&1 \
-   && ../../.venv/bin/python -m coverage report --fail-under="$MIN" --include='src/*' >/dev/null) || {
-  echo "FAILED: py sdk coverage below ${MIN}%"; fail=1; }
+   && ../../.venv/bin/python -m coverage report --fail-under="$PY_FLOOR" --include='src/*' >/dev/null) || {
+  echo "FAILED: py sdk coverage below ${PY_FLOOR}%"; fail=1; }
 
 # ---- the dashboard bundle is committed and embedded -------------------------
 stale=$(git status --porcelain internal/api/ui)

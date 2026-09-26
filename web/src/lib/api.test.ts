@@ -1,5 +1,8 @@
+// The 401 sign-out hook (api.use onResponse) is the one uncovered line here:
+// openapi-fetch builds a Request from the relative /v1 URL, which only
+// resolves same-origin in a browser. It is covered by using the dashboard.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { age, left, must, q, when } from "./api";
+import { age, left, must, q, setSignedOut, when } from "./api";
 
 const ok = (body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -79,5 +82,14 @@ describe("age, left, when", () => {
   it("renders an expiry, or a dash when there is none", () => {
     expect(when("2026-01-02T03:00:00Z")).toBe(new Date("2026-01-02T03:00:00Z").toLocaleString());
     expect(when(null)).toBe("–");
+  });
+});
+
+describe("setSignedOut", () => {
+  it("registers the callback the 401 hook calls", () => {
+    let called = 0;
+    setSignedOut(() => called++);
+    expect(typeof setSignedOut(() => {})).toBe("function");
+    expect(called).toBe(0);
   });
 });
