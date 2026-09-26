@@ -78,8 +78,14 @@
             application/json:
               schema:
                 type: object
-                required: [instance_types]
+                required: [instance_types, region]
                 properties:
+                  region:
+                    type: string
+                    description: >
+                      The region these prices are for. One fact about the whole
+                      response, not one per item, because a size is a catalogue
+                      entry and the region was the argument to fetching it.
                   instance_types:
                     type: array
                     items: { $ref: "#/components/schemas/InstanceTypePrice" }
@@ -286,12 +292,11 @@
 
     InstanceTypePrice:
       type: object
-      required: [id, hourly_usd, monthly_usd, region]
+      required: [id, hourly_usd, monthly_usd]
       properties:
         id: { type: string }
         hourly_usd: { type: number }
         monthly_usd: { type: number }
-        region: { type: string, description: the region these prices are for }
 
     Estimate:
       type: object
@@ -317,7 +322,7 @@
 
     Cluster:
       type: object
-      required: [name, provider, region, instance_type, disk_gib, domain, status, hourly_usd, monthly_usd, created, updated]
+      required: [name, provider, region, instance_type, disk_gib, domain, status, phase, detail, hourly_usd, monthly_usd, url, tls_pin, created, updated]
       properties:
         name: { type: string }
         provider: { type: string, description: the provider id; only aws is available in phase one }
@@ -333,7 +338,6 @@
         hourly_usd: { type: number }
         monthly_usd: { type: number }
         url: { type: string, description: non-empty only when status is ready }
-        public_ip: { type: string }
         tls_pin: { type: string, description: SHA-256 SPKI pin of the cluster certificate }
         created: { type: string, format: date-time }
         updated: { type: string, format: date-time }

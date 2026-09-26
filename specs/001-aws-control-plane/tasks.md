@@ -401,15 +401,15 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 
 ### HIGH
 
-- [ ] T088 Delete the stray `clusterName` and `provider` keys that sit as direct children of
+- [X] T088 Delete the stray `clusterName` and `provider` keys that sit as direct children of
       `components` in `internal/api/openapi.yaml:574-575` — the document is not valid OpenAPI 3.1
       — then validate it with a spec linter rather than relying on `npm run gen` surviving it
       (Constitution III, one contract) (contradicts).
-- [ ] T089 Reconcile `InstanceTypePrice.region` with the code: either add `region` to
+- [X] T089 Reconcile `InstanceTypePrice.region` with the code: either add `region` to
       `provider.HostSize` and set it in the adapter, or drop it from `required` and document the
       top-level `region` the handler already returns. Today the contract requires a field nothing
       marshals, which makes `web/src/pages/clusters.tsx:392` dead (contract, SC-009) (contradicts).
-- [ ] T090 Remove `public_ip` from the `Cluster` schema in `internal/api/openapi.yaml` and in
+- [X] T090 Remove `public_ip` from the `Cluster` schema in `internal/api/openapi.yaml` and in
       `contracts/openapi-delta.yaml`, and delete the dead branch at
       `web/src/pages/clusters.tsx:481-483`. The value lives only inside the adapter's opaque
       handle, and the contract states the only provider facts the API exposes are `provider` and
@@ -464,7 +464,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 
 ### LOW
 
-- [ ] T103 Add `phase`, `detail`, `url` and `tls_pin` to the `Cluster` `required` list: the struct
+- [X] T103 Add `phase`, `detail`, `url` and `tls_pin` to the `Cluster` `required` list: the struct
       always marshals them, and leaving them optional forces guards in the dashboard for fields
       that are always present (contract) (partial).
 - [ ] T104 Narrow the `ClusterNode.status` enum to the states the API can return, or earn the

@@ -1244,6 +1244,8 @@ export interface paths {
           };
           content: {
             "application/json": {
+              /** @description The region these prices are for. One fact about the whole response, not one per item, because a size is a catalogue entry and the region was the argument to fetching it. */
+              region: string;
               instance_types: components["schemas"]["InstanceTypePrice"][];
             };
           };
@@ -1771,8 +1773,6 @@ export interface components {
       id: string;
       hourly_usd: number;
       monthly_usd: number;
-      /** @description the region these prices are for */
-      region: string;
     };
     Estimate: {
       /** @description present this to POST /v1/clusters */
@@ -1800,16 +1800,15 @@ export interface components {
       /** @enum {string} */
       status: "provisioning" | "ready" | "failed" | "deleting" | "deleted";
       /** @description current sub-step; empty unless provisioning */
-      phase?: string;
+      phase: string;
       /** @description non-secret diagnostic from the bootstrap */
-      detail?: string;
+      detail: string;
       hourly_usd: number;
       monthly_usd: number;
       /** @description non-empty only when status is ready */
-      url?: string;
-      public_ip?: string;
+      url: string;
       /** @description SHA-256 SPKI pin of the cluster certificate */
-      tls_pin?: string;
+      tls_pin: string;
       /** Format: date-time */
       created: string;
       /** Format: date-time */

@@ -66,9 +66,10 @@ const PROVIDERS = {
 };
 const CATALOGUE = {
   json: {
+    region: "eu-west-1",
     instance_types: [
-      { id: "t4g.medium", hourly_usd: 0.0168, monthly_usd: 12.26, region: "eu-west-1" },
-      { id: "m7g.large", hourly_usd: 0.0816, monthly_usd: 59.57, region: "eu-west-1" },
+      { id: "t4g.medium", hourly_usd: 0.0168, monthly_usd: 12.26 },
+      { id: "m7g.large", hourly_usd: 0.0816, monthly_usd: 59.57 },
     ],
   },
 };
@@ -171,9 +172,8 @@ describe("Configuration", () => {
         ...catalogue,
         "GET /v1/providers/aws/instance-types": {
           json: {
-            instance_types: [
-              { id: "t4g.medium", hourly_usd: 0.0168, monthly_usd: 12.26, region: "us-east-1" },
-            ],
+            region: "us-east-1",
+            instance_types: [{ id: "t4g.medium", hourly_usd: 0.0168, monthly_usd: 12.26 }],
           },
         },
       }),
@@ -395,12 +395,11 @@ describe("Cluster status", () => {
     expect(await screen.findByText("The provider reported no reason.")).toBeInTheDocument();
   });
 
-  it("shows the URL, the public IP and the certificate pin once ready", async () => {
+  it("shows the URL and the certificate pin once ready", async () => {
     at("/clusters?step=status&name=boxy", {
       [`GET ${CLUSTER_PATH}`]: {
         json: cluster({
           url: "https://boxy.example",
-          public_ip: "203.0.113.7",
           tls_pin: "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         }),
       },
@@ -410,7 +409,10 @@ describe("Cluster status", () => {
       "href",
       "https://boxy.example",
     );
-    expect(screen.getByText("Public IP 203.0.113.7")).toBeInTheDocument();
+    // The public IP is deliberately absent: it lives only inside the adapter's
+    // opaque handle, and the contract says a provider resource name never
+    // reaches a response. The cluster URL is what an operator is given.
+    expect(screen.queryByText(/Public IP/)).not.toBeInTheDocument();
     expect(
       screen.getByText("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
     ).toBeInTheDocument();

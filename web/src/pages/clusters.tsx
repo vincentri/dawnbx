@@ -31,7 +31,6 @@ import { useMe } from "./shell";
 type Cluster = components["schemas"]["Cluster"];
 type ClusterNode = components["schemas"]["ClusterNode"];
 type Estimate = components["schemas"]["Estimate"];
-type InstanceTypePrice = components["schemas"]["InstanceTypePrice"];
 
 // The wizard's place is the URL (?step) and so is the cluster it is about
 // (?name): a provisioning page that survives a reload can be pasted to a
@@ -246,16 +245,16 @@ function Wizard({ step, go }: { step: Step; go: Go }) {
             label="size"
             value={draft.instance_type}
             onChange={(v) => set("instance_type", v)}
-            options={(types.data ?? []).map((t) => t.id)}
+            options={(types.data?.instance_types ?? []).map((t) => t.id)}
             empty="No size to choose from."
             price={(id) => {
-              const t = (types.data ?? []).find((x) => x.id === id);
+              const t = (types.data?.instance_types ?? []).find((x) => x.id === id);
               return t ? `${usd(t.hourly_usd)}/h · ${month(t.monthly_usd)}/mo` : "";
             }}
           />
         </Field>
         {types.error && <Fail e={types.error} />}
-        {types.data && <Catalogue types={types.data} region={draft.region} />}
+        {types.data && <Catalogue region={draft.region} pricedFor={types.data.region} />}
         <Field label="Disk (GiB)">
           <Input
             className="w-28"
@@ -375,26 +374,26 @@ function Wizard({ step, go }: { step: Step; go: Go }) {
   );
 }
 
-// The host sizes a provider offers, priced for the control plane's region.
+// The host sizes a provider offers, and the region it priced them for. Both come
+// from one response: the region is a fact about the whole answer, which is why
+// the contract declares it beside the list rather than inside each entry.
 function useInstanceTypes(provider: string) {
   return useQuery({
     queryKey: ["instance-types", provider],
     queryFn: async () =>
-      (await must(api.GET("/v1/providers/{provider}/instance-types", providerPath(provider))))
-        .instance_types,
+      await must(api.GET("/v1/providers/{provider}/instance-types", providerPath(provider))),
     enabled: !!provider,
   });
 }
 
-function Catalogue({ types, region }: { types: InstanceTypePrice[]; region: string }) {
-  // The catalogue carries the region it was priced for, so a mismatch is
-  // said out loud rather than left for the operator to assume.
-  const other = [...new Set(types.map((t) => t.region).filter((r) => r && r !== region))];
-  if (!other.length) return null;
+function Catalogue({ region, pricedFor }: { region: string; pricedFor: string }) {
+  // The response says which region it priced, so a mismatch is said out loud
+  // rather than left for the operator to assume.
+  if (!pricedFor || pricedFor === region) return null;
   return (
     <p className="text-sm text-muted-foreground">
-      These prices are the provider's catalogue for {other.join(", ")}, not {region}. The estimate
-      is what you are charged against.
+      These prices are the provider's catalogue for {pricedFor}, not {region}. The estimate is what
+      you are charged against.
     </p>
   );
 }
@@ -477,9 +476,6 @@ function Status({ name: id, go }: { name: string; go: Go }) {
               >
                 {c.url}
               </a>
-            )}
-            {c.public_ip && (
-              <p className="text-sm text-muted-foreground">Public IP {c.public_ip}</p>
             )}
             {c.tls_pin && (
               <div>
@@ -687,7 +683,7 @@ function Nodes({ name: id, go }: { name: string; go: Go }) {
             <SelectValue placeholder="Worker size" />
           </SelectTrigger>
           <SelectContent>
-            {(types.data ?? []).map((t) => (
+            {(types.data?.instance_types ?? []).map((t) => (
               <SelectItem key={t.id} value={t.id}>
                 {t.id} · {usd(t.hourly_usd)}/h
               </SelectItem>
