@@ -726,3 +726,69 @@ func TestLastProgressOnAClusterWithNoHistory(t *testing.T) {
 		t.Errorf("a cluster with no recorded phase reported progress at %v", got)
 	}
 }
+
+// TestEveryOperationKindIsRecorded: the data model names five operation kinds
+// and the history is what an operator reads when something has gone wrong. Only
+// "create" was ever written, so the other four were a schema claim with nothing
+// behind it.
+func TestEveryOperationKindIsRecorded(t *testing.T) {
+	r, _ := testRegistry(t)
+	est, _ := newFake("aws").Estimate(context.Background(), provider.ClusterSpec{})
+	if _, err := r.Create(okReq(), *est, provider.NewHandle([]byte("{}"))); err != nil {
+		t.Fatal(err)
+	}
+	// The create is recorded by Create itself.
+	if err := r.PhaseFor("probe1", OpAddNode, StatusReady, PhaseReady, "adding a worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PhaseFor("probe1", OpRemoveNode, StatusReady, PhaseReady, "removed worker i-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PhaseFor("probe1", OpRotate, StatusReady, PhaseReady, "rotated"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Delete("probe1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ops, err := r.Ops("probe1", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, o := range ops {
+		seen[o.Kind] = true
+	}
+	for _, kind := range []string{OpCreate, OpAddNode, OpRemoveNode, OpRotate, OpDelete} {
+		if !seen[kind] {
+			t.Errorf("the history has no %q row: %+v", kind, ops)
+		}
+	}
+	// And the reader can be asked for one kind without returning the others,
+	// which is what makes the history legible rather than interleaved noise.
+	only, err := r.Ops("probe1", OpRotate, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(only) != 1 || only[0].Kind != OpRotate {
+		t.Errorf("asking for one kind returned %+v", only)
+	}
+}
+
+// TestKeyIDNamesAKeyWithoutRevealingIt: revoking a key needs its id, and the
+// id is the middle segment of dbx_<id>_<secret>. That is the whole reason a
+// rotation can retire the old key without ever holding the secret again.
+func TestKeyIDNamesAKeyWithoutRevealingIt(t *testing.T) {
+	for _, c := range []struct{ token, want string }{
+		{"dbx_abc123_deadbeef", "abc123"},
+		{"dbx_x_y", "x"},
+		{"dawnbx_abc_secret", ""}, // not this product's shape
+		{"nonsense", ""},
+		{"dbx__secret", ""},
+		{"", ""},
+	} {
+		if got := KeyID(c.token); got != c.want {
+			t.Errorf("KeyID(%q) = %q, want %q", c.token, got, c.want)
+		}
+	}
+}

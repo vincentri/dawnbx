@@ -207,11 +207,11 @@ func (r *Registry) Register(p Provider) {
 	}
 	if i := r.indexOf(p.ID()); i >= 0 {
 		r.all[p.ID()] = p
-		r.order[i] = Listed{ID: p.ID(), Available: p.Capabilities().Available}
+		r.order[i] = Listed{ID: p.ID(), Available: p.Capabilities().Available, Delivery: p.Capabilities().Delivery}
 		return
 	}
 	r.all[p.ID()] = p
-	r.order = append(r.order, Listed{ID: p.ID(), Available: p.Capabilities().Available})
+	r.order = append(r.order, Listed{ID: p.ID(), Available: p.Capabilities().Available, Delivery: p.Capabilities().Delivery})
 }
 
 // Declare records a provider this build knows about and cannot use. It appears
@@ -275,7 +275,13 @@ func (r *Registry) Available() (Provider, error) {
 // is not available is still listed, with available false, so the UI can show
 // GCP and Azure as future choices rather than hiding them.
 type Listed struct {
-	ID        string `json:"id"`
+	ID string `json:"id"`
+	// Delivery names how a credential reaches a new host on this provider, in
+	// the provider's own words. It is here because the guarantee differs by
+	// cloud and an operator choosing one deserves to know which they are
+	// getting rather than being told the strongest thing the product does
+	// anywhere.
+	Delivery  string `json:"delivery"`
 	Available bool   `json:"available"`
 }
 

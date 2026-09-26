@@ -220,6 +220,45 @@ func (r *Remote) MintAPIKey(ctx context.Context, name string) (string, error) {
 	return out.Key, nil
 }
 
+// KeyID is the identifier part of a key the cluster issued. A key is
+// dbx_<id>_<secret>, so the id is the middle segment and naming it to revoke
+// does not require holding the secret.
+func clientKeyID(token string) string {
+	parts := strings.SplitN(token, "_", 3)
+	if len(parts) < 3 || parts[0] != "dbx" || parts[1] == "" {
+		return ""
+	}
+	return parts[1]
+}
+
+// RevokeKey retires a key the control plane issued earlier. Without this a
+// rotation leaves the previous key live on the cluster, which is the opposite of
+// what an operator rotating a leaked credential is asking for.
+func (r *Remote) RevokeKey(ctx context.Context, keyID string) error {
+	if keyID == "" {
+		return errors.New("cannot revoke a key with no id")
+	}
+	if err := r.sessioned(); err != nil {
+		return err
+	}
+	resp, err := r.do(ctx, http.MethodDelete, "/v1/keys/"+keyID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusOK:
+		return nil
+	case http.StatusNotFound:
+		// Already gone. A rotation must not fail because the key it is
+		// replacing was revoked by hand in the meantime.
+		return nil
+	default:
+		return fmt.Errorf("cluster refused to revoke key %s: %s", keyID, resp.Status)
+	}
+}
+
 // RemoteNode is what the cluster reports about one of its workers.
 type RemoteNode struct {
 	Name      string `json:"name"`

@@ -209,6 +209,16 @@ function Wizard({ step, go }: { step: Step; go: Go }) {
             </Button>
           ))}
         </div>
+        {(() => {
+          const delivery = providers.data?.find((p) => p.id === draft.provider)?.delivery;
+          if (!draft.provider || !delivery) return null;
+          return (
+            <p className="text-sm text-muted-foreground">
+              {draft.provider} delivers the administrator password to a new host through {delivery}.
+              Other clouds differ, and this is the guarantee you get here.
+            </p>
+          );
+        })()}
         {providers.data?.length === 0 && (
           <p className="text-sm text-muted-foreground">The server reports no provider.</p>
         )}

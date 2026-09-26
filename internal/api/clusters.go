@@ -535,18 +535,46 @@ func (s *Server) clusters(h route) {
 		if err != nil {
 			return nil, unreachable(err)
 		}
+		// Read the key being replaced first: once the record is rotated the
+		// old id is gone from here, and it is the only handle on that key.
+		superseded := ""
+		if old, _, err := c.reg.Credentials(name); err == nil {
+			superseded = cluster.KeyID(old)
+		}
 		key, err := rem.MintAPIKey(r.Context(), "control-plane-"+name)
 		if err != nil {
 			return nil, unreachable(err)
 		}
+		// The old API key is retired while the session that authorised it is
+		// still good. The password cannot be retired the same way: the running
+		// cluster only learns a new one when an operator applies it, and until
+		// then revoking it would lock everyone out including us.
+		// Nothing to retire counts as retired: a first rotation has no
+		// predecessor, and saying so is more honest than claiming a key was
+		// revoked when there was not one.
+		revoked := superseded == ""
+		if superseded != "" {
+			if err := rem.RevokeKey(r.Context(), superseded); err != nil {
+				// Reported, not fatal: the new pair is already stored, and
+				// hiding a failure to retire the old one to keep the message
+				// tidy would leave a live credential unmentioned.
+				log.Printf("cluster %s: could not revoke the superseded key: %v", name, err)
+			} else {
+				revoked = true
+			}
+		}
 		if err := c.reg.Rotate(name, key, pw); err != nil {
 			return nil, err
 		}
-		// The running cluster keeps the old pair until an operator applies this
-		// one, and the detail says so rather than letting the record imply the
-		// rotation already took effect out there.
-		if err := c.reg.Phase(name, cl.Status, cl.Phase,
-			"credentials rotated; the running cluster still uses the old pair until an operator applies these"); err != nil {
+		if err := c.reg.PhaseFor(name, cluster.OpRotate, cl.Status, cl.Phase, "rotating credentials"); err != nil {
+			return nil, err
+		}
+		detail := "credentials rotated; the cluster's old API key was revoked"
+		if !revoked && superseded != "" {
+			detail = "credentials rotated, but the cluster's previous API key was NOT revoked - check its key list"
+		}
+		detail += "; the running cluster keeps the old password until an operator applies these"
+		if err := c.reg.PhaseFor(name, cluster.OpRotate, cl.Status, cl.Phase, detail); err != nil {
 			return nil, err
 		}
 		s.audit(r, "cluster.credentials.rotate", name)
@@ -613,6 +641,10 @@ func (s *Server) clusters(h route) {
 		if err := c.reg.PutNode(n); err != nil {
 			return nil, err
 		}
+		if err := c.reg.PhaseFor(cl.Name, cluster.OpAddNode, cl.Status, cl.Phase,
+			"adding a "+req.InstanceType+" worker"); err != nil {
+			return nil, err
+		}
 		s.audit(r, "cluster.node.create", cl.Name+"/"+id)
 		return n, nil
 	})
@@ -668,6 +700,10 @@ func (s *Server) clusters(h route) {
 			return nil, unreachable(err)
 		}
 		if err := c.reg.DropNode(cl.Name, id); err != nil {
+			return nil, err
+		}
+		if err := c.reg.PhaseFor(cl.Name, cluster.OpRemoveNode, cl.Status, cl.Phase,
+			"removed worker "+id); err != nil {
 			return nil, err
 		}
 		s.audit(r, "cluster.node.delete", cl.Name+"/"+id)

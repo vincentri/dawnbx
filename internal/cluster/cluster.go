@@ -227,9 +227,20 @@ func (r *Registry) Create(req CreateRequest, est provider.Estimate, handle provi
 	if err := r.db.CreateCluster(c); err != nil {
 		return nil, err
 	}
-	r.db.RecordOp(req.Name, "create", PhaseValidating, "")
+	r.db.RecordOp(req.Name, OpCreate, PhaseValidating, "")
 	return r.Get(req.Name)
 }
+
+// Operation kinds. The history is a list of these interleaved with phases, so
+// a worker removal two hours after a rotation is legible rather than being
+// folded into the create that preceded it.
+const (
+	OpCreate     = "create"
+	OpAddNode    = "add_node"
+	OpRemoveNode = "remove_node"
+	OpDelete     = "delete"
+	OpRotate     = "rotate"
+)
 
 // Phase records a state transition and its op row in one step, so the phase a
 // caller reads can never disagree with the history.
@@ -238,6 +249,12 @@ func (r *Registry) Create(req CreateRequest, est provider.Estimate, handle provi
 // twenty minutes at a five-second poll is one row in the history, not two
 // hundred and forty copies of "bootstrapping".
 func (r *Registry) Phase(name, status, phase, detail string) error {
+	return r.PhaseFor(name, OpCreate, status, phase, detail)
+}
+
+// PhaseFor is Phase with the operation named, for the four operations that are
+// not the create.
+func (r *Registry) PhaseFor(name, kind, status, phase, detail string) error {
 	prev, err := r.db.GetCluster(name)
 	if err != nil {
 		return err
@@ -248,7 +265,7 @@ func (r *Registry) Phase(name, status, phase, detail string) error {
 	if prev.Phase == phase && prev.Status == status && prev.Detail == detail {
 		return nil
 	}
-	return r.db.RecordOp(name, "create", phase, detail)
+	return r.db.RecordOp(name, kind, phase, detail)
 }
 
 // SetURL records the cluster URL and its pinned certificate. It is called only
@@ -372,6 +389,10 @@ func (r *Registry) Credentials(name string) (apiKey, adminPassword string, err e
 	return string(k), string(pw), nil
 }
 
+// KeyID is the identifier half of a key the cluster issued, which is all a
+// revocation needs: the secret never has to be recovered to name the key.
+func KeyID(token string) string { return clientKeyID(token) }
+
 // AdminPassword returns just the injected password, for the re-delivery a
 // rotation needs.
 func (r *Registry) AdminPassword(name string) (string, error) {
@@ -438,9 +459,13 @@ func (r *Registry) Ops(name, kind string, limit int) ([]Op, error) {
 	return out, nil
 }
 
-// Delete marks a cluster for deletion. The caller runs the provider's Destroy.
+// Delete marks a cluster for deletion, recording it as a delete so the history
+// shows the teardown rather than reading as the create finally finishing.
 func (r *Registry) Delete(name string) error {
-	return r.db.SetClusterState(name, StatusDeleting, "", "")
+	if err := r.db.SetClusterState(name, StatusDeleting, "", ""); err != nil {
+		return err
+	}
+	return r.db.RecordOp(name, OpDelete, StatusDeleting, "")
 }
 
 // Forget removes the record entirely, after the provider has confirmed the

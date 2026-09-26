@@ -1768,6 +1768,8 @@ export interface components {
       id: string;
       /** @description false means the choice is visible but cannot provision */
       available: boolean;
+      /** @description How a credential reaches a new host on this provider, in the provider's own words. The guarantee differs by cloud - a cloud with no secret store an instance can read cannot keep the value out of the creation payload - so an operator is told which they are getting rather than the strongest thing the product does anywhere. Empty on a provider this build cannot use, because it cannot deliver anything. */
+      delivery?: string;
     };
     InstanceTypePrice: {
       id: string;

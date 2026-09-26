@@ -19,7 +19,7 @@ Parameters:
   SshCidr:
     Type: String
     Description: Who may SSH in, e.g. your IP as 203.0.113.7/32.
-    AllowedPattern: ^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$
+    AllowedPattern: ^(?!0\.0\.0\.0/0$)(?!0\.0\.0\.0/\d{1,2}$)\d{1,3}(\.\d{1,3}){3}/\d{1,2}$
   Domain:
     Type: String
     Default: ""

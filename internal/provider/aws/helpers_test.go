@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"dawnbx/internal/provider"
+
 	"github.com/aws/smithy-go"
 )
 
@@ -108,4 +110,38 @@ func TestSleepReturnsWhenTheTimerFires(t *testing.T) {
 // through an interface, so any error that supplies one is the same shape.
 func coded(code string) error {
 	return &smithy.GenericAPIError{Code: code, Message: code}
+}
+
+// TestAWideOpenRescuePathIsRefused: the SSH CIDR names who may use the key. The
+// whole internet is not a rescue path, it is a permanent one, and the adapter's
+// own documentation says so — so it is refused rather than described.
+func TestAWideOpenRescuePathIsRefused(t *testing.T) {
+	testEnv(t)
+	for _, cidr := range []string{"0.0.0.0/0", "/0"} {
+		f := newFake(t, func(string, []byte) (int, string) { return 200, "{}" })
+		_, err := New(testContext(t), Options{
+			Region: "eu-west-1", ReleaseURL: "https://r.example/v1", Template: "Resources: {}",
+			KeyName: "rescue", SSHCIDR: cidr,
+			HTTPClient: f.srv.Client(), BaseEndpoint: f.srv.URL,
+		})
+		if err == nil {
+			t.Errorf("ssh cidr %q was accepted", cidr)
+		} else if !errors.Is(err, provider.ErrUnavailable) {
+			t.Errorf("ssh cidr %q: %v, want a provider-unavailable refusal", cidr, err)
+		}
+	}
+	// A real, narrow CIDR is the normal case and must keep working.
+	f := newFake(t, func(action string, _ []byte) (int, string) {
+		if action == "GetCallerIdentity" {
+			return 200, stsBody
+		}
+		return 200, "{}"
+	})
+	if _, err := New(testContext(t), Options{
+		Region: "eu-west-1", ReleaseURL: "https://r.example/v1", Template: "Resources: {}",
+		KeyName: "rescue", SSHCIDR: "203.0.113.7/32",
+		HTTPClient: f.srv.Client(), BaseEndpoint: f.srv.URL,
+	}); err != nil {
+		t.Errorf("a narrow ssh cidr was refused: %v", err)
+	}
 }

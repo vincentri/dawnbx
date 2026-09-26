@@ -346,3 +346,106 @@ func TestControlProvidersListsTheRosterEvenWithNothingUsable(t *testing.T) {
 		}
 	}
 }
+
+// TestRotationRetiresTheKeyItReplaces: a rotation that mints a new key and
+// leaves the old one live is not a rotation. The cluster is asked to revoke the
+// previous key by id while the session that authorised it still works.
+func TestRotationRetiresTheKeyItReplaces(t *testing.T) {
+	var revoked string
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.provisioningCluster(t, "c1")
+	cp.readyCluster(t, "c1")
+	// A live cluster whose own API answers the revoke.
+	cp.serveCluster(t, "c1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/login":
+			http.SetCookie(w, &http.Cookie{Name: "dawnbx_session", Value: "s"})
+			w.Write([]byte(`{"admin":true}`))
+		case r.URL.Path == "/v1/keys":
+			w.Write([]byte(`{"key":"dbx_new_brand-new"}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/keys/"):
+			revoked = strings.TrimPrefix(r.URL.Path, "/v1/keys/")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	if err := cp.reg.MintAPIKey("c1", "dbx_oldid_oldsecret"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := cp.do("POST", "/v1/clusters/c1/rotate", "{}", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("rotate: %d %s", w.Code, w.Body)
+	}
+	if revoked != "oldid" {
+		t.Errorf("the superseded key was not revoked (asked for %q); a rotation that leaves the old key live is not a rotation", revoked)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "old API key was revoked") {
+		t.Errorf("the operator is not told the old key is gone: %s", body)
+	}
+	if !cp.auditedInto(t, "cluster.credentials.rotate") {
+		t.Error("a rotation is not audited")
+	}
+}
+
+// TestRotationSaysSoWhenTheOldKeyCouldNotBeRetired: a revocation the cluster
+// refused is a fact the operator needs. Reporting a clean rotation while the old
+// credential is still live is the failure this avoids.
+func TestRotationSaysSoWhenTheOldKeyCouldNotBeRetired(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.provisioningCluster(t, "c1")
+	cp.readyCluster(t, "c1")
+	cp.serveCluster(t, "c1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/login":
+			http.SetCookie(w, &http.Cookie{Name: "dawnbx_session", Value: "s"})
+			w.Write([]byte(`{"admin":true}`))
+		case r.URL.Path == "/v1/keys":
+			w.Write([]byte(`{"key":"dbx_new_brand-new"}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/keys/"):
+			w.WriteHeader(http.StatusForbidden) // the cluster refuses
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	if err := cp.reg.MintAPIKey("c1", "dbx_oldid_oldsecret"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := cp.do("POST", "/v1/clusters/c1/rotate", "{}", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("a revocation the cluster refused must not fail the rotation: %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "NOT revoked") {
+		t.Errorf("the operator is not told the old key is still live: %s", w.Body)
+	}
+}
+
+// serveCluster points a ready cluster at a stand-in that answers as that
+// cluster would, and pins its certificate so the control plane's client trusts
+// it. Without this the rotate route has no cluster to talk to.
+func (c *controlPlane) serveCluster(t *testing.T, name string, h http.Handler) {
+	t.Helper()
+	srv := httptest.NewTLSServer(h)
+	t.Cleanup(srv.Close)
+	pin, err := cluster.PinFromLeaf(srv.Certificate().Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.reg.SetURL(name, srv.URL, pin); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// auditedInto reports whether an action was recorded, for a test that does not
+// want to assert on the whole list.
+func (c *controlPlane) auditedInto(t *testing.T, action string) bool {
+	t.Helper()
+	for _, a := range c.audited(t) {
+		if a == action {
+			return true
+		}
+	}
+	return false
+}

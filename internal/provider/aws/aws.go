@@ -166,6 +166,13 @@ func New(ctx context.Context, o Options) (provider.Provider, error) {
 			return nil, fmt.Errorf("%w: aws %s is not configured", provider.ErrUnavailable, req.name)
 		}
 	}
+	// The rescue path is meant to be a rescue path. Naming the whole internet
+	// would leave the host's SSH open to everyone for as long as it exists, which
+	// is the opposite of what this field is for — so it is refused here rather
+	// than described in a comment and hoped for.
+	if c := o.SSHCIDR; c == "0.0.0.0/0" || c == "/0" {
+		return nil, fmt.Errorf("%w: aws rescue ssh cidr must name who may use the key, not the whole internet", provider.ErrUnavailable)
+	}
 	if !contains(regions, o.Region) {
 		return nil, fmt.Errorf("%w: aws region %q is not one this build provisions in", provider.ErrUnavailable, o.Region)
 	}
