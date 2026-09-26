@@ -35,16 +35,24 @@ and password files, never the secrets themselves.
 
 ### AWS
 
-There is no CloudFormation template. Launch a Linux box (amd64 or arm64; a
-`t4g.medium` is a reasonable size), give it an Elastic IP, open 22 to your IP and
-6443, 10250 and 51820 between the boxes that should join as workers, then run the
-same `install.sh` as above over SSH. It writes a self-signed cert and prints the
-URL; pass `-domain` for a real certificate.
+`deploy/aws/dawnbx.yaml` is a CloudFormation stack: one arm64 EC2 instance
+(t4g.medium by default) with an Elastic IP and HTTPS on `<ip>.sslip.io`, or on
+your domain. Create it in the console (**Create stack > Upload a template**)
+and fill in the key pair, your IP for SSH, and `ReleaseUrl`: the base URL of a
+release (see [Release](#release)). There's no public release yet, so you host
+one yourself for now. The stack
+finishes when the installer does (about 5 min). Then the `SshCommand` output
+prints the API key and admin password.
 
-Headless, over cloud-init or in CI, use `--report`: it prints the paths of the
-key and password files rather than the secrets, and PUTs a success or failure
-result to the URL you pass. That is how you tell a pipeline whether the install
-worked.
+The template has not been launched yet: it is cfn-lint clean, but nothing has
+been created from it. Prefer `install.sh` on a box you already have.
+
+- `CpuCredits` defaults to `standard`: the price stays fixed, but CPU slows
+  down once burst credits run out. `unlimited` stays fast and bills the extra.
+- If creation fails, re-create with rollback disabled ("Preserve successfully
+  provisioned resources"). Then SSH in and read `/var/log/cloud-init-output.log`.
+- Workers: launch them into the stack's `SecurityGroup` output, then run the
+  join command on them (see below).
 
 ### More machines
 

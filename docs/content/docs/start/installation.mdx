@@ -54,13 +54,22 @@ and password files, never the secrets themselves. Read them over SSH.
 
 ## On AWS
 
-The installer is the install path, cloud or not. Launch a Linux box (amd64 or
-arm64), give it an Elastic IP, open 22 to your own IP, then run `install.sh` over
-SSH. Add `-domain your.host` for a real certificate instead of the self-signed
-one.
+`deploy/aws/dawnbx.yaml` is a CloudFormation stack: one arm64 EC2 instance
+(t4g.medium by default) with an Elastic IP and HTTPS on `<ip>.sslip.io`, or on
+your domain.
 
-For workers, open 6443 (k3s), 10250 (kubelet) and 51820 (WireGuard) between the
-boxes, then run the join command from **Settings > Nodes** on each.
+Create it in the console (**Create stack > Upload a template**) and fill in:
+
+- the key pair,
+- your IP for SSH,
+- `ReleaseUrl`: the base URL of a [release](https://github.com), since there is
+  no public release yet — you host one yourself for now.
+
+The stack finishes when the installer does, about 5 minutes. The `SshCommand`
+output then prints the API key and admin password.
+
+The template has not been launched yet. If you already have a Linux box, run
+`install.sh` on it instead — that path is exercised by the dev VM.
 
 - `CpuCredits` defaults to `standard`: the price stays fixed, but CPU slows down
   once burst credits run out. `unlimited` stays fast and bills the extra.

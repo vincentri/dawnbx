@@ -18,7 +18,7 @@
 #   --allow-join CIDR    let machines in CIDR join as workers (opens 6443 to them only)
 #   --join URL TOKEN     join a server as a worker (copy the command from Settings > Nodes,
 #                        or TOKEN is /var/lib/rancher/k3s/server/node-token on the server)
-#   --report URL         PUT a success/failure result as JSON (cloud-init, CI)
+#   --report URL         PUT the result as CloudFormation WaitCondition JSON (EC2 user-data)
 # Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default latest),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
 set -euo pipefail
@@ -53,9 +53,7 @@ done
 
 log() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
-# The payload is the shape EC2 user-data and CI log scrapers expect:
-# {"Status":"SUCCESS"|"FAILURE","Reason":...,"UniqueId":...}. Reason is the
-# fail() text, which never holds secrets.
+# CloudFormation WaitCondition format. Reason is the fail() text, which never holds secrets.
 report() { # status reason
   [ -n "$REPORT" ] || return 0
   reason=$(printf %s "$2" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g' | cut -c1-900)

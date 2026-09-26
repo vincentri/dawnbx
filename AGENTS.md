@@ -1,6 +1,6 @@
 # dawnbx — agent rules
 
-Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `internal/`), React dashboard embedded in the server binary (`web/` → `internal/api/ui`), Python and TypeScript SDKs (`sdk/`), static docs site (`docs/`), single-box installer (`install.sh`, `hack/`).
+Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `internal/`), React dashboard embedded in the server binary (`web/` → `internal/api/ui`), Python and TypeScript SDKs (`sdk/`), static docs site (`docs/`), single-box installer (`install.sh`, `deploy/aws/`, `hack/`).
 
 This file is the only agent rules file. Do not add a per-folder `AGENTS.md` until a section runs 15+ lines and is irrelevant to most tasks, or this file passes ~150 lines. A nested file is additive — never a copy of this one — and the more specific file wins where they conflict.
 
@@ -91,5 +91,5 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 
 ## 8. Ops surface
 
+- `deploy/aws/dawnbx.yaml` wraps `install.sh` on one arm64 EC2 with an EIP, and is the intended phase-1 path — but it has never been launched: cfn-lint clean, no stack ever created, and its `ReleaseUrl` must be hand-hosted until there is a public release. `install.sh` is the exercised path. Its `SshCommand` output is the *command* that reads the API key and admin password off the instance, not the secrets themselves — but running it puts them in your terminal, so keep that output out of tickets and CI logs.
 - `install.sh` provisions one box: k3s `v1.35.5+k3s1`, gVisor, and the server on loopback. It refuses to install where a node with the same name already exists — never point it at a machine with an existing cluster.
-- `install.sh --report URL` is the headless path (cloud-init, CI): it prints file *paths*, never the secrets, and PUTs success or failure as JSON. There is no CloudFormation template and no second install path — the installer is the only one.
