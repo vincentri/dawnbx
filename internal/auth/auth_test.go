@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // open returns a fresh SQLite DB, or a Postgres one when DAWNBX_TEST_DATABASE_URL is set
@@ -219,5 +221,16 @@ func TestUsersOrgs(t *testing.T) {
 	}
 	if _, _, err := d.Login("bob", "bob-password-2"); !errors.Is(err, ErrUnauthorized) {
 		t.Error("deleted user logged in", err)
+	}
+}
+
+// The SQLite codes are covered by TestUsersOrgs; this pins the Postgres one,
+// which no test here can reach without a server.
+func TestIsDuplicatePostgres(t *testing.T) {
+	if !isDuplicate(&pgconn.PgError{Code: "23505"}) {
+		t.Error("unique_violation not read as a duplicate")
+	}
+	if isDuplicate(&pgconn.PgError{Code: "23503"}) { // foreign_key_violation
+		t.Error("foreign key read as a duplicate")
 	}
 }
