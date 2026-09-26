@@ -139,13 +139,20 @@ stack curls `${ReleaseUrl}/install.sh` in user-data and `install.sh` then fetche
 stack cannot finish installing. `.github/workflows/release.yml` cuts it on a
 tag, using `.goreleaser.yaml`:
 
+Every push to `main` publishes a release, so there is nothing to tag by hand.
+The workflow tags each one immutably and publishes the assets:
+
 ```bash
-git tag v0.1.0 && git push origin v0.1.0     # the workflow publishes the assets
-export RELEASE_URL=https://github.com/vincentri/dawnbx/releases/download/v0.1.0
+export RELEASE_URL=https://github.com/vincentri/dawnbx/releases/download/v0.1.7   # whatever the run printed
 
 # and the control plane is started with it (see Tier 2):
 #   --release-url "$RELEASE_URL"
 ```
+
+`releases/latest/download` is the same four files from the newest release, and
+the template accepts it, but it is a moving target: a cluster reinstalled next
+year would fetch different binaries than the ones it was built from. Pin the
+version for anything you care about.
 
 The four files it serves are `install.sh`, `checksums.txt`,
 `dawnbx-server-linux-arm64` and `dawnbx-linux-arm64`. Confirm a tag published
