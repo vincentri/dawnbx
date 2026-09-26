@@ -726,3 +726,12 @@ ImageId and a node list that answers with the provider's own id.
       asserts the rule, because nothing else reads install.sh and a pin that
       silently reverts to `latest` is exactly the sort of change review misses
       (FR-001).
+
+- [X] T159 Ask the stack for the cluster's URL before releasing a worker. A
+      handle only carries a URL when the cluster was created with an explicit
+      domain, and the default - the address form the quickstart uses - has none,
+      because the address is not known until the stack exists. Removing a worker
+      built the URL from an empty stack view, so the control plane was asked
+      about a cluster at "" and answered "no cluster is registered at " for a
+      cluster it had finished provisioning a minute earlier. AddNode already
+      read the stack for this; RemoveNode did not (FR-010, blocks SC-004).

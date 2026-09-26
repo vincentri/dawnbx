@@ -392,7 +392,19 @@ func (a *AWS) RemoveNode(ctx context.Context, h provider.Handle, node string) er
 	if a.release == nil {
 		return fmt.Errorf("%w: removing a worker needs the cluster's own answer", provider.ErrUnavailable)
 	}
+	// The URL comes from the stack, the same way AddNode gets it. A handle only
+	// carries a URL when the cluster was created with an explicit domain, and
+	// the default - and what the quickstart uses - is an address-based one, so
+	// reading the handle alone gave an empty string and the control plane
+	// answered "no cluster is registered at " for a cluster it had just
+	// finished provisioning.
+	if ph, err = a.resources(ctx, c, ph); err != nil {
+		return err
+	}
 	url := a.url(ph, stackView{})
+	if url == "" {
+		return fmt.Errorf("%w: cluster %s has no url yet", provider.ErrNotFound, ph.Stack)
+	}
 	if err := a.release(ctx, url, node); err != nil {
 		if errors.Is(err, provider.ErrNodeBusy) {
 			return fmt.Errorf("%w: %s", provider.ErrNodeBusy, node)

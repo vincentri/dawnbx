@@ -310,3 +310,59 @@ func TestNodeAddrsRefusesAnEmptyHandle(t *testing.T) {
 		t.Error("an empty handle was accepted")
 	}
 }
+
+// TestRemoveNodeAsksTheStackForTheURL: a cluster created without an explicit
+// domain - the default, and what the quickstart uses - has no URL in its handle,
+// because the address is only known once the stack exists. Removing a worker
+// from one used an empty URL, and the control plane, which looks a cluster up by
+// URL, answered "no cluster is registered at " for a cluster it had finished
+// provisioning a minute earlier.
+//
+// Every other worker test here used a handle carrying a URL, which is why this
+// survived: the shape that fails is the one the product produces by default.
+func TestRemoveNodeAsksTheStackForTheURL(t *testing.T) {
+	e, _ := newEC2(t)
+	got := ""
+	a := newAWS(t, e.f, func(o *Options) {
+		o.Release = func(_ context.Context, url, _ string) error {
+			got = url
+			return nil
+		}
+	})
+	// No "url" and no "public_ip": what a domain-less cluster's handle holds.
+	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
+		`"security_group":"sg-0abc","launch_template":"lt-0abc"}`))
+
+	if err := a.RemoveNode(testContext(t), h, "i-0abc"); err != nil {
+		t.Fatal(err)
+	}
+	if got == "" {
+		t.Fatal("the cluster was asked about with an empty url")
+	}
+	if got != "https://team.example.com" {
+		t.Errorf("asked the cluster at %q, want the url the stack reports", got)
+	}
+	e.f.called("TerminateInstances")
+}
+
+// TestRemoveNodeSaysSoWhenTheClusterHasNoURLAnywhere: a stack that reports no
+// address and a handle that carries none means there is nothing to ask, and
+// saying so is better than asking with an empty string.
+func TestRemoveNodeSaysSoWhenTheClusterHasNoURLAnywhere(t *testing.T) {
+	e, c := newEC2(t)
+	c.outputs = map[string]string{} // a stack with no outputs at all
+	asked := false
+	a := newAWS(t, e.f, func(o *Options) {
+		o.Release = func(context.Context, string, string) error { asked = true; return nil }
+	})
+	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
+		`"security_group":"sg-0abc","launch_template":"lt-0abc"}`))
+
+	err := a.RemoveNode(testContext(t), h, "i-0abc")
+	if err == nil {
+		t.Fatal("a cluster with no address anywhere was accepted")
+	}
+	if asked {
+		t.Error("the cluster was asked with no address to ask at")
+	}
+}
