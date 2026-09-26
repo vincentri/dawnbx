@@ -261,7 +261,13 @@ func (r *Remote) RevokeKey(ctx context.Context, keyID string) error {
 
 // RemoteNode is what the cluster reports about one of its workers.
 type RemoteNode struct {
-	Name      string `json:"name"`
+	Name string `json:"name"`
+	// Addr is the address the cluster reaches this node on. It is the only
+	// identifier the two sides are guaranteed to agree on: a cluster names
+	// its nodes by hostname, while the control plane holds whatever its
+	// provider calls the machine, and matching on Name alone left every joined
+	// worker reported as provisioning for ever.
+	Addr      string `json:"ip"`
 	Ready     bool   `json:"ready"`
 	Sandboxes int    `json:"sandboxes"`
 }

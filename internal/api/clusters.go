@@ -283,10 +283,45 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 	for _, n := range live {
 		saw[n.Name] = n
 	}
+	// A cluster names its nodes by hostname and the provider names them by
+	// whatever it created, so a stored id is usually not a name the cluster
+	// knows. The address is the one identifier both sides agree on, and the
+	// provider is what can answer for it, so the unmatched ids are asked about
+	// in one call rather than one each.
+	byAddr := make(map[string]cluster.RemoteNode, len(live))
+	for _, n := range live {
+		if n.Addr != "" {
+			byAddr[n.Addr] = n
+		}
+	}
+	var unmatched []string
+	for _, s := range list {
+		if _, ok := saw[s.ID]; !ok {
+			unmatched = append(unmatched, s.ID)
+		}
+	}
+	if len(unmatched) > 0 && c.available() {
+		if prov, err := c.usable(); err == nil {
+			if handle, herr := c.reg.Handle(cl.Name); herr == nil {
+				if addrs, aerr := prov.NodeAddrs(ctx, handle, unmatched); aerr != nil {
+					log.Printf("cluster %s: worker addresses: %v", cl.Name, aerr)
+				} else {
+					for _, id := range unmatched {
+						if n, ok := byAddr[addrs[id]]; ok {
+							saw[id] = n
+						}
+					}
+				}
+			}
+		}
+	}
 	for i := range list {
 		n, ok := saw[list[i].ID]
 		if !ok {
-			continue // a worker the cluster does not name is one we cannot vouch for
+			// A worker the cluster does not name is one we cannot vouch for, and
+			// the cache keeps saying so rather than quietly showing a status the
+			// cluster never reported.
+			continue
 		}
 		status := list[i].Status
 		if n.Ready {

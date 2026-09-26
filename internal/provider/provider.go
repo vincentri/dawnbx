@@ -160,6 +160,17 @@ type Provider interface {
 	RemoveNode(ctx context.Context, h Handle, node string) error
 	// SetBootstrap re-delivers a rotated credential to an existing host.
 	SetBootstrap(ctx context.Context, h Handle, boot Bootstrap) error
+	// NodeAddrs maps the provider's own names for workers to the address the
+	// cluster reaches them on, for the ids given. Ids the provider does not
+	// recognise are simply absent from the result.
+	//
+	// It exists because the two sides never name a worker the same way: a
+	// cluster names nodes by hostname, and the provider names them by whatever
+	// it created. The address is the one thing both agree on, and asking the
+	// provider is what keeps that knowledge on the provider's side of the
+	// boundary instead of leaking a cloud's idea of addressing into the shared
+	// cluster code.
+	NodeAddrs(ctx context.Context, h Handle, nodes []string) (map[string]string, error)
 }
 
 var (

@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ type ec2fake struct {
 	f          *fake
 	cfn        *cfn
 	instanceID string
+	privateIP  string
 	state      string
 	reason     string
 	gone       bool
@@ -29,7 +31,7 @@ type ec2fake struct {
 // launch reads the stack for the launch template, so a test that faked them
 // separately would be testing two servers and a seam that does not exist.
 func newEC2(t *testing.T) (*ec2fake, *cfn) {
-	e := &ec2fake{t: t, instanceID: "i-0abc", state: "running"}
+	e := &ec2fake{t: t, instanceID: "i-0abc", privateIP: "10.0.1.7", state: "running"}
 	c := &cfn{t: t, status: "CREATE_COMPLETE", exists: true, outputs: map[string]string{outURL: "https://team.example.com"}}
 	e.cfn = c
 	e.f = newFake(t, e.reply)
@@ -55,8 +57,14 @@ func (e *ec2fake) reply(action string, _ []byte) (int, string) {
 		}
 		return 200, ec2xml("<reservationSet><item><reservationId>r-1</reservationId>" +
 			"<instancesSet><item><instanceId>" + e.instanceID + "</instanceId>" +
+			// The address too, because the node-address lookup reads this same
+			// reply and a fake that omits it cannot answer the question the
+			// lookup is asked.
+			"<privateIpAddress>" + e.privateIP + "</privateIpAddress>" +
 			"<instanceState><code>16</code><name>" + e.state + "</name></instanceState>" + reason +
 			"</item></instancesSet></item></reservationSet>")
+	case "DescribeInstanceAddresses":
+		return 200, ec2xml("<addressesSet/>")
 	case "TerminateInstances":
 		return 200, ec2xml("<instancesSet><item><instanceId>" + e.instanceID +
 			"</instanceId><currentState><code>32</code><name>shutting-down</name></currentState>" +
@@ -145,7 +153,16 @@ func TestAddNodeRunsTheJoinsCommand(t *testing.T) {
 	if _, err := a.AddNode(testContext(t), h, provider.NodeSpec{InstanceType: "t4g.medium", DiskGiB: 30}, provider.Bootstrap{}); err != nil {
 		t.Fatal(err)
 	}
-	script := form(t, e.f.bodyOf("RunInstances")).Get("UserData")
+	// What goes on the wire is base64, because RunInstances requires it and
+	// refuses plain text with "Invalid BASE64 encoding of user data". The test
+	// asserts the encoding and then decodes, so a change to either half shows
+	// up as itself rather than as a confusing miss inside a base64 blob.
+	encoded := form(t, e.f.bodyOf("RunInstances")).Get("UserData")
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("user data is not base64, which RunInstances requires: %q", encoded)
+	}
+	script := string(raw)
 	if !strings.Contains(script, "--join") || !strings.Contains(script, "K10abc::server:token") {
 		t.Errorf("the worker's user data does not run the join command: %q", script)
 	}
@@ -226,4 +243,70 @@ func form(t *testing.T, body string) url.Values {
 		t.Fatalf("parse %q: %v", body, err)
 	}
 	return v
+}
+
+// TestNodeAddrsAnswersWithTheAddressTheClusterUses: the whole point of the
+// lookup is that the control plane and the cluster can name the same worker, and
+// they never name it the same way. So this is not "returns the private ip"; it
+// is "returns the address that lets a hostname the cluster chose be matched to
+// an instance id the provider chose".
+func TestNodeAddrsAnswersWithTheAddressTheClusterUses(t *testing.T) {
+	e, _ := newEC2(t)
+	a := newAWS(t, e.f, nil)
+	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
+		`"security_group":"sg-0abc","launch_template":"lt-0abc","url":"https://team.example.com"}`))
+
+	addrs, err := a.NodeAddrs(testContext(t), h, []string{"i-0abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addrs["i-0abc"] != "10.0.1.7" {
+		t.Errorf("address = %q, want the instance's own private address", addrs["i-0abc"])
+	}
+}
+
+// TestNodeAddrsWithNothingAsked: the control plane calls this on every refresh,
+// including the common one where every worker already matched by name. It must
+// not spend an API call to answer nothing.
+func TestNodeAddrsWithNothingAsked(t *testing.T) {
+	e, _ := newEC2(t)
+	a := newAWS(t, e.f, nil)
+	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
+		`"security_group":"sg-0abc","launch_template":"lt-0abc","url":"https://team.example.com"}`))
+
+	addrs, err := a.NodeAddrs(testContext(t), h, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addrs) != 0 {
+		t.Errorf("asked about nothing and got %v", addrs)
+	}
+}
+
+// TestNodeAddrsLeavesOutAWorkerThatIsGone: EC2 keeps a terminated instance
+// describable for about an hour and then stops, and a worker that has been
+// removed is something the caller is cleaning up rather than an error to
+// report. A lookup that failed here would make node refresh fail on a cluster
+// that is simply losing a worker.
+func TestNodeAddrsLeavesOutAWorkerThatIsGone(t *testing.T) {
+	e, _ := newEC2(t)
+	e.gone = true
+	a := newAWS(t, e.f, nil)
+	h := provider.NewHandle([]byte(`{"stack":"dawnbx-s1","parameter":"/p","region":"eu-west-1",` +
+		`"security_group":"sg-0abc","launch_template":"lt-0abc","url":"https://team.example.com"}`))
+
+	if _, err := a.NodeAddrs(testContext(t), h, []string{"i-gone"}); err == nil {
+		t.Error("a worker EC2 will not describe was reported as answered")
+	}
+}
+
+// TestNodeAddrsRefusesAnEmptyHandle: the handle is what names the region, and a
+// handle that does not is a caller bug rather than a lookup that quietly looks
+// in the wrong place.
+func TestNodeAddrsRefusesAnEmptyHandle(t *testing.T) {
+	e, _ := newEC2(t)
+	a := newAWS(t, e.f, nil)
+	if _, err := a.NodeAddrs(testContext(t), provider.Handle{}, []string{"i-0abc"}); err == nil {
+		t.Error("an empty handle was accepted")
+	}
 }
