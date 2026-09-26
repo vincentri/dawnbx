@@ -74,10 +74,15 @@ check "providers answers with a providers array" "1" "$(printf '%s' "$prov" | gr
 # roster is what the build knows about, availability is what it can do, and a
 # lapsed credential must show as unavailable rather than vanish. The case where
 # aws *is* available is covered in internal/api, with a working adapter.
+# provider.Listed marshals id, delivery and available in that order, so each
+# fact is matched inside this provider's own object rather than across the two
+# fields: a pattern spanning id and available asserts a field order the contract
+# does not promise, which is how the three checks here started failing.
 for id in aws gcp azure; do
   check "$id is listed" "1" "$(printf '%s' "$prov" | grep -c "\"id\":\"$id\"")"
+  row=$(printf '%s' "$prov" | grep -o "{[^{}]*\"id\":\"$id\"[^{}]*}")
   check "$id is not available without credentials" "1" \
-    "$(printf '%s' "$prov" | grep -c "\"id\":\"$id\",\"available\":false")"
+    "$(printf '%s' "$row" | grep -c '"available":false')"
 done
 check "an unavailable provider is refused, not empty-listed" "400" \
   "$(curl -s -o /dev/null -w '%{http_code}' -b "$DIR/cookies" -H 'X-Dawnbx: 1' \

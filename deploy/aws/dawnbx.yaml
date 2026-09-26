@@ -13,6 +13,9 @@ Description: >-
 # /var/log/cloud-init-output.log on the instance.
 
 Parameters:
+# A stack the control plane creates never sets VpcCidr, so a cluster it
+# provisions gets the 172.31.0.0/16 fallback. That is only correct in the default
+# VPC; see the VpcCidr parameter and AGENTS.md.
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: SSH key pair; the only way to read the API key and admin password.
@@ -71,6 +74,12 @@ Parameters:
       the sandbox secrets. It is a parameter because CloudFormation cannot read
       the instance's own VPC CIDR into a security group rule — the instance does
       not exist yet when the rule is created.
+# The control plane does not send VpcCidr, so a stack it creates always lands on
+# the 172.31.0.0/16 fallback below. That is only correct in the default VPC: a
+# host in any other CIDR gets a 6443 rule that does not describe its own network,
+# so a worker added to that cluster can never reach the apiserver and nothing
+# reports it. A hand-made stack in a custom VPC MUST set VpcCidr. The adapter
+# is the thing that would need to change, not this template.
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref Domain, ""]]

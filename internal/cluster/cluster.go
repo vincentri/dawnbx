@@ -108,8 +108,10 @@ type Node struct {
 }
 
 // Op is one row of phase history. The last row for a (cluster, kind) is the
-// current phase; the rows before it are what the dashboard shows when something
-// went wrong.
+// current phase, and the phase-change times in that history are what a stall is
+// measured against. Nothing surfaces the rows themselves yet, so there is no
+// route that returns them — the table records what happened, and the first
+// reader is the stall check.
 type Op struct {
 	ID      string    `json:"-"`
 	Cluster string    `json:"-"`
@@ -467,19 +469,6 @@ func (r *Registry) SetNodeStatus(cluster, id, status, detail string, sandboxes i
 // DropNode forgets a worker.
 func (r *Registry) DropNode(cluster, id string) error { return r.db.DeleteNode(cluster, id) }
 
-// Ops returns phase history, most recent first.
-func (r *Registry) Ops(name, kind string, limit int) ([]Op, error) {
-	rows, err := r.db.Ops(name, kind, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Op, 0, len(rows))
-	for _, o := range rows {
-		out = append(out, fromAuthOp(&o))
-	}
-	return out, nil
-}
-
 // Delete marks a cluster for deletion, recording it as a delete so the history
 // shows the teardown rather than reading as the create finally finishing.
 func (r *Registry) Delete(name string) error {
@@ -506,10 +495,6 @@ func fromAuth(c *auth.Cluster) *Cluster {
 func fromAuthNode(n *auth.ClusterNode) Node {
 	return Node{Cluster: n.Cluster, ID: n.ID, InstanceType: n.InstanceType, Status: n.Status,
 		Detail: n.Detail, Sandboxes: n.Sandboxes, Created: n.Created}
-}
-
-func fromAuthOp(o *auth.Op) Op {
-	return Op{ID: o.ID, Cluster: o.Cluster, Kind: o.Kind, Phase: o.Phase, Detail: o.Detail, Created: o.Created}
 }
 
 // randomPassword mints the one credential that is injected into a new cluster.

@@ -97,7 +97,9 @@ export function Shell() {
               </Link>
             </Button>
           )}
-          {settled && clusters}
+          {/* Clusters is admin-only: /v1/clusters refuses a member, so a
+              member following the link lands on a page that says so. */}
+          {settled && me.data.admin && clusters}
           <Button variant="ghost" size="sm" asChild>
             <Link to="/settings" activeProps={{ className: "bg-muted" }}>
               Settings

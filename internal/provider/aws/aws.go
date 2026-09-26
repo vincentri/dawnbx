@@ -374,21 +374,6 @@ func (a *AWS) AddNode(ctx context.Context, h provider.Handle, spec provider.Node
 }
 
 // StatusNode reports one worker.
-func (a *AWS) StatusNode(ctx context.Context, h provider.Handle, node string) (provider.State, string, error) {
-	ph, err := fromHandle(h)
-	if err != nil {
-		return provider.Gone, "", err
-	}
-	c, err := a.forRegion(ph.Region)
-	if err != nil {
-		return provider.Gone, "", err
-	}
-	state, reason, err := c.describeInstance(ctx, node)
-	if err != nil {
-		return provider.Gone, "", err
-	}
-	return nodeState(state), reason, nil
-}
 
 // RemoveNode takes a worker out of the cluster and then terminates it.
 //

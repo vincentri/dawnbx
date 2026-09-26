@@ -43,13 +43,13 @@ func NewControl(reg *cluster.Registry, providers *provider.Registry, p *cluster.
 // provider so a rejected request costs no cloud call.
 const minDiskGiB = 20
 
-// Node statuses. They share the cluster vocabulary but are not the cluster
-// package's constants: a worker is never provisioning a control plane.
+// The worker statuses this API can actually write. They share the cluster
+// vocabulary but are not the cluster package's constants: a worker is never
+// provisioning a control plane, and a removal answers 204 and drops the row
+// rather than reporting a `removing` state that nothing would ever read.
 const (
 	nodeProvisioning = "provisioning"
 	nodeReady        = "ready"
-	nodeFailed       = "failed"
-	nodeRemoving     = "removing"
 )
 
 // --- the error vocabulary the cluster surface adds ---

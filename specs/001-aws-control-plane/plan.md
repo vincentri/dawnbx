@@ -45,7 +45,9 @@ leaks into the provider layer.
 **Project Type**: single-binary Go service with an embedded SPA
 
 **Performance Goals**: price estimate returns within 2 s; a status transition reaches the dashboard
-within 60 s (SC-003); poll cadence 5 s while a cluster is in flight, 30 s otherwise
+within 60 s (SC-003); poll cadence 5 s while a cluster is in flight, and no polling at all once it is
+settled (the provisioner asks only about in-flight clusters; the dashboard's `refetchInterval` returns
+`false` for a settled one)
 
 **Constraints**: no public inbound route on the control plane; no secret in CloudFormation outputs,
 user-data, logs, or audit rows; the Go coverage floor (90.8%) is a ratchet that may only rise; the

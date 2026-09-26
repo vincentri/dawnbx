@@ -105,64 +105,6 @@ func (c *clients) terminate(ctx context.Context, node string) error {
 	return nil
 }
 
-// describeInstance reports one worker's EC2 state and the message EC2 attached
-// to it, if any. That message is the only explanation a failed launch produces,
-// and it is service text about capacity or a quota, never about the cluster.
-func (c *clients) describeInstance(ctx context.Context, node string) (ec2types.InstanceStateName, string, error) {
-	out, err := c.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{node}})
-	if err != nil {
-		if instanceGone(err) {
-			return "", "", fmt.Errorf("%w: instance %s", provider.ErrNotFound, node)
-		}
-		return "", "", fmt.Errorf("describe instance %s: %w", node, err)
-	}
-	// A reservation holds one instance for a request that named one id, but the
-	// shape does not promise that, so the search is a search.
-	var (
-		state  ec2types.InstanceStateName
-		reason string
-		found  bool
-	)
-	for _, r := range out.Reservations {
-		for _, in := range r.Instances {
-			if in.State != nil {
-				state = in.State.Name
-			}
-			if in.StateReason != nil {
-				reason = sanitise(aws.ToString(in.StateReason.Message))
-			}
-			found = true
-			break
-		}
-		if found {
-			break
-		}
-	}
-	if !found {
-		return "", "", fmt.Errorf("%w: instance %s", provider.ErrNotFound, node)
-	}
-	return state, reason, nil
-}
-
-// nodeState maps an EC2 instance state onto the neutral one. A worker that is
-// running is ready, one that is still coming up is bootstrapping, and one that
-// is on its way out is gone: the operator asked for it to be removed and
-// nothing about it will change.
-func nodeState(s ec2types.InstanceStateName) provider.State {
-	switch s {
-	case ec2types.InstanceStateNameRunning:
-		return provider.Ready
-	case ec2types.InstanceStateNamePending:
-		return provider.Bootstrapping
-	case ec2types.InstanceStateNameShuttingDown,
-		ec2types.InstanceStateNameStopping,
-		ec2types.InstanceStateNameStopped,
-		ec2types.InstanceStateNameTerminated:
-		return provider.Gone
-	}
-	return provider.Creating
-}
-
 // instanceGone recognises EC2's answer for an id it has never heard of. It is a
 // plain ClientError carrying a code, not a modelled error, so the code is the
 // test — and it is checked rather than assumed, because a launch that was

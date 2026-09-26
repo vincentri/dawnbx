@@ -102,9 +102,6 @@ func (f *fakeProvider) AddNode(context.Context, Handle, NodeSpec, Bootstrap) (st
 	f.calls = append(f.calls, "AddNode")
 	return "i-fake", nil
 }
-func (f *fakeProvider) StatusNode(context.Context, Handle, string) (State, string, error) {
-	return Ready, "", nil
-}
 func (f *fakeProvider) RemoveNode(_ context.Context, _ Handle, node string) error {
 	f.calls = append(f.calls, "RemoveNode:"+node)
 	if node == "busy" {

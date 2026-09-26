@@ -126,10 +126,14 @@ describe("Shell session loss", () => {
       });
       const { qc } = renderApp({ me: ME });
 
+      // The landing page waits for the capability probe before it renders the
+      // sandboxes list, so a control plane never mounts a page that polls a
+      // route which cannot answer. Two flushes: one for the probe, one for the
+      // list it then asks for.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
-      expect(screen.getByText("box-1")).toBeInTheDocument();
+      expect(await screen.findByText("box-1")).toBeInTheDocument();
       expect(qc.getQueryData(["sandboxes"])).toBeDefined();
 
       sandboxes = noSession;
@@ -201,12 +205,22 @@ describe("Shell status poll", () => {
 });
 
 describe("Shell capability probe", () => {
-  it("offers the cluster wizard and keeps the sandbox surfaces on a cluster", async () => {
+  it("offers the cluster wizard to an admin and keeps the sandbox surfaces on a cluster", async () => {
+    installFetch(base({ json: ADMIN }));
+    renderApp({ me: ADMIN });
+
+    // The nav decides once the capability probe has answered, so the first
+    // assertion waits and the second can be immediate.
+    expect(await screen.findByRole("link", { name: "Sandboxes" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Clusters" })).toHaveAttribute("href", "/clusters");
+  });
+
+  it("offers no cluster wizard to a member, whose /v1/clusters is a 403", async () => {
     installFetch(base());
     renderApp({ me: ME });
 
-    expect(await screen.findByRole("link", { name: "Sandboxes" })).toHaveAttribute("href", "/");
-    expect(screen.getByRole("link", { name: "Clusters" })).toHaveAttribute("href", "/clusters");
+    expect(await screen.findByRole("link", { name: "Sandboxes" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Clusters" })).not.toBeInTheDocument();
   });
 
   it("hides the sandbox surfaces and skips /v1/status on a control plane", async () => {

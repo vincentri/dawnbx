@@ -150,8 +150,9 @@ curl -s -H "Authorization: Bearer $DAWNBX_API_KEY" -d '{}' $DAWNBX_URL/v1/sandbo
 ## API
 
 All routes are under `/v1` and need `Authorization: Bearer <key>`. Key, user,
-org and password routes need a dashboard session instead, and the cluster routes
-need an administrator's session — an API key can never manage infrastructure.
+org and password routes need a dashboard session instead. The cluster routes
+need a dashboard session too — an API key can never manage infrastructure —
+and all but the capability probe and the provider list need an administrator's.
 Errors are JSON: `{"code", "message", "hint"}`.
 
 | Route | |
@@ -176,9 +177,10 @@ Errors are JSON: `{"code", "message", "hint"}`.
 | `GET /v1/nodes` | admin: the boxes in this cluster, their role and sandbox counts |
 | `GET /v1/nodes/join` | admin: the command that adds a worker (audited) |
 | `DELETE /v1/nodes/{name}` | admin: remove a worker; `409` while it holds sandboxes |
-| `GET /v1/control-plane`, `GET /v1/providers` | control plane: which mode this is, and which providers it can use |
-| `GET /v1/providers/{p}/regions`, `/instance-types?region=` | what a provider offers here, and at what price |
-| `POST /v1/providers/{p}/estimate` | price a configuration; creates nothing, and its `quote_id` is what the create demands |
+| `GET /v1/control-plane` | session: control plane or cluster, and which providers this mode can use |
+| `GET /v1/providers` | session: which providers this control plane can use, and which are listed but not yet available |
+| `GET /v1/providers/{p}/regions`, `/instance-types?region=` | admin: what a provider offers here, and at what price. With no `region` the catalogue is priced for the provider's first advertised region, so it is indicative; `POST /v1/providers/{p}/estimate` is priced for the region you name, and its `quote_id` is what the create demands |
+| `POST /v1/providers/{p}/estimate` | admin: price a configuration; creates nothing, and its `quote_id` is what the create demands |
 | `GET` / `POST /v1/clusters` | admin: list, and start provisioning given a `quote_id` from the estimate |
 | `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it; `409` while workers are attached |
 | `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's key and password, no SSH needed; `409` until it is ready |

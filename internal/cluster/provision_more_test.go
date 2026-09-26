@@ -669,7 +669,7 @@ func TestWatchAdvancesEveryClusterInFlightAndIgnoresTheRest(t *testing.T) {
 	if err := reg.Phase("settled", StatusReady, PhaseReady, ""); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := reg.Ops("settled", "create", 0)
+	before, _ := reg.db.(*memStore).Ops("settled", "create", 0)
 	fp.setStates(
 		provider.Status{State: provider.Bootstrapping},
 		provider.Status{State: provider.Bootstrapping},
@@ -718,7 +718,7 @@ func TestWatchAdvancesEveryClusterInFlightAndIgnoresTheRest(t *testing.T) {
 	if s := mustGet(t, reg, "settled"); s.Status != StatusReady {
 		t.Errorf("the settled cluster became %s", s.Status)
 	}
-	after, _ := reg.Ops("settled", "create", 0)
+	after, _ := reg.db.(*memStore).Ops("settled", "create", 0)
 	if len(after) != len(before) {
 		t.Errorf("the settled cluster's history grew from %d to %d rows", len(before), len(after))
 	}

@@ -154,13 +154,16 @@ describe("Provider choice", () => {
   });
 
   it("is for control-plane administrators", async () => {
-    installFetch(base());
+    const calls = installFetch(base());
     renderApp({ entry: "/clusters", me: ME });
 
     expect(
       await screen.findByText("Clusters are managed by control-plane administrators."),
     ).toBeInTheDocument();
-    expect(countTo(installFetch(base()), "GET", "/v1/providers")).toBe(0);
+    // The log the assertion reads is the one this render was served from.
+    // installFetch resets that log on every call, so counting against a fresh
+    // one would pass whatever the page did.
+    expect(countTo(calls, "GET", "/v1/providers")).toBe(0);
   });
 });
 

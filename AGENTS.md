@@ -4,7 +4,7 @@ Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `int
 
 This file is the only agent rules file. Do not add a per-folder `AGENTS.md` until a section runs 15+ lines and is irrelevant to most tasks, or this file passes ~150 lines. A nested file is additive — never a copy of this one — and the more specific file wins where they conflict.
 
-**Governance:** `.specify/memory/constitution.md` is the constitution (v1.1.0, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
+**Governance:** `.specify/memory/constitution.md` is the constitution (v1.1.2, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
 
 **Cluster management is provider-neutral.** The control plane (`dawnbx-server
 --control-plane`) manages clusters; sandboxes still run only inside them. The
@@ -26,6 +26,10 @@ own non-test files and fails on an AWS import or an adapter import. It covers
 `internal/provider` only, and claiming otherwise is the mistake this paragraph
 exists to prevent. `internal/cluster` is kept clean by the orchestration tests
 running against a fake provider, which proves testability, not the import rule.
+
+`cluster_ops` records provisioning phases and the stall check is its only
+reader: no route returns those rows and no page renders them, so a doc claiming
+the dashboard shows the history is wrong.
 
 ## 1. All development runs in a git worktree
 
@@ -85,6 +89,8 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 - Server-side caps the SDKs do not enforce: fork ≤ 10 (children pinned to the parent node; the parent is `kill -STOP -1`'d and resumed in a defer), 10 MB reads, 100 MB writes.
 - Host assumptions baked into the code: gVisor `RuntimeClass`, namespace `dawnbx-sandboxes`, node name == hostname, and the sandbox NetworkPolicies exist only because `install.sh` created them.
 - Flags: `-data-dir` (`/var/lib/dawnbx`), `-listen` (`127.0.0.1:8080`), `-https-listen`, `-domain`, `-kubeconfig`, `-database-url`, `-pool`; env `DAWNBX_ADMIN_USER`, `DAWNBX_ADMIN_PASSWORD`. Reconcile interval and shutdown timeout are hardcoded in `cmd/dawnbx-server/main.go` — they are not flags, change them there.
+- Control-plane mode adds eight flags, and all eight are on `dawnbx-server --control-plane`: `-control-plane` itself, `-control-plane-key` (32 bytes that encrypt cluster credentials at rest; generated into `<data-dir>/server/control-plane.key` when unset), `-admin-password`, `-region`, `-release-url`, `-template`, `-key-pair`, `-ssh-cidr`. The last two are **rescue access only** — they open a provisioned host to SSH, and the product's normal path is the injected password and the minted key, with no SSH at all. A control plane started without them starts fine and provisions hosts nothing can log into if the normal path fails.
+- **A provisioned cluster host's VPC must be the default VPC, or `VpcCidr` must be set on the stack the adapter creates.** The AWS adapter never sends `VpcCidr`, so `deploy/aws/dawnbx.yaml` falls back to 172.31.0.0/16 for the 6443 rule. A host landing in any other CIDR has a security group that does not describe its own network: a worker added to that cluster cannot reach the apiserver on 6443, and nothing in the product reports it. The failure is silent by construction — check the CIDR before adding a worker.
 - The CLI resolves `DAWNBX_URL`, then `DAWNBX_API_KEY`, then `~/.dawnbx/env`.
 
 ## 5. `web/` — dashboard

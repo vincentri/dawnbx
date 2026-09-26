@@ -155,8 +155,6 @@ type Provider interface {
 	// credential the host already trusts; a provider that joins workers with a
 	// credential it already holds ignores it.
 	AddNode(ctx context.Context, h Handle, spec NodeSpec, boot Bootstrap) (string, error)
-	// StatusNode reports one worker.
-	StatusNode(ctx context.Context, h Handle, node string) (State, string, error)
 	// RemoveNode destroys one worker. It returns ErrNodeBusy when the host
 	// refuses, and the caller surfaces that rather than overriding it.
 	RemoveNode(ctx context.Context, h Handle, node string) error

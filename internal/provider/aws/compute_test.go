@@ -169,50 +169,6 @@ func TestAddNodeWithoutAJoinCommandIsUnavailable(t *testing.T) {
 	e.f.notCalled("RunInstances")
 }
 
-// EC2's instance states map onto the neutral ones, and the ones that are on their
-// way out are Gone rather than anything an operator could act on.
-func TestNodeStatesMap(t *testing.T) {
-	for _, c := range []struct {
-		ec2  string
-		want provider.State
-	}{
-		{"pending", provider.Bootstrapping},
-		{"running", provider.Ready},
-		{"shutting-down", provider.Gone},
-		{"stopping", provider.Gone},
-		{"stopped", provider.Gone},
-		{"terminated", provider.Gone},
-	} {
-		t.Run(c.ec2, func(t *testing.T) {
-			e, _ := newEC2(t)
-			a := newAWS(t, e.f, nil)
-			e.state = c.ec2
-			state, reason, err := a.StatusNode(testContext(t), clusterHandle(), e.instanceID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if state != c.want {
-				t.Errorf("state = %q, want %q", state, c.want)
-			}
-			if reason != "" {
-				t.Errorf("reason = %q on a normal state", reason)
-			}
-		})
-	}
-}
-
-// EC2 keeps a terminated instance's record for an hour, so an id it has never
-// heard of and an instance that is gone are different answers: one is a caller
-// with a stale name, the other is a node that finished its life.
-func TestStatusNodeOnAnUnknownInstanceIsNotFound(t *testing.T) {
-	e, _ := newEC2(t)
-	e.gone = true
-	_, _, err := newAWS(t, e.f, nil).StatusNode(testContext(t), clusterHandle(), "i-gone")
-	if !errors.Is(err, provider.ErrNotFound) {
-		t.Errorf("error = %v, want ErrNotFound", err)
-	}
-}
-
 // Removing a worker asks the cluster first, because only the cluster knows
 // whether it still holds sandboxes. A busy node is refused before any terminate
 // is sent — the node is left exactly as it was.
@@ -253,23 +209,6 @@ func TestRemoveNodeTerminatesOnceTheClusterHasReleasedIt(t *testing.T) {
 	}
 	if err := c.terminate(testContext(t), "i-already-gone"); err != nil {
 		t.Errorf("terminating a terminated instance: %v", err)
-	}
-}
-
-// A failure EC2 explains — no capacity in the AZ, a quota — is the only reason a
-// worker ever carries, and it is service text about the account rather than about
-// the cluster.
-func TestStatusNodeCarriesTheServiceReason(t *testing.T) {
-	e, _ := newEC2(t)
-	a := newAWS(t, e.f, nil)
-	e.state = "pending"
-	e.reason = "Client.InstanceInitiatedShutdown: 5 instance(s) left the Spot pool"
-	_, reason, err := a.StatusNode(testContext(t), clusterHandle(), e.instanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(reason, "Spot pool") {
-		t.Errorf("reason = %q", reason)
 	}
 }
 

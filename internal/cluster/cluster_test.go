@@ -443,7 +443,7 @@ func TestPhaseRecordsHistoryAndStateTogether(t *testing.T) {
 			t.Fatalf("%s: %v", ph, err)
 		}
 	}
-	ops, err := r.Ops("probe1", "create", 0)
+	ops, err := r.db.(*memStore).Ops("probe1", "create", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestPhaseRecordsHistoryAndStateTogether(t *testing.T) {
 		t.Errorf("state and history disagree: %+v %v", c, err)
 	}
 	// A limit is honoured.
-	if got, _ := r.Ops("probe1", "create", 2); len(got) != 2 {
+	if got, _ := r.db.(*memStore).Ops("probe1", "create", 2); len(got) != 2 {
 		t.Errorf("limit ignored: %d rows", len(got))
 	}
 }
@@ -580,9 +580,6 @@ func (f *fakeProv) SetBootstrap(_ context.Context, _ provider.Handle, b provider
 func (f *fakeProv) AddNode(context.Context, provider.Handle, provider.NodeSpec, provider.Bootstrap) (string, error) {
 	f.seen = append(f.seen, "AddNode")
 	return "i-fake", nil
-}
-func (f *fakeProv) StatusNode(context.Context, provider.Handle, string) (provider.State, string, error) {
-	return provider.Ready, "", nil
 }
 func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) error {
 	f.seen = append(f.seen, "RemoveNode:"+n)
@@ -751,7 +748,7 @@ func TestEveryOperationKindIsRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ops, err := r.Ops("probe1", "", 0)
+	ops, err := r.db.(*memStore).Ops("probe1", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +763,7 @@ func TestEveryOperationKindIsRecorded(t *testing.T) {
 	}
 	// And the reader can be asked for one kind without returning the others,
 	// which is what makes the history legible rather than interleaved noise.
-	only, err := r.Ops("probe1", OpRotate, 0)
+	only, err := r.db.(*memStore).Ops("probe1", OpRotate, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -337,7 +337,7 @@ func TestNodesAndOpsSurfaceAStoreFailure(t *testing.T) {
 	}
 
 	m.failWith("Ops", errStoreDown)
-	if ops, err := r.Ops("alpha", "create", 0); !errors.Is(err, errStoreDown) {
+	if ops, err := m.Ops("alpha", "create", 0); !errors.Is(err, errStoreDown) {
 		t.Fatalf("Ops error %v, want the store's own", err)
 	} else if ops != nil {
 		t.Errorf("a failed history read returned %d rows", len(ops))
@@ -372,7 +372,7 @@ func TestNodesAndOpsCarryEveryRecordedField(t *testing.T) {
 	if err := r.Phase("alpha", StatusReady, PhaseReady, "done"); err != nil {
 		t.Fatal(err)
 	}
-	ops, err := r.Ops("alpha", "create", 1)
+	ops, err := m.Ops("alpha", "create", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { cn } from "cn";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Confirm } from "@/components/confirm";
 import { Badge } from "@/components/ui/badge";
@@ -213,16 +213,9 @@ function Wizard({ step, go }: { step: Step; go: Go }) {
             </Button>
           ))}
         </div>
-        {(() => {
-          const delivery = providers.data?.find((p) => p.id === draft.provider)?.delivery;
-          if (!draft.provider || !delivery) return null;
-          return (
-            <p className="text-sm text-muted-foreground">
-              {draft.provider} delivers the administrator password to a new host through {delivery}.
-              Other clouds differ, and this is the guarantee you get here.
-            </p>
-          );
-        })()}
+        {/* The delivery guarantee, before a provider is chosen: it is part of
+            what the choice is, and after the choice the page has navigated on. */}
+        <DeliveryNote id={draft.provider} providers={providers.data} />
         {providers.data?.length === 0 && (
           <p className="text-sm text-muted-foreground">The server reports no provider.</p>
         )}
@@ -400,6 +393,27 @@ function useInstanceTypes(provider: string) {
   });
 }
 
+// DeliveryNote names how the chosen provider puts a credential on a new host.
+// The guarantee genuinely differs by cloud — one with no secret store an
+// instance can read cannot keep the value out of the creation payload — so an
+// operator choosing a provider is told which one they are getting.
+function DeliveryNote({
+  id,
+  providers,
+}: {
+  id: string;
+  providers: { id: string; delivery?: string }[] | undefined;
+}) {
+  const line = providers?.find((p) => p.id === (id || providers[0]?.id));
+  if (!line?.delivery) return null;
+  return (
+    <p className="text-sm text-muted-foreground">
+      {line.id} delivers the administrator password to a new host through {line.delivery}. Other
+      clouds differ, and this is the guarantee you get here.
+    </p>
+  );
+}
+
 function Catalogue({ region, pricedFor }: { region: string; pricedFor: string }) {
   // The response says which region it priced, so a mismatch is said out loud
   // rather than left for the operator to assume.
@@ -465,9 +479,13 @@ function Status({ name: id, go }: { name: string; go: Go }) {
     // "deleting" for ever.
     refetchInterval: (q) => (isInFlight(q.state.data?.status) ? 5000 : false),
   });
+  // Whether this operator deleted the cluster. A 404 without that fact is a
+  // cluster that vanished on its own, which reads very differently.
+  const deleted = useRef(false);
   const destroy = useMutation({
     mutationFn: () => must(api.DELETE("/v1/clusters/{name}", clusterPath(id))),
     onSuccess: () => {
+      deleted.current = true;
       qc.invalidateQueries({ queryKey: ["clusters"] });
       qc.invalidateQueries({ queryKey: ["cluster", id] });
     },
@@ -476,7 +494,15 @@ function Status({ name: id, go }: { name: string; go: Go }) {
   return (
     <div className="flex flex-col gap-4">
       <Section title={id} desc="Created without an SSH session; the control plane holds it.">
-        {cluster.error && <Fail e={cluster.error} />}
+        {/* After a delete the record is gone, so this refetch 404s. That is the
+            end of the flow this operator started, not a failure to report. */}
+        {cluster.error && deleted.current ? (
+          <p className="text-sm text-muted-foreground">
+            This cluster is gone. Its resources were removed; the record went with them.
+          </p>
+        ) : (
+          cluster.error && <Fail e={cluster.error} />
+        )}
         {!c && !cluster.error && <p className="text-sm text-muted-foreground">Loading…</p>}
         {c && (
           <>
@@ -627,7 +653,7 @@ function Credentials({ name: id }: { name: string }) {
         </Button>
         <Confirm
           title="Rotate the cluster credentials?"
-          body="Mints a new admin password and API key. The running cluster keeps the old pair until you apply the new one."
+          body="Mints a new admin password and API key, and revokes the cluster's previous API key straight away. The old password keeps working until you apply the new pair, so nothing is locked out in between."
           action="Rotate"
           onConfirm={() => rotate.mutate()}
         >

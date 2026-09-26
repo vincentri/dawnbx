@@ -133,7 +133,9 @@ func TestHappyPathReachesReadyOnlyThroughItsOwnAPI(t *testing.T) {
 		t.Fatalf("credentials after ready: %q %q %v", key, pw, err)
 	}
 	// The phases are the neutral ones, in order, and none names a cloud call.
-	ops, _ := reg.Ops("probe1", "create", 0)
+	// Read through the store, which is where they land and what the stall check
+	// measures against; nothing surfaces them past that yet.
+	ops, _ := reg.db.(*memStore).Ops("probe1", "create", 0)
 	var phases []string
 	for i := len(ops) - 1; i >= 0; i-- {
 		phases = append(phases, ops[i].Phase)

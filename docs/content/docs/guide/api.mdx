@@ -74,6 +74,13 @@ is provider-neutral: the provider is a path value, never a path of its own.
 | `GET` / `POST /v1/clusters/{name}/nodes` | admin: list workers, add one |
 | `DELETE /v1/clusters/{name}/nodes/{node}` | admin: remove a worker; `409 node_holds_sandboxes` while it holds any |
 
+`instance-types` takes an optional `region`. With none, the catalogue is priced
+for the provider's *first* advertised region, which is not necessarily the one
+you will provision in, so read those numbers as indicative. `POST
+/v1/providers/{p}/estimate` is priced for the region you actually name, and it
+is what governs: its `quote_id` is the only thing `POST /v1/clusters` accepts,
+and a create whose configuration does not match the quote is `409 quote_stale`.
+
 A cluster's `url` is non-empty only once it is `ready`, which means its own API
 answered a login with the password the control plane injected. `tls_pin` is the
 certificate fingerprint: compare it out of band if you want more than the

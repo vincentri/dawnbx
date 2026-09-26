@@ -51,7 +51,9 @@ while [ $# -gt 0 ]; do
     --allow-join) ALLOW_JOIN=$2; shift ;;
     --join) JOIN_URL=$2 JOIN_TOKEN=${3:-}; shift 2 ;;
     --bootstrap-parameter) BOOTSTRAP_PARAM=$2; shift ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    # 2..28 is the whole comment header: through the DAWNBX_BOOTSTRAP_PARAMETER
+    # entry, which is the last line before `set -euo pipefail`.
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift

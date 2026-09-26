@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: Self-hosted sandboxes for AI agents on one Linux box.
+description: Self-hosted sandboxes for AI agents — on a box you run, or in a cluster the control plane makes for you.
 ---
 
 dawnbx gives you **throwaway Linux sandboxes for AI agents** on hardware you
@@ -8,8 +8,11 @@ control. Each sandbox is a gVisor container on k3s with its own `/workspace`.
 Agents run commands in it, read and write files in it, and
 [fork](/docs/guide/sandboxes#forking) it when they want to try something risky.
 
-Everything is one Linux box: a Go API server, a web dashboard, a CLI, and
-Python and TypeScript SDKs. There is no control plane in someone else's cloud.
+You can also hand the whole job to dawnbx. Run it in **control-plane mode** and
+it builds the k3s cluster for you — on AWS today, from the dashboard, with no
+SSH and no host to provision by hand — then runs your sandboxes inside it. Each
+sandbox lives in a cluster, and the control plane that made the cluster is a
+separate thing from the sandboxes it made it for.
 
 ## What you get
 
@@ -21,6 +24,10 @@ Python and TypeScript SDKs. There is no control plane in someone else's cloud.
   The dashboard adds a web terminal and file upload.
 - **A TTL.** Sandboxes expire on their own, or stay until killed. Nothing is
   left running because an agent forgot about it.
+- **Or let it build the cluster.** In control-plane mode dawnbx provisions the
+  k3s cluster for you — AWS today — and hands you the cluster's URL and key.
+  The password is injected through the cloud's secret store, so there is no SSH
+  step. See [install](/docs/start/installation#as-a-control-plane).
 
 <Cards>
   <Card title="Install" href="/docs/start/installation" />

@@ -36,6 +36,20 @@ Use the same `--data-dir` on workers as on the server. The default is fine.
 Launch workers into the stack's `SecurityGroup` output so WireGuard and k3s
 traffic actually reaches them, then run the join command on each.
 
+## Nodes of a managed cluster
+
+Everything above is about a box you installed yourself, where the join command
+under **Settings > Nodes** is the only way to add one.
+
+A cluster made by a [control plane](/docs/start/installation#as-a-control-plane)
+has its workers added from the control plane instead, and never by pasting a
+join command: `GET` and `POST /v1/clusters/{name}/nodes`, and `DELETE
+/v1/clusters/{name}/nodes/{node}`. They need an administrator's session, an API
+key cannot call them, and the same `409` applies — a worker holding sandboxes
+cannot be removed. They are in the [API reference](/docs/guide/api#clusters)
+with the rest of the cluster surface, and in neither SDK, because both are
+API-key clients and both would take a `403` on every call.
+
 ## Checking on it
 
 ```sh

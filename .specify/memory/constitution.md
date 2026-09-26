@@ -117,6 +117,11 @@ only after it was nearly deleted as dead weight.
   offer a guarantee another can, that ceiling MUST be documented where an
   operator will read it, and the operator MUST NOT be told a stronger
   guarantee than the one in force.
+  One exception is deliberate and is the only one: a **worker** is named by the
+  handle its adapter returned, because the route that removes it needs an id the
+  operator can type. That handle MUST stay opaque — never parsed, never
+  interpreted, never given a meaning above the provider boundary — and wherever
+  it appears the contract MUST say so in the same words.
 
 ## Development Workflow
 
@@ -164,4 +169,4 @@ assumed.
 and the gate output MUST say so instead of approving. Complexity that violates
 Principle V MUST be justified in writing at the time it is introduced.
 
-**Version**: 1.1.1 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26
+**Version**: 1.1.2 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26

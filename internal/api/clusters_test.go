@@ -59,9 +59,6 @@ func (f *fakeProv) AddNode(context.Context, provider.Handle, provider.NodeSpec, 
 	}
 	return f.nodeID, nil
 }
-func (f *fakeProv) StatusNode(context.Context, provider.Handle, string) (provider.State, string, error) {
-	return provider.Ready, "", nil
-}
 func (f *fakeProv) RemoveNode(_ context.Context, _ provider.Handle, n string) error {
 	if n == f.busy {
 		return provider.ErrNodeBusy
