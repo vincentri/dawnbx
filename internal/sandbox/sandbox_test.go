@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"io"
@@ -37,6 +38,128 @@ func setup(t *testing.T) (*Manager, *fake.Clientset) {
 	FreePct = func(string) (float64, error) { return 50, nil }
 	DiskUsage = func(string) int64 { return 0 }
 	return m, kube
+}
+
+// markReady flips every pod to Ready for the rest of the test, so waitReady
+// returns instead of blocking until its create timeout.
+func markReady(t *testing.T, kube *fake.Clientset) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		for {
+			pods, _ := kube.CoreV1().Pods(Namespace).List(context.Background(), metav1.ListOptions{})
+			for i := range pods.Items {
+				if len(pods.Items[i].Status.Conditions) == 0 {
+					pods.Items[i].Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+					kube.CoreV1().Pods(Namespace).UpdateStatus(context.Background(), &pods.Items[i], metav1.UpdateOptions{})
+				}
+			}
+			select {
+			case <-done:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}()
+	t.Cleanup(func() { close(done) })
+}
+
+// tarStream tars dir to w, symlinks included: a cross-node fork moves real
+// bytes through the pipe, so the test moves real bytes too.
+func tarStream(dir string, w io.Writer) error {
+	tw := tar.NewWriter(w)
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		p := filepath.Join(dir, e.Name())
+		if e.Type()&os.ModeSymlink != 0 {
+			target, _ := os.Readlink(p)
+			if err := tw.WriteHeader(&tar.Header{Name: e.Name(), Typeflag: tar.TypeSymlink, Linkname: target, Mode: 0777}); err != nil {
+				return err
+			}
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: e.Name(), Size: int64(len(b)), Mode: 0644}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(b); err != nil {
+			return err
+		}
+	}
+	return tw.Close()
+}
+
+// untarNames reads a tar stream into "name" -> "contents->symlink target".
+func untarNames(r io.Reader) (map[string]string, error) {
+	out := map[string]string{}
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+		out[h.Name] = string(b) + "->" + h.Linkname
+	}
+}
+
+// TestForkRemote covers the worker-disk path: no server-side copy, the parent
+// tars into the kid over exec, and a broken tar fails the fork cleanly.
+func TestForkRemote(t *testing.T) {
+	m, kube := setup(t)
+	ctx := context.Background()
+	markReady(t, kube)
+	parent := mk(t, m, "sb-remote01", func(x *store.Meta) { x.Node = "worker-1" })
+	ws := m.Store.WS(parent.ID)
+	os.WriteFile(filepath.Join(ws, "notes.txt"), []byte("base\n"), 0o644)
+	os.Symlink("/etc/passwd", filepath.Join(ws, "link"))
+	CopyTree = func(_, _ string) error { t.Error("cross-node fork touched the server disk"); return nil }
+
+	broken := false
+	var got map[string]string
+	m.RunExec = func(_ context.Context, id string, cmd []string, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+		switch line := strings.Join(cmd, " "); {
+		case strings.Contains(line, "-cf"):
+			if broken {
+				return 1, nil
+			}
+			return 0, tarStream(ws, stdout)
+		case strings.Contains(line, "-xf"):
+			f, err := untarNames(stdin)
+			got = f
+			return 0, err
+		}
+		return 0, nil // kill -STOP / kill -CONT
+	}
+
+	kids, err := m.Fork(ctx, parent.ID, ForkReq{Count: 1})
+	if err != nil || len(kids) != 1 {
+		t.Fatalf("remote fork: %v %v", kids, err)
+	}
+	if kids[0].Node != "worker-1" || kids[0].Parent != parent.ID {
+		t.Errorf("kid not on the parent's node: %+v", kids[0])
+	}
+	if got["notes.txt"] != "base\n->" || got["link"] != "->/etc/passwd" {
+		t.Errorf("workspace did not survive the pipe: %q", got)
+	}
+
+	broken, got = true, nil
+	before, _ := m.Store.IDs()
+	if _, err := m.Fork(ctx, parent.ID, ForkReq{Count: 1}); err == nil || err.(*Error).Code != "fork_failed" {
+		t.Fatalf("broken tar: want fork_failed, got %v", err)
+	}
+	if after, _ := m.Store.IDs(); len(after) != len(before) {
+		t.Errorf("kid left behind after a failed copy: %v", after)
+	}
 }
 
 func mk(t *testing.T, m *Manager, id string, mut func(*store.Meta)) store.Meta {
@@ -240,24 +363,7 @@ func TestFork(t *testing.T) {
 
 	// Real copy, fake pods marked Ready: files and symlinks copied, settings inherited.
 	CopyTree = func(src, dst string) error { return exec.Command("cp", "-a", src+"/.", dst).Run() }
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case <-time.After(50 * time.Millisecond):
-			}
-			pods, _ := kube.CoreV1().Pods(Namespace).List(ctx, metav1.ListOptions{})
-			for _, p := range pods.Items {
-				if len(p.Status.Conditions) == 0 {
-					p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-					kube.CoreV1().Pods(Namespace).UpdateStatus(ctx, &p, metav1.UpdateOptions{})
-				}
-			}
-		}
-	}()
+	markReady(t, kube)
 	kids, err := m.Fork(ctx, parent.ID, ForkReq{Count: 2})
 	if err != nil || len(kids) != 2 {
 		t.Fatalf("fork: %v %v", kids, err)

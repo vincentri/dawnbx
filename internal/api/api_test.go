@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -377,5 +378,147 @@ func TestUsersOrgsLockout(t *testing.T) {
 	db.EnsureAdmin("admin", "new-env-password")
 	if err := db.CheckPassword("admin", "new-env-password"); err != nil {
 		t.Error("new env password not applied")
+	}
+}
+
+// zeroReader is an endless request body: the 100 MB cap has to stop the read.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+// TestFilesSurface: the path is handed to the sandbox and never to the host,
+// and the read and write caps answer at the HTTP edge.
+func TestFilesSurface(t *testing.T) {
+	m, st := testManager(t)
+	id := store.NewID()
+	st.Create(store.Meta{ID: id, Image: "x", Created: time.Now(), Status: sandbox.StatusRunning})
+	do := doer((&Server{M: m, Auth: testDB(t)}).Handler(), true)
+	key := []string{"Authorization", "Bearer dawnbx_good"}
+
+	// The fake is a tiny sandbox: it only knows what was written to it.
+	files := map[string]string{}
+	var argv []string
+	var readErr error
+	m.RunExec = func(_ context.Context, _ string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+		argv = cmd
+		switch cmd[0] {
+		case "cat": // ReadFile
+			path := cmd[len(cmd)-1]
+			if path == "huge.bin" {
+				io.CopyN(stdout, zeroReader{}, 10<<20+1) // one byte over the read cap
+				return 0, nil
+			}
+			b, ok := files[path]
+			if !ok {
+				fmt.Fprintf(stderr, "cat: %s: No such file or directory", path)
+				return 1, nil
+			}
+			io.WriteString(stdout, b)
+			return 0, nil
+		case "sh": // WriteFile
+			b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+			readErr = err
+			if readErr == nil {
+				// Bounded so a server without the cap fails instead of hanging.
+				_, readErr = io.Copy(io.Discard, io.LimitReader(stdin, 101<<20))
+			}
+			if readErr == nil {
+				files[cmd[len(cmd)-1]] = string(b)
+			}
+			return 0, readErr
+		}
+		return 0, nil
+	}
+	put := func(path, body string) *httptest.ResponseRecorder {
+		return do("PUT", "/v1/sandboxes/"+id+"/files?path="+url.QueryEscape(path), body, key...)
+	}
+	get := func(path string) *httptest.ResponseRecorder {
+		return do("GET", "/v1/sandboxes/"+id+"/files?path="+url.QueryEscape(path), "", key...)
+	}
+
+	if w := put("a/b.txt", "hello"); w.Code != 204 {
+		t.Fatalf("put: %d %s", w.Code, w.Body)
+	}
+	if len(argv) == 0 || argv[len(argv)-1] != "a/b.txt" {
+		t.Fatalf("path not forwarded to the sandbox: %v", argv)
+	}
+	if w := get("a/b.txt"); w.Code != 200 || w.Body.String() != "hello" || w.Header().Get("Content-Type") != "application/octet-stream" {
+		t.Errorf("get: %d %q", w.Code, w.Body)
+	}
+	if w := get("missing.txt"); w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"file_not_found"`) {
+		t.Errorf("missing file: %d %s", w.Code, w.Body)
+	}
+	if w := get("huge.bin"); w.Code != 413 || !strings.Contains(w.Body.String(), `"code":"file_too_large"`) {
+		t.Errorf("read cap: %d %s", w.Code, w.Body)
+	}
+	// ".." is the sandbox's own root, not the host's: the path still goes to
+	// the exec and the server never resolves it on disk.
+	if w := get("../etc/passwd"); w.Code != 404 || argv[len(argv)-1] != "../etc/passwd" {
+		t.Errorf("traversal: %d %s %v", w.Code, w.Body, argv)
+	}
+
+	// An endless body must be cut off by the cap, not buffered.
+	readErr = nil
+	req := httptest.NewRequest("PUT", "/v1/sandboxes/"+id+"/files?path=big.bin", zeroReader{})
+	req.Header.Set("Authorization", "Bearer dawnbx_good")
+	w := httptest.NewRecorder()
+	(&Server{M: m, Auth: testDB(t)}).Handler().ServeHTTP(w, req)
+	if w.Code == 204 {
+		t.Error("endless body accepted")
+	}
+	if readErr == nil || !strings.Contains(readErr.Error(), "too large") {
+		t.Errorf("100 MB cap not enforced: %v", readErr)
+	}
+}
+
+// TestWireContracts: only the HTTP layer can tell "absent" from "null", so
+// these cases belong here and not in the manager tests.
+func TestWireContracts(t *testing.T) {
+	m, st := testManager(t)
+	exp := time.Now().Add(time.Hour)
+	id := store.NewID()
+	st.Create(store.Meta{ID: id, Image: "x", Created: time.Now(), Status: sandbox.StatusRunning, ExpiresAt: &exp})
+	do := doer((&Server{M: m, Auth: testDB(t)}).Handler(), true)
+	key := []string{"Authorization", "Bearer dawnbx_good"}
+	var got []string
+	m.RunExec = func(_ context.Context, _ string, cmd []string, _ io.Reader, _, _ io.Writer) (int, error) {
+		got = cmd
+		return 0, nil
+	}
+
+	exec := func(body string) *httptest.ResponseRecorder {
+		return do("POST", "/v1/sandboxes/"+id+"/exec", body, key...)
+	}
+	exec(`{"cmd":"ls"}`) // absent: the default 10 minute timeout wraps it
+	if got[0] != "timeout" || got[3] != "600.000" {
+		t.Errorf("default timeout: %v", got)
+	}
+	exec(`{"cmd":"ls","timeout":5}`)
+	if got[3] != "5.000" {
+		t.Errorf("explicit timeout: %v", got)
+	}
+	if w := exec(`{"cmd":"sleep 9","timeout":null}`); w.Code != 200 || got[0] != "env" {
+		t.Errorf("null timeout should mean no limit: %d %v %s", w.Code, got, w.Body)
+	}
+	if w := exec(`{"cmd":"ls","timeout":0}`); w.Code != 400 {
+		t.Errorf("timeout 0: %d %s", w.Code, w.Body)
+	}
+
+	extend := func(body string) *httptest.ResponseRecorder {
+		return do("POST", "/v1/sandboxes/"+id+"/extend", body, key...)
+	}
+	if w := extend(`{}`); w.Code != 400 || !strings.Contains(w.Body.String(), "ttl is required") {
+		t.Errorf("extend without ttl: %d %s", w.Code, w.Body)
+	}
+	if w := extend(`{"ttl":null}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"expires_at":null`) {
+		t.Errorf("keep forever: %d %s", w.Code, w.Body)
+	}
+	if w := extend(`{"ttl":"1h"}`); w.Code != 200 || strings.Contains(w.Body.String(), `"expires_at":null`) {
+		t.Errorf("extend by an hour: %d %s", w.Code, w.Body)
 	}
 }
