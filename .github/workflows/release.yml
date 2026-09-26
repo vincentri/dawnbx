@@ -1,0 +1,80 @@
+name: release
+
+# The release base the control plane hands to a cluster it provisions.
+#
+# deploy/aws/dawnbx.yaml curls "${ReleaseUrl}/install.sh" in user-data, and
+# install.sh then fetches checksums.txt, dawnbx-server-linux-$GO_ARCH and
+# dawnbx-linux-$GO_ARCH from that same prefix, verifying each against the
+# checksum file. So the base is not a convenience: without it a stack cannot
+# finish installing, which is why the SSH-free path could not be exercised until
+# a release existed to point at.
+#
+# Every push to main releases, and each release gets its own immutable tag. The
+# tag is the point: a ReleaseUrl of .../releases/download/main would be a moving
+# target, so a cluster reinstalled next year would fetch different binaries than
+# the ones it was built from, and the checksum would be a checksum of something
+# else. Everything here runs in CI because the tag, the build and the published
+# assets have to agree - building them anywhere else is how they drift.
+#
+# The build is .goreleaser.yaml's, not a second one written here: it already
+# fixes the artifact names install.sh downloads, stamps the version, and carries
+# install.sh and the CloudFormation template as release assets.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser reads tags to stamp the version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # A release is the one thing in this repository that leaves the machine,
+      # so it is cut from a tree that has already passed, not from whatever was
+      # on the branch when the job started.
+      - name: gate
+        run: |
+          set -euo pipefail
+          go test ./...
+          shellcheck -S error install.sh
+
+      - name: tag the release
+        id: version
+        run: |
+          set -euo pipefail
+          # Run number rather than the commit count: it is monotonic across
+          # force-pushes and rebases, which is what a published version needs.
+          # workflow_dispatch on an older main would otherwise reuse a number.
+          version="v0.1.${GITHUB_RUN_NUMBER}"
+          git tag -a "$version" -m "dawnbx $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "$version"
+
+      - name: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git push origin "refs/tags/${{ steps.version.outputs.version }}"
+          go run github.com/goreleaser/goreleaser/v2@latest release --clean
+          echo
+          echo "--- pinned, immutable - use this for a cluster you care about:"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.version.outputs.version }}"
+          echo "--- always the newest, for a throwaway cluster:"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"

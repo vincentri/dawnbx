@@ -15,13 +15,22 @@ import { ME, renderApp, STATUS } from "@/test-support";
 
 afterEach(releaseFetch);
 
+// Both timestamps sit a minute either side of ninety minutes, not exactly on
+// it. dur() floors to whole minutes, and the fixture is stamped before the
+// component renders, so "exactly 90 minutes" makes time-left read 1h 29m as
+// soon as a single second passes - which is most runs, and the ones that
+// happened to land in the same millisecond passed by luck. A minute of
+// cushion on both sides makes the floored value the same whatever the render
+// costs, without freezing the clock and breaking the async queries.
+const NINETY = 90 * 60_000 + 30_000;
+
 const box = (over: Record<string, unknown> = {}) => ({
   id: "box-1",
   image: "python:3.12-slim",
   status: "running",
   network: "internet",
-  created: new Date(Date.now() - 90 * 60_000).toISOString(),
-  expires_at: new Date(Date.now() + 90 * 60_000).toISOString(),
+  created: new Date(Date.now() - NINETY).toISOString(),
+  expires_at: new Date(Date.now() + NINETY).toISOString(),
   restarted_at: null,
   org: "acme",
   ...over,

@@ -82,6 +82,23 @@ func clusterUnavailable(what string) error {
 		Hint: "a cluster action is only possible once the cluster is ready; GET /v1/clusters/{name} shows its phase"}
 }
 
+// errUnreachable marks the one error a caller may choose to carry on past: the
+// cluster says it is ready and could not be talked to. It is a sentinel rather
+// than a code string so the remove-worker path can name the case it accepts
+// instead of matching on message text.
+var errUnreachable = errors.New("cluster unreachable")
+
+// clusterUnreachable is a cluster that reports itself ready and cannot be
+// talked to. The reason is kept because "cannot reach it" and "it says no" are
+// different problems with different fixes, and an operator reading only a
+// summary cannot tell them apart.
+func clusterUnreachable(cl *cluster.Cluster, err error) error {
+	return &sandbox.Error{Status: 503, Code: "cluster_unreachable",
+		Message: "the control plane cannot reach cluster " + cl.Name + ": " + err.Error(),
+		Hint:    "it reports ready, so this is a connection, certificate or credentials problem rather than a cluster that is still coming up: check the cluster's URL, its TLS pin, and the control plane's own log",
+		Cause:   errUnreachable}
+}
+
 func quoteStale() error {
 	return &sandbox.Error{Status: 409, Code: "quote_stale",
 		Message: "the estimate is out of date for this configuration",
@@ -235,10 +252,17 @@ func (c *Control) remote(ctx context.Context, cl *cluster.Cluster) (*cluster.Rem
 	return rem, nil
 }
 
-// nodes returns a cluster's workers, refreshed from the cluster itself when it
-// answers. The cluster is the authority and the stored count is only a cache,
-// so failing to reach it is not a failure of the route: the stored rows are
-// what the operator saw last, and saying so is better than saying nothing.
+// nodes returns a cluster's workers, refreshed from the cluster itself.
+//
+// The list comes back even when the refresh fails, because a caller that is
+// only deciding something may still act on what was last known - the remove
+// worker path does, because the provider is the authority on infrastructure
+// and refuses a removal it cannot confirm. The error says the answer is stale,
+// and a caller that is showing the operator a state has to pass it on: an
+// earlier version returned the cached rows with no error, which made "the
+// cluster is unreachable" and "this cluster has no workers" the same response.
+// The second is the reading that leaves an operator waiting on a repair that
+// is already broken.
 func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Node, error) {
 	list, err := c.reg.Nodes(cl.Name)
 	if err != nil {
@@ -249,11 +273,11 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 	}
 	rem, err := c.remote(ctx, cl)
 	if err != nil {
-		return list, nil
+		return list, clusterUnreachable(cl, err)
 	}
 	live, err := rem.Nodes(ctx)
 	if err != nil {
-		return list, nil
+		return list, clusterUnreachable(cl, err)
 	}
 	saw := make(map[string]cluster.RemoteNode, len(live))
 	for _, n := range live {
@@ -662,10 +686,19 @@ func (s *Server) clusters(h route) {
 		}
 		// Ask the cluster before believing our own cache: it is the authority on
 		// what is running where, and it is the only thing that can be wrong in
-		// the dangerous direction.
+		// the dangerous direction. When it cannot be asked, this continues on the
+		// cached rows rather than refusing, because the provider is the authority
+		// on the infrastructure and it has its own refusal for a removal it
+		// cannot confirm (internal/provider/aws/aws.go, RemoveNode). Failing here
+		// would make a worker permanently unremovable while the cluster's HTTPS
+		// is broken, which is the same broken state an operator is trying to
+		// escape. The staleness is logged rather than hidden.
 		list, err := c.nodes(r.Context(), cl)
 		if err != nil {
-			return nil, err
+			if !errors.Is(err, errUnreachable) {
+				return nil, err
+			}
+			log.Printf("cluster %s: removing %s on a cached node list: %v", cl.Name, id, err)
 		}
 		held := -1
 		for _, n := range list {

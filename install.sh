@@ -195,10 +195,11 @@ log "preflight ok ($(uname -m), data dir $DATA, $([ "$UPGRADE" = 1 ] && echo upg
 if command -v apt-get >/dev/null; then
   log "installing packages"
   export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
-  # awscli is here only to read the bootstrap parameter out of Parameter Store,
-  # so a run without --bootstrap-parameter installs exactly what it always did.
+  # The bootstrap parameter is read with a stdlib SigV4 signer below, so nothing
+  # here is needed for it. Ubuntu 24.04 has no awscli package at all - not in
+  # main, not in universe - so asking for it made every install that carried a
+  # bootstrap parameter fail at exactly this line.
   PKGS=(nftables quota curl openssl bzip2)
-  if [ -n "$BOOTSTRAP_PARAM" ]; then PKGS+=(awscli); fi
   apt-get -qq update
   apt-get -qq install -y "${PKGS[@]}" >/dev/null
   # Stock cloud kernels ship quota_v2 in linux-modules-extra; without it an
@@ -248,14 +249,93 @@ if ! findmnt -no OPTIONS --target "$DATA" | grep -q prjquota; then
 fi
 
 NODE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
+# ssm_get_parameter prints the decrypted value of one SecureString.
+#
+# It prefers the aws CLI where a distro ships one, and otherwise signs the
+# GetParameter request itself with SigV4 using the instance role. The fallback is
+# not a convenience: Ubuntu 24.04 - the image install.sh's own default AMI comes
+# from - has no awscli package, so a CLI-only reader cannot complete an install
+# there. Everything the signer needs (hmac, hashlib, json, urllib) is in the
+# Python standard library that cloud-init already requires, so this adds no
+# package, no repository and no key to the box.
+ssm_get_parameter() {
+  [ -n "$1" ] || return 1
+  if command -v aws >/dev/null 2>&1; then
+    aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text 2>/dev/null && return 0
+  fi
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$1" <<'SSM_SIGNER'
+import hashlib, hmac, json, sys, urllib.parse, urllib.request
+from datetime import datetime, timezone
+
+META = "http://169.254.169.254/latest"
+
+
+def _req(url, headers=None, method="GET", data=None):
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers=headers or {}, method=method, data=data), timeout=10
+    ).read().decode()
+
+
+try:
+    name = sys.argv[1]
+    # IMDSv2: a token first, then everything else carries it.
+    token = _req(META + "/api/token", {"X-aws-ec2-metadata-token-ttl-seconds": "300"}, "PUT")
+    hdr = {"X-aws-ec2-metadata-token": token}
+    # The credentials live under meta-data, not off /latest directly: the
+    # shorter path is a 404 that looks exactly like "no role attached".
+    role = _req(META + "/meta-data/iam/security-credentials/", hdr).strip().splitlines()[0]
+    cred = json.loads(_req(META + "/meta-data/iam/security-credentials/" + role, hdr))
+
+    # The credentials carry no region: it is instance metadata, not IAM data.
+    region, service = _req(META + "/meta-data/placement/region", hdr), "ssm"
+    host = "ssm." + region + ".amazonaws.com"
+    now = datetime.now(timezone.utc)
+    amz, day = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+    # SSM answers x-amz-target with a JSON body. The older Query protocol (a
+    # form-encoded Action=GetParameter) is what the shape of the AWS Query API
+    # suggests, and SSM rejects it with a bare ValidationError.
+    ctype, target = "application/x-amz-json-1.1", "AmazonSSM.GetParameter"
+    body = json.dumps({"Name": name, "WithDecryption": True})
+    payload = hashlib.sha256(body.encode()).hexdigest()
+    # Header names are lowercased and sorted, and the set signed must match the
+    # set sent. The session token is in it because instance-role credentials
+    # always carry one; without it in the signature the call is 403.
+    signed = "content-type;host;x-amz-date;x-amz-security-token;x-amz-target"
+    canon = "\n".join([
+        "POST", "/", "",
+        "content-type:%s\nhost:%s\nx-amz-date:%s\nx-amz-security-token:%s\nx-amz-target:%s\n"
+        % (ctype, host, amz, cred["Token"], target),
+        signed, payload,
+    ])
+    scope = "%s/%s/%s/aws4_request" % (day, region, service)
+    to_sign = "\n".join([
+        "AWS4-HMAC-SHA256", amz, scope, hashlib.sha256(canon.encode()).hexdigest(),
+    ])
+    k = ("AWS4" + cred["SecretAccessKey"]).encode()
+    for part in (day, region, service, "aws4_request"):
+        k = hmac.new(k, part.encode(), hashlib.sha256).digest()
+    sig = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
+    auth = ("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s"
+            % (cred["AccessKeyId"], scope, signed, sig))
+    out = _req("https://%s/" % host, {
+        "Content-Type": ctype, "X-Amz-Target": target,
+        "X-Amz-Date": amz, "X-Amz-Security-Token": cred["Token"], "Authorization": auth,
+    }, "POST", body.encode())
+    sys.stdout.write(json.loads(out)["Parameter"]["Value"])
+except Exception:
+    # The caller's fail() turns this into an operator-readable reason; an SSM
+    # error body can echo request context, so nothing from it is printed here.
+    sys.exit(1)
+SSM_SIGNER
+}
+
 if [ -n "$BOOTSTRAP_PARAM" ]; then
   # The password is assigned to a variable, never passed to another command, so
   # it appears in no argument list (ps) and in no log line; and the CLI's stderr
   # is dropped because an SSM error echoes back request context. The branch below
   # writes it to $SRV/admin.env, which is where the server reads it from.
-  aws_bin=$(command -v aws) ||
-    fail "no aws CLI to read Parameter Store with" "awscli is not installed and apt-get is unavailable" "install awscli and re-run, or pass the password in DAWNBX_ADMIN_PASSWORD"
-  DAWNBX_ADMIN_PASSWORD=$("$aws_bin" ssm get-parameter --name "$BOOTSTRAP_PARAM" --with-decryption --query Parameter.Value --output text 2>/dev/null) || DAWNBX_ADMIN_PASSWORD=""
+  DAWNBX_ADMIN_PASSWORD=$(ssm_get_parameter "$BOOTSTRAP_PARAM") || DAWNBX_ADMIN_PASSWORD=""
   [ -n "$DAWNBX_ADMIN_PASSWORD" ] ||
     fail "could not read SSM parameter $BOOTSTRAP_PARAM" "the instance role may not carry the parameter, the name may be wrong, or the value is empty" "check the parameter and the stack's IAM role, then re-run"
   export DAWNBX_ADMIN_PASSWORD
@@ -372,6 +452,15 @@ if [ -z "$JOIN_URL" ]; then
 disable-cloud-controller: true
 write-kubeconfig-mode: "0600"
 flannel-backend: wireguard-native
+# k3s deploys traefik as a packaged ingress controller on a LoadBalancer
+# service, and its ServiceLB claims host ports 80 and 443 with iptables rather
+# than a listening socket. dawnbx creates no Ingress at all and serves its own
+# HTTPS on 443, so that controller takes the port dawnbx needs and answers
+# every request with traefik's default certificate and a 404 - while `ss` still
+# shows dawnbx-server listening, because the socket is there and the traffic
+# simply never reaches it. dawnbx owns 80/443; k3s does not need them.
+disable:
+  - traefik
 EOF
 fi
 cat >/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl <<'EOF'
@@ -521,11 +610,17 @@ URL=http://127.0.0.1:8080
 if [ "$LOCAL" = 1 ]; then PUBLIC=$URL
 elif [ -n "$DOMAIN" ]; then
   PUBLIC=https://$DOMAIN
-  # The first HTTPS request makes the server fetch its Let's Encrypt cert.
-  if curl -fsS --max-time 60 "$PUBLIC/v1/version" >/dev/null 2>&1; then
+  # Two claims, not one. curl succeeding proves something on 443 answered with
+  # a certificate curl was willing to trust; it does not prove that answer came
+  # from dawnbx. A different proxy can answer the same way and still be the
+  # wrong service, so the certificate is read back and has to name this domain.
+  if curl -fsS --max-time 60 "$PUBLIC/v1/version" >/dev/null 2>&1 &&
+    echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null |
+      openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:$DOMAIN"; then
     log "Let's Encrypt cert ready for $DOMAIN"
   else
     warn "could not reach $PUBLIC with a valid cert yet. Check: DNS A record for $DOMAIN points at this server's public IP; ports 80 and 443 are open in the cloud firewall / security group. The server retries on the next HTTPS request; errors: journalctl -u dawnbx"
+    warn "if the check above passed but this one did not, something other than dawnbx-server is answering on 443 for $DOMAIN"
   fi
   PUBLIC=https://${NODE_IP:-<this-server-ip>}
 fi

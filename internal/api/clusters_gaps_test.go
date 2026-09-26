@@ -45,13 +45,18 @@ func TestNoClusterWhenControlIsUnwired(t *testing.T) {
 
 // --- the node route's refresh path, in each failure shape ---------------------
 
-// TestNodeRefreshFallsBackToTheStoredRows: the cluster is the authority on
-// sandboxes, but failing to reach it must not empty the list. The operator is
-// better served by the counts they saw last than by nothing, and an empty table
-// on a live cluster reads as "no workers", which is a different and wrong claim.
-func TestNodeRefreshFallsBackToTheStoredRows(t *testing.T) {
-	// A cluster the control plane cannot log into: the refresh cannot happen, so
-	// the stored rows are what the operator gets.
+// TestUnreachableClusterIsNotAnEmptyNodeList: a cluster that reports itself
+// ready and cannot be reached must not answer with a worker list.
+//
+// This test used to assert the opposite, on the reasoning that an empty table
+// "reads as no workers, which is a different and wrong claim". Both readings
+// are wrong; the fix is to say which one it is. Returning the cached rows with
+// no error made an unreachable cluster and a cluster with no workers the same
+// response, so an operator whose cluster had stopped answering was told it had
+// no workers - and waited on a repair that was already broken. On a real
+// account this is exactly what happened: the cluster's HTTPS was being answered
+// by something else, and the Nodes tab said "no workers".
+func TestUnreachableClusterIsNotAnEmptyNodeList(t *testing.T) {
 	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
 	cp.provisioningCluster(t, "n1")
 	cp.readyCluster(t, "n1")                       // status ready, url https://n1.example
@@ -62,15 +67,44 @@ func TestNodeRefreshFallsBackToTheStoredRows(t *testing.T) {
 	}
 
 	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
-	if w.Code != 200 {
-		t.Fatalf("a cluster that cannot be reached must not fail the route: %d %s", w.Code, w.Body)
+	if w.Code != 503 {
+		t.Fatalf("a cluster that cannot be reached must say so, not list workers: %d %s", w.Code, w.Body)
 	}
-	if !strings.Contains(w.Body.String(), "i-1") {
-		t.Errorf("the stored workers disappeared because the refresh failed: %s", w.Body)
+	got := envelope(t, w)
+	if got["code"] != "cluster_unreachable" {
+		t.Errorf("code %v, want cluster_unreachable", got["code"])
 	}
-	// The stored count is still what is shown, because nothing better is known.
-	if !strings.Contains(w.Body.String(), `"sandboxes":2`) {
-		t.Errorf("the last known count was lost: %s", w.Body)
+	// The reason travels, because "cannot reach it" and "it says no" have
+	// different fixes and an operator reading only a summary cannot tell them
+	// apart.
+	if msg, _ := got["message"].(string); !strings.Contains(msg, "n1") {
+		t.Errorf("the message does not name the cluster: %q", msg)
+	}
+	// And the answer is not silently an empty list.
+	if strings.Contains(w.Body.String(), `"nodes":[]`) {
+		t.Errorf("an unreachable cluster answered as an empty node list: %s", w.Body)
+	}
+}
+
+// TestRemoveWorkerStillProceedsOnTheCachedList: the delete path is the one
+// caller allowed to carry on past an unreachable cluster, and it does so
+// deliberately. Failing closed there would make a worker permanently
+// unremovable while the cluster's HTTPS is broken - the very state an operator
+// is trying to escape - and the provider has its own refusal for a removal it
+// cannot confirm (internal/provider/aws/aws.go, RemoveNode).
+func TestRemoveWorkerStillProceedsOnTheCachedList(t *testing.T) {
+	prov := &fakeProv{id: "aws", regions: []string{"us-east-1"}}
+	cp := testControl(t, prov)
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	cp.reg.SetURL("n1", "https://127.0.0.1:1", "")
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-1", InstanceType: "t4g.medium",
+		Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	w := cp.do("DELETE", "/v1/clusters/n1/nodes/i-1", "", cp.admin...)
+	if w.Code != 204 {
+		t.Fatalf("removing a worker from an unreachable cluster: %d %s", w.Code, w.Body)
 	}
 }
 
@@ -78,30 +112,12 @@ func TestNodeRefreshFallsBackToTheStoredRows(t *testing.T) {
 // count replaces the cache. The cluster is the authority, and the refusal to
 // remove a busy worker depends on never overriding it.
 func TestNodeRefreshTakesTheClustersOwnCount(t *testing.T) {
-	// A stand-in cluster: a TLS server that answers the node list the control
-	// plane fetches, so the winning path is exercised end to end rather than
-	// mocked out.
-	live := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/login":
-			http.SetCookie(w, &http.Cookie{Name: "dawnbx_session", Value: "s"})
-			w.Write([]byte(`{"admin":true}`))
-		case "/v1/nodes":
-			w.Write([]byte(`{"nodes":[{"name":"i-1","ready":true,"sandboxes":5}]}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer live.Close()
-	pin, err := cluster.PinFromLeaf(live.Certificate().Raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
 	cp.provisioningCluster(t, "n1")
 	cp.readyCluster(t, "n1")
-	cp.reg.SetURL("n1", live.URL, pin)
+	// A stand-in that answers the node list, so the winning path is exercised
+	// end to end rather than mocked out.
+	cp.liveCluster(t, "n1", cluster.RemoteNode{Name: "i-1", Ready: true, Sandboxes: 5})
 	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-1", InstanceType: "t4g.medium",
 		Status: "ready", Sandboxes: 0}); err != nil { // stale cache
 		t.Fatal(err)

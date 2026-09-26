@@ -649,3 +649,26 @@ on the visible surface and left the one behind it.
       it is neither exported nor shared (contradicts).
 - [X] T151 Give a stalled cluster a distinct badge in the list as well as the panel. The list
       cannot tell a wedged cluster from a healthy one (T091) (partial).
+
+## Phase 10: Convergence
+
+- [X] T152 Stand up the release base the provisioning path depends on. `deploy/aws/dawnbx.yaml:182`
+      curls `${ReleaseUrl}/install.sh` in user-data and `install.sh:466-478` then fetches
+      `checksums.txt`, `dawnbx-server-linux-$GO_ARCH` and `dawnbx-linux-$GO_ARCH` from the same
+      base, verifying each against the checksum file. Nothing publishes those four artifacts: the
+      repository is private, CI has no release job, and the documented install path is
+      `sudo ./install.sh` from a clone. The happy path therefore depends on a distribution
+      mechanism that does not exist, which is why `quickstart.md` Tier 4 has never been run. The
+      adapter itself is sound; it is the thing it hands the instance that is missing (FR-009,
+      blocks SC-001..SC-010).
+
+      Resolved: `.github/workflows/release.yml` cuts a release on a tag, driving the
+      `.goreleaser.yaml` that already existed rather than a second build written beside it. A
+      GitHub release is the exact shape the template wants - a flat, immutable, anonymously
+      fetchable prefix per tag - so no bucket, CDN or second repository is needed, and a public
+      repository is what makes it fetchable from an instance holding no credentials. Verified
+      locally against goreleaser's own bytes: the four files install.sh downloads all pass its
+      checksum check, a tampered file is rejected, and the `-linux-` anchor cannot confuse the
+      CLI name with the server name. The history was audited before the repository was made
+      public: the only AWS key in 70 commits is AWS's own documentation example, in three test
+      fixtures.

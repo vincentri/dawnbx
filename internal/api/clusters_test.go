@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -169,6 +170,37 @@ func (c *controlPlane) readyCluster(t *testing.T, name string) *cluster.Cluster 
 		t.Fatal(err)
 	}
 	return cl
+}
+
+// liveCluster points a cluster at a stand-in that answers the only two routes
+// the control plane calls when it refreshes a node list: log in, then list.
+//
+// It exists because nothing reached a live cluster before. Every test either
+// let the refresh fail and read the cache, or never asked, so the merge the
+// control plane does on a real answer - taking the cluster's sandbox counts
+// over its own - had no coverage at all. The stand-in serves those two routes
+// and 404s the rest rather than pretending to be a cluster.
+func (c *controlPlane) liveCluster(t *testing.T, name string, nodes ...cluster.RemoteNode) {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/login":
+			http.SetCookie(w, &http.Cookie{Name: "dawnbx_session", Value: "t"})
+			json.NewEncoder(w).Encode(map[string]any{"org": "default", "user": "admin", "admin": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/nodes":
+			json.NewEncoder(w).Encode(map[string]any{"nodes": nodes})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	pin, err := cluster.PinFromLeaf(srv.Certificate().Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.reg.SetURL(name, srv.URL, pin); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // audited lists the audit actions recorded so far, newest first. Signing in
@@ -635,6 +667,10 @@ func TestWorkerLifecycle(t *testing.T) {
 	}
 
 	c.readyCluster(t, "alpha")
+	// Listing a ready cluster refreshes from the cluster itself, so this test
+	// needs one that answers. Without it the route is right to say the cluster
+	// is unreachable, which is a different assertion than the one below.
+	c.liveCluster(t, "alpha", cluster.RemoteNode{Name: "i-new"})
 	w = c.do("POST", "/v1/clusters/alpha/nodes", `{"instance_type":"t4g.medium","disk_gib":30}`, c.admin...)
 	if w.Code != 200 {
 		t.Fatalf("add worker: %d %s", w.Code, w.Body)

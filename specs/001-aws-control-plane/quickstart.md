@@ -52,11 +52,14 @@ Expected: no output, exit 0 for both.
 This is the core of FR-001 and needs no AWS at all.
 
 ```bash
-rm -rf /tmp/dawnbx-cp
+rm -rf /tmp/dawnbx-cp /tmp/dawnbx-cp-data
 go build -o /tmp/dawnbx-cp ./cmd/dawnbx-server
 
+# The binary is a file and the data dir is a directory under it; pointing both
+# at /tmp/dawnbx-cp is a "not a directory" error, not a subtle one, but the
+# quickstart is the first thing anyone runs, so it has to actually run.
 /tmp/dawnbx-cp --control-plane \
-  --data-dir /tmp/dawnbx-cp/data \
+  --data-dir /tmp/dawnbx-cp-data \
   --listen 127.0.0.1:8099 \
   --admin-password 'a-long-test-password' &
 ```
@@ -64,7 +67,7 @@ go build -o /tmp/dawnbx-cp ./cmd/dawnbx-server
 Check all four, because each one is a distinct thing the old startup path refused to do:
 
 ```bash
-ls -a /tmp/dawnbx-cp/data            # no .dawnbx-volume marker, and startup did not create one
+ls -a /tmp/dawnbx-cp-data            # no .dawnbx-volume marker, and startup did not create one
 curl -s 127.0.0.1:8099/v1/version    # 200 — no k3s client was built
 curl -s 127.0.0.1:8099/v1/sandboxes  # 503 {"code":"cluster_unavailable",...}, not 404 and not a panic
 curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8099/ui/   # 200 — the dashboard is served
@@ -73,7 +76,7 @@ curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8099/ui/   # 200 — the dash
 Then the negative control, which is the part that is easy to get wrong:
 
 ```bash
-/tmp/dawnbx-cp --data-dir /tmp/dawnbx-cp/data   # without --control-plane
+/tmp/dawnbx-cp --data-dir /tmp/dawnbx-cp-data   # without --control-plane
 ```
 
 Expected: exits non-zero with the marker error from `internal/store/store.go:73`. The old behaviour
@@ -129,6 +132,37 @@ Expected: `409 {"code":"quote_stale",...}`. And before any of that, `POST /v1/cl
 ## Tier 4 — a real cluster, end to end
 
 Run this in a throwaway account. It creates a billable instance.
+
+First there has to be a release for the control plane to hand the cluster. The
+stack curls `${ReleaseUrl}/install.sh` in user-data and `install.sh` then fetches
+`checksums.txt` and the two binaries from that same prefix, so without one the
+stack cannot finish installing. `.github/workflows/release.yml` cuts it on a
+tag, using `.goreleaser.yaml`:
+
+Every push to `main` publishes a release, so there is nothing to tag by hand.
+The workflow tags each one immutably and publishes the assets:
+
+```bash
+export RELEASE_URL=https://github.com/vincentri/dawnbx/releases/download/v0.1.7   # whatever the run printed
+
+# and the control plane is started with it (see Tier 2):
+#   --release-url "$RELEASE_URL"
+```
+
+`releases/latest/download` is the same four files from the newest release, and
+the template accepts it, but it is a moving target: a cluster reinstalled next
+year would fetch different binaries than the ones it was built from. Pin the
+version for anything you care about.
+
+The four files it serves are `install.sh`, `checksums.txt`,
+`dawnbx-server-linux-arm64` and `dawnbx-linux-arm64`. Confirm a tag published
+before spending money:
+
+```bash
+for f in install.sh checksums.txt dawnbx-server-linux-arm64 dawnbx-linux-arm64; do
+  printf '%-28s %s\n' "$f" "$(curl -fsS -o /dev/null -w '%{http_code}' "$RELEASE_URL/$f")"
+done
+```
 
 ```bash
 # 1. create — returns provisioning, no SSH anywhere in this flow

@@ -18,8 +18,9 @@ func entry(unit, usd string, attrs map[string]string) string {
 	doc := map[string]any{
 		"product":     map[string]any{"attributes": attrs, "productFamily": attrs["productFamily"]},
 		"serviceCode": "AmazonEC2",
+		// Shaped like the real thing: aws_v1 puts the unit on the dimension and
+		// nowhere else. A term-level unit here once let a unit-gate bug pass.
 		"terms": map[string]any{"OnDemand": map[string]any{"t.1": map[string]any{
-			"unit": unit,
 			"priceDimensions": map[string]any{"d.1": map[string]any{
 				"unit":         unit,
 				"pricePerUnit": map[string]any{"USD": usd},
@@ -111,7 +112,7 @@ func TestPublicIPv4RateComesFromVPC(t *testing.T) {
 			t.Errorf("service = %v, want %v", m["ServiceCode"], svcVPC)
 		}
 		return 200, `{"FormatVersion":"aws_v1","PriceList":[` +
-			quoteJSON(entry(unitHours, "0.005", map[string]string{"productFamily": "Public IPv4 Address"})) + `]}`
+			quoteJSON(entry(unitHours, "0.005", map[string]string{"group": "VPCPublicIPv4Address"})) + `]}`
 	})
 	got, err := priceFor(t, f).publicIPv4Rate(testContext(t), "eu-west-1")
 	if err != nil {
