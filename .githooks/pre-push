@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuses a push unless the full gate passes: gofmt, go vet, builds, unit tests,
+# docs typecheck, and the agent-rules cite check.
+# Enable once per clone: git config core.hooksPath .githooks
+exec bash "$(git rev-parse --show-toplevel)/hack/check.sh"
