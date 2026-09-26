@@ -4,8 +4,14 @@
 .serena/
 .harness-eval/
 .omp/
-.specify/
 .DS_Store
+
+# Spec Kit per-machine bookkeeping. The constitution, templates, scripts and
+# workflows under .specify/ are tracked; these three churn on every refresh and
+# say which AI integration this checkout happens to use.
+.specify/init-options.json
+.specify/integration.json
+.specify/integrations/
 
 # build output
 /dawnbx
