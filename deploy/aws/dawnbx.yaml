@@ -139,7 +139,10 @@ Outputs:
     Description: Point your Domain's A record here.
   SshCommand:
     Value: !Sub "ssh ubuntu@${Ip} sudo cat /root/.dawnbx/env /var/lib/dawnbx/server/admin.env"
-    Description: Prints DAWNBX_URL, DAWNBX_API_KEY and the admin password (user admin).
+    Description: >-
+      The value is the command, not the secrets. Running it reads
+      DAWNBX_URL, DAWNBX_API_KEY and the admin password (user admin) off the
+      instance. Keep that output out of tickets, screenshots and CI logs.
   SecurityGroup:
     Value: !GetAtt Sg.GroupId
     Description: Launch workers into this group, then run the join command from Settings > Nodes on them.

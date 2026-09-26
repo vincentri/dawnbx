@@ -43,9 +43,10 @@ Errors are JSON:
 
 ## OpenAPI
 
-The machine-readable schema lives at `/openapi.yaml` on the server, and in the
-source tree at `internal/api/openapi.yaml`. The dashboard's TypeScript client is
-generated from it, so it is the same contract everything else uses.
+The machine-readable schema is the file `internal/api/openapi.yaml` in the
+source tree. The server does not serve it over HTTP: copy it out of the repo, or
+read it straight from a checkout. The dashboard's TypeScript client is generated
+from that file, so it is the same contract everything else uses.
 
 ```sh
 cd web && npm run gen

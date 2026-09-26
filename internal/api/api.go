@@ -223,7 +223,12 @@ func who(r *http.Request) *auth.Principal { return r.Context().Value(ctxKey{}).(
 // other orgs from non-admins.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		// RFC 7235: the scheme is case-insensitive, so "bearer" must work too.
+		tok, ok := "", false
+		if scheme, rest, cut := strings.Cut(r.Header.Get("Authorization"), " "); cut &&
+			strings.EqualFold(scheme, "Bearer") {
+			tok, ok = strings.TrimSpace(rest), true
+		}
 		if !ok {
 			for _, p := range websocket.Subprotocols(r) {
 				if tok, ok = strings.CutPrefix(p, "bearer."); ok {

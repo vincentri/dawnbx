@@ -90,7 +90,8 @@ func TestAuthMatrix(t *testing.T) {
 	}{
 		{"nothing", nil, 401, "unauthorized"},
 		{"bearer", []string{"Authorization", "Bearer dawnbx_good"}, 200, ""},
-		{"lowercase scheme", []string{"Authorization", "bearer dawnbx_good"}, 401, "unauthorized"},
+		{"lowercase scheme", []string{"Authorization", "bearer dawnbx_good"}, 200, ""},
+		{"UPPERCASE scheme", []string{"Authorization", "BEARER dawnbx_good"}, 200, ""},
 		{"other scheme", []string{"Authorization", "Basic ZGVtb255"}, 401, "unauthorized"},
 		{"empty bearer", []string{"Authorization", "Bearer "}, 401, "unauthorized"},
 		{"wrong key", []string{"Authorization", "Bearer dawnbx_nope"}, 401, "unauthorized"},

@@ -57,7 +57,7 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 - State lives in `<data-dir>/sb/<id>/meta.json` (`store.Version`); pods are rebuilt from it every 30s. A `meta.json` this build does not understand is skipped, never deleted. Change the on-disk shape and you bump the version — otherwise existing sandboxes go dark.
 - Reconcile order per tick is deliberate: TTL → per-sandbox disk cap → node volume headroom (under 15% free blocks create; under 10% deletes expiring sandboxes largest-first, then stops a keep-forever one) → pod/label drift. Keep the order; reordering silently changes eviction.
 - Auth: tokens are `dbx_<id>_<secret>`, stored as sha256 only. Key checks are cached 30s per node, so a revoke elsewhere lands within 30s; login lockout is per-node in-memory only.
-- Three credential surfaces: `Authorization: Bearer`, WebSocket subprotocol `bearer.<key>`, or the `dawnbx_session` cookie. A cookie request that is not GET must carry `X-Dawnbx: 1` or it 403s.
+- Three credential surfaces: `Authorization: Bearer` (the scheme is case-insensitive per RFC 7235), WebSocket subprotocol `bearer.<key>`, or the `dawnbx_session` cookie. A cookie request that is not GET must carry `X-Dawnbx: 1` or it 403s.
 - Fields that distinguish "unset" from "explicit" (`ttl`, `timeout`) are decided by JSON key *presence* (`decode` → `HasTTL` in `internal/api/api.go`), never by value. Any new optional field follows the same rule, and the SDKs mirror it with a sentinel.
 - Server-side caps the SDKs do not enforce: fork ≤ 10 (children pinned to the parent node; the parent is `kill -STOP -1`'d and resumed in a defer), 10 MB reads, 100 MB writes.
 - Host assumptions baked into the code: gVisor `RuntimeClass`, namespace `dawnbx-sandboxes`, node name == hostname, and the sandbox NetworkPolicies exist only because `install.sh` created them.
@@ -86,10 +86,10 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 - Fumadocs on Next, `output: 'export'` in `docs/next.config.mjs`, so `npm run build --prefix docs` produces a static site in `docs/out/`. Content is MDX in `docs/content/docs/` with `meta.json` sidebars, and a page missing from `meta.json` still renders.
 - `SITE_URL` unset bakes `http://localhost:3000` into the OG and Twitter tags. Set it when publishing.
 - Dependencies deliberately differ from `web/` (typescript `^7`, `cn` `^0.3`) because Next 16 needs them. Do not "align" them.
-- Known wrong today: `docs/content/docs/guide/api.mdx` says the server serves `/openapi.yaml`. No such route exists. Fix it when you touch that page.
+- The server does not serve `openapi.yaml` over HTTP. It is a repo file; the docs page says so, and clients read it from a checkout.
 - The `/v1` route table is duplicated between `README.md` and `guide/api.mdx`; there is no generator keeping them equal.
 
 ## 8. Ops surface
 
 - `install.sh` provisions one box: k3s `v1.35.5+k3s1`, gVisor, and the server on loopback. It refuses to install where a node with the same name already exists — never point it at a machine with an existing cluster.
-- `deploy/aws/dawnbx.yaml` is one arm64 EC2 with an EIP, and its `SshCommand` output prints the API key and the admin password. Treat CloudFormation stack output as a secret.
+- `deploy/aws/dawnbx.yaml` is one arm64 EC2 with an EIP. Its `SshCommand` output is the *command* that reads the API key and admin password off the instance, not the secrets themselves — but running it puts them in your terminal, so keep that output out of tickets and CI logs.
