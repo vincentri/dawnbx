@@ -452,6 +452,15 @@ if [ -z "$JOIN_URL" ]; then
 disable-cloud-controller: true
 write-kubeconfig-mode: "0600"
 flannel-backend: wireguard-native
+# k3s deploys traefik as a packaged ingress controller on a LoadBalancer
+# service, and its ServiceLB claims host ports 80 and 443 with iptables rather
+# than a listening socket. dawnbx creates no Ingress at all and serves its own
+# HTTPS on 443, so that controller takes the port dawnbx needs and answers
+# every request with traefik's default certificate and a 404 - while `ss` still
+# shows dawnbx-server listening, because the socket is there and the traffic
+# simply never reaches it. dawnbx owns 80/443; k3s does not need them.
+disable:
+  - traefik
 EOF
 fi
 cat >/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl <<'EOF'
@@ -601,11 +610,17 @@ URL=http://127.0.0.1:8080
 if [ "$LOCAL" = 1 ]; then PUBLIC=$URL
 elif [ -n "$DOMAIN" ]; then
   PUBLIC=https://$DOMAIN
-  # The first HTTPS request makes the server fetch its Let's Encrypt cert.
-  if curl -fsS --max-time 60 "$PUBLIC/v1/version" >/dev/null 2>&1; then
+  # Two claims, not one. curl succeeding proves something on 443 answered with
+  # a certificate curl was willing to trust; it does not prove that answer came
+  # from dawnbx. A different proxy can answer the same way and still be the
+  # wrong service, so the certificate is read back and has to name this domain.
+  if curl -fsS --max-time 60 "$PUBLIC/v1/version" >/dev/null 2>&1 &&
+    echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null |
+      openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -q "DNS:$DOMAIN"; then
     log "Let's Encrypt cert ready for $DOMAIN"
   else
     warn "could not reach $PUBLIC with a valid cert yet. Check: DNS A record for $DOMAIN points at this server's public IP; ports 80 and 443 are open in the cloud firewall / security group. The server retries on the next HTTPS request; errors: journalctl -u dawnbx"
+    warn "if the check above passed but this one did not, something other than dawnbx-server is answering on 443 for $DOMAIN"
   fi
   PUBLIC=https://${NODE_IP:-<this-server-ip>}
 fi

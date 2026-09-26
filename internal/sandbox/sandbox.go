@@ -46,9 +46,18 @@ type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Hint    string `json:"hint,omitempty"`
+	// Cause is what errors.Is matches on. It is never sent to a client - the
+	// envelope is the whole contract - and it is nil on every error that is
+	// its own root, so Unwrap returning nil leaves those unchanged. It exists
+	// because a caller sometimes has to tell one failure from another, and
+	// matching on the Code string would tie that to a wire value.
+	Cause error `json:"-"`
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
+
+// Unwrap exposes Cause so errors.Is and errors.As can see through the envelope.
+func (e *Error) Unwrap() error { return e.Cause }
 
 func errf(status int, code, hint, format string, a ...any) *Error {
 	return &Error{Status: status, Code: code, Message: fmt.Sprintf(format, a...), Hint: hint}
