@@ -25,12 +25,12 @@ import (
 
 const usage = `usage: dawnbx <command> [args]
 
-  ls                          list sandboxes
+  ls|list                   list sandboxes
   create [--image I] [--network internet|none] [--ttl 1h|forever]
                               create a sandbox and print its id
   exec <id> <cmd...>          run a command; exits with its exit code
   fork <id> [n]               copy a sandbox's /workspace into n new ones
-  kill <id>...                delete sandboxes and their files
+  kill|rm <id>...           delete sandboxes and their files
   doctor                      check the server (more checks when run on it)
   version                     client and server versions
 
@@ -53,7 +53,6 @@ type sandbox struct {
 }
 
 type apiErr struct {
-	Status  int    `json:"-"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Hint    string `json:"hint"`
@@ -111,7 +110,7 @@ func (c *client) do(method, path string, body, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		e := &apiErr{Status: resp.StatusCode}
+		e := &apiErr{}
 		if json.NewDecoder(resp.Body).Decode(e) != nil || e.Code == "" {
 			e.Code, e.Message = "http_error", resp.Status
 		}

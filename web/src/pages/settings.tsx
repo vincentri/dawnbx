@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { cn } from "cn";
 import { Confirm } from "@/components/confirm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,18 @@ function Section(props: { title: string; desc?: string; children: React.ReactNod
       </CardHeader>
       <CardContent className="grid gap-4">{props.children}</CardContent>
     </Card>
+  );
+}
+
+// One place to copy a secret or command; `small` for the long join command.
+function CopyValue({ value, small }: { value: string; small?: boolean }) {
+  return (
+    <div className="flex gap-2">
+      <code className={cn("flex-1 rounded bg-muted px-2 py-1 font-mono break-all select-all", small && "text-xs")}>{value}</code>
+      <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(value).then(() => toast.success("Copied"))}>
+        Copy
+      </Button>
+    </div>
   );
 }
 
@@ -167,12 +180,7 @@ function Keys({ me }: { me: Principal }) {
       {token && (
         <div className="rounded-md border border-primary/50 bg-primary/5 p-3 text-sm">
           <p className="mb-2">Copy this now; it won't be shown again.</p>
-          <div className="flex gap-2">
-            <code className="flex-1 rounded bg-muted px-2 py-1 font-mono break-all select-all">{token}</code>
-            <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(token).then(() => toast.success("Copied"))}>
-              Copy
-            </Button>
-          </div>
+          <CopyValue value={token} />
         </div>
       )}
       <Grid
@@ -382,12 +390,7 @@ function Nodes() {
           Show join command
         </Button>
         {join.data && (
-          <div className="flex gap-2">
-            <code className="flex-1 rounded bg-muted px-2 py-1 font-mono text-xs break-all select-all">{join.data.command}</code>
-            <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(join.data.command).then(() => toast.success("Copied"))}>
-              Copy
-            </Button>
-          </div>
+          <CopyValue value={join.data.command} small />
         )}
       </div>
       {nodes.data && !workers && <p className="text-sm text-muted-foreground">No workers yet; everything runs on this server.</p>}

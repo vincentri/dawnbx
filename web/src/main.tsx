@@ -5,14 +5,13 @@ import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react
 import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { setSignedOut } from "@/lib/api";
 import { Shell, signOut } from "@/pages/shell";
 import { Sandboxes } from "@/pages/sandboxes";
 import { Settings } from "@/pages/settings";
 import { TerminalPage } from "@/pages/terminal";
 
-export const queryClient = new QueryClient({
+const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: true } },
   // Every failed action shows as a toast; the id dedups repeats.
   mutationCache: new MutationCache({ onError: (e) => toast.error(e.message, { id: e.message }) }),
@@ -45,10 +44,8 @@ declare module "@tanstack/react-router" {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <RouterProvider router={router} />
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
+      <RouterProvider router={router} />
+      <Toaster position="bottom-right" />
     </QueryClientProvider>
   </StrictMode>,
 );

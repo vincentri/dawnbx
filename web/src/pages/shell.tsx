@@ -111,7 +111,7 @@ function UserMenu({ me }: { me: Principal }) {
 }
 
 // Login is shown by Shell whenever there is no session.
-export function Login() {
+function Login() {
   const qc = useQueryClient();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

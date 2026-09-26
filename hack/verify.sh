@@ -22,7 +22,7 @@ check "python image pre-pulled" 'k3s crictl images | grep python.*3.12-slim'
 # Sandbox-shaped pod: gVisor, ws/ with a project quota mounted at /workspace.
 W=$D/sb/sb-verify1/ws
 mkdir -p "$W"
-chattr +P -p 4242 "$W" && setquota -P 4242 0 51200 0 0 "$D"
+chattr +P -p 4242 "$W" && setquota -P 4242 0 51200 0 0 "$D" || { echo "FAIL project quota setup"; bad=1; }
 $K -n dawnbx-sandboxes delete pod sb-verify1 --ignore-not-found --wait >/dev/null
 $K apply -f - >/dev/null <<EOF
 apiVersion: v1

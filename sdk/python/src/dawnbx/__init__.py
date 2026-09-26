@@ -69,7 +69,7 @@ def _date(s: Optional[str]) -> Optional[datetime]:
 def _info(v: Dict[str, Any]) -> SandboxInfo:
     return SandboxInfo(
         id=v["id"], image=v["image"], status=v["status"], network=v["network"],
-        created=_date(v["created"]), expires_at=_date(v.get("expires_at")),  # type: ignore[arg-type]
+        created=_date(v["created"]), expires_at=_date(v.get("expires_at")),
         restarted_at=_date(v.get("restarted_at")), reason=v.get("reason"),
         parent=v.get("parent"), warnings=v.get("warnings"),
     )

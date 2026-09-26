@@ -9,11 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { age, api, left, must, q, type Sandbox } from "@/lib/api";
+import { age, api, left, must, q, when, type Sandbox } from "@/lib/api";
 
 const sid = (id: string) => ({ params: { path: { id } } });
 
-export function useSandboxes() {
+function useSandboxes() {
   return useQuery({
     queryKey: ["sandboxes"],
     queryFn: async () => (await must(api.GET("/v1/sandboxes"))).sandboxes,
@@ -153,11 +153,11 @@ function Detail({ s, list }: { s: Sandbox; list: Sandbox[] }) {
   const info: [string, React.ReactNode][] = [
     ["image", s.image],
     ["network", s.network],
-    ["created", new Date(s.created).toLocaleString()],
-    ["expires", s.expires_at ? `${new Date(s.expires_at).toLocaleString()} (in ${left(s.expires_at)})` : "never"],
+    ["created", when(s.created)],
+    ["expires", s.expires_at ? `${when(s.expires_at)} (in ${left(s.expires_at)})` : "never"],
     ["node", s.node],
     ["org", s.org],
-    ["restarted", s.restarted_at && new Date(s.restarted_at).toLocaleString()],
+    ["restarted", s.restarted_at && when(s.restarted_at)],
     ["parent", s.parent && <SbLink id={s.parent} />],
     ["children", kids.length > 0 && <span className="flex flex-wrap gap-2">{kids.map((k) => <SbLink key={k.id} id={k.id} />)}</span>],
   ];

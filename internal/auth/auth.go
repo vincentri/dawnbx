@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 // DefaultOrg owns everything made before orgs existed.
@@ -190,10 +191,10 @@ func (d *DB) forget(h string) {
 
 // ponytail: orgs can't be renamed or deleted; add it when a tenant leaves.
 func (d *DB) CreateOrg(id, name string) error {
-	if d.OrgExists(id) {
+	_, err := d.db.Exec(`INSERT INTO orgs (id, name, created) VALUES ($1, $2, $3)`, id, name, d.Now().Unix())
+	if isDuplicate(err) {
 		return ErrExists
 	}
-	_, err := d.db.Exec(`INSERT INTO orgs (id, name, created) VALUES ($1, $2, $3)`, id, name, d.Now().Unix())
 	return err
 }
 
@@ -381,7 +382,11 @@ func (d *DB) EnsureAdmin(username, password string) error {
 		return err
 	} else {
 		var applied string
-		d.db.QueryRow(`SELECT v FROM settings WHERE k = 'admin_env'`).Scan(&applied)
+		switch err := d.db.QueryRow(`SELECT v FROM settings WHERE k = 'admin_env'`).Scan(&applied); {
+		case err == nil, errors.Is(err, sql.ErrNoRows): // no env hash yet: fall through and set it
+		default:
+			return err
+		}
 		if applied != "" && bcrypt.CompareHashAndPassword([]byte(applied), []byte(username+"\n"+password)) == nil {
 			return nil
 		}
@@ -410,12 +415,19 @@ type User struct {
 
 var ErrExists = errors.New("already exists")
 
-func (d *DB) CreateUser(org, username, password, role string) (*User, error) {
-	var n int
-	d.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = $1`, username).Scan(&n)
-	if n > 0 {
-		return nil, ErrExists
+// isDuplicate maps a driver's unique-constraint violation to ErrExists. The
+// COUNT pre-checks it replaces raced between two API nodes; the constraint is
+// the only authority.
+func isDuplicate(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		return se.Code() == 1555 || se.Code() == 2067 // SQLITE_CONSTRAINT_PRIMARYKEY, SQLITE_CONSTRAINT_UNIQUE
 	}
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && pe.Code == "23505" // unique_violation
+}
+
+func (d *DB) CreateUser(org, username, password, role string) (*User, error) {
 	ph, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
@@ -423,6 +435,9 @@ func (d *DB) CreateUser(org, username, password, role string) (*User, error) {
 	u := &User{ID: randID(12), Org: org, Username: username, Role: role, Created: d.Now().UTC().Truncate(time.Second)}
 	_, err = d.db.Exec(`INSERT INTO users (id, org_id, username, password_hash, role, created) VALUES ($1, $2, $3, $4, $5, $6)`,
 		u.ID, org, username, string(ph), role, u.Created.Unix())
+	if isDuplicate(err) {
+		return nil, ErrExists
+	}
 	if err != nil {
 		return nil, err
 	}
