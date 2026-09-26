@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
@@ -145,7 +146,16 @@ func TestAddNodeRunsTheJoinsCommand(t *testing.T) {
 	if _, err := a.AddNode(testContext(t), h, provider.NodeSpec{InstanceType: "t4g.medium", DiskGiB: 30}, provider.Bootstrap{}); err != nil {
 		t.Fatal(err)
 	}
-	script := form(t, e.f.bodyOf("RunInstances")).Get("UserData")
+	// What goes on the wire is base64, because RunInstances requires it and
+	// refuses plain text with "Invalid BASE64 encoding of user data". The test
+	// asserts the encoding and then decodes, so a change to either half shows
+	// up as itself rather than as a confusing miss inside a base64 blob.
+	encoded := form(t, e.f.bodyOf("RunInstances")).Get("UserData")
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("user data is not base64, which RunInstances requires: %q", encoded)
+	}
+	script := string(raw)
 	if !strings.Contains(script, "--join") || !strings.Contains(script, "K10abc::server:token") {
 		t.Errorf("the worker's user data does not run the join command: %q", script)
 	}

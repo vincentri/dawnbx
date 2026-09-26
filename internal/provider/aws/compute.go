@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -79,7 +80,11 @@ func (c *clients) runInstance(ctx context.Context, h handle, spec provider.NodeS
 		}}
 	}
 	if userData != "" {
-		in.UserData = aws.String(userData)
+		// RunInstances takes user data base64-encoded; the SDK does not do it
+		// for you, and the API answers "Invalid BASE64 encoding of user data".
+		// CloudFormation encodes its own, which is why the host's user-data in
+		// the template is plain text and this is not.
+		in.UserData = aws.String(base64.StdEncoding.EncodeToString([]byte(userData)))
 	}
 	out, err := c.ec2.RunInstances(ctx, in)
 	if err != nil {

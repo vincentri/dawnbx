@@ -153,6 +153,12 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
+        # A worker is launched from this template rather than from the Server
+        # resource, and RunInstances takes no ImageId of its own, so the AMI has
+        # to live here. Without it every worker add failed with "The request
+        # must contain the parameter ImageId" - the host was unaffected, which
+        # is why only a real cluster found it.
+        ImageId: !Ref ImageId
         # IMDSv2 only, hop limit 1: pods can't reach instance metadata. The
         # instance profile is the bootstrap reader, nothing wider: its policy
         # reads one SecureString and no other parameter.
