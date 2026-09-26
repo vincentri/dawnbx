@@ -140,6 +140,6 @@ reviewer's, and MUST be stated in the review rather than assumed.
 
 **Review expectations.** A reviewer who cannot verify a principle from the diff
 and the gate output MUST say so instead of approving. Complexity that violates
-Simplicity MUST be justified in writing at the time it is introduced.
+Principle V MUST be justified in writing at the time it is introduced.
 
 **Version**: 1.0.0 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26
