@@ -29,7 +29,9 @@ RUNTIME_FILES = {"api-keys.json", "install.json"}
 EXTS = (".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".go", ".py", ".sh", ".md",
         ".mdx", ".yaml", ".yml", ".json", ".css", ".html", ".toml")
 
-RULE_FILES = ["AGENTS.md", "CLAUDE.md", ".cursorrules"]
+# Rules files anywhere in the tree, not just the root: nested ones get the same
+# gate, so adding web/AGENTS.md later does not quietly weaken the check.
+RULE_NAMES = {"AGENTS.md", "CLAUDE.md", ".cursorrules"}
 
 CODE = re.compile(r"`([^`\n]+)`")
 FENCE = re.compile(r"```.*?```", re.S)
@@ -58,7 +60,9 @@ def main():
         by_name.setdefault(Path(p).name, p)
 
     problems = []
-    for rel in RULE_FILES:
+    # Every tracked rules file, nested ones included, so a future web/AGENTS.md
+    # is covered the moment it is committed rather than silently not.
+    for rel in [p for p in tracked if Path(p).name in RULE_NAMES]:
         path = root / rel
         if not path.is_file():
             continue
