@@ -2,6 +2,8 @@
 
 Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `internal/`), React dashboard embedded in the server binary (`web/` → `internal/api/ui`), Python and TypeScript SDKs (`sdk/`), static docs site (`docs/`), single-box installer (`install.sh`, `deploy/aws/`, `hack/`).
 
+This file is the only agent rules file. Do not add a per-folder `AGENTS.md` until a section runs 15+ lines and is irrelevant to most tasks, or this file passes ~150 lines. A nested file is additive — never a copy of this one — and the more specific file wins where they conflict.
+
 ## 1. All development runs in a git worktree
 
 Never edit, build, test, or commit in the primary checkout, and never on `main`. One worktree per task.
