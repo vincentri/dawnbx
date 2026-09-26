@@ -185,7 +185,9 @@ func TestAJoinedWorkerReachesReadyByAddress(t *testing.T) {
 // green tick for a machine the cluster cannot see is the claim this whole fix
 // exists to stop making.
 func TestAWorkerTheClusterDoesNotKnowStaysUnproven(t *testing.T) {
-	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}, nodeID: "i-other", nodeAddr: "10.0.0.9"})
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"},
+		// The provider still has the machine; the cluster just does not name it.
+		nodeAddrs: map[string]string{"i-0ad9fe756c55722b1": "10.5.5.5"}})
 	cp.provisioningCluster(t, "n1")
 	cp.readyCluster(t, "n1")
 	cp.liveCluster(t, "n1", cluster.RemoteNode{Name: "ip-172-31-22-242", Addr: "172.31.22.242", Ready: true})
@@ -534,4 +536,66 @@ func (c *controlPlane) auditedInto(t *testing.T, action string) bool {
 		}
 	}
 	return false
+}
+
+// TestAWorkerWhoseInstanceIsGoneIsForgotten: a cluster whose worker has been
+// terminated can be deleted.
+//
+// Delete refuses while any worker is attached, on the right grounds - pulling
+// the control-plane node out from under a joined worker strands it. But the
+// refusal was counting rows, and a row for a machine that no longer exists is
+// not a worker. On a real account this deadlocked: the host was gone, so the
+// cluster could not be asked, and the row said a worker was still attached, so
+// the teardown that would have finished it was the thing being refused.
+func TestAWorkerWhoseInstanceIsGoneIsForgotten(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	// The provider knows about no instance at all, which is what EC2 says once
+	// a terminated instance ages out.
+	cp.liveCluster(t, "n1")
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-terminated",
+		InstanceType: "t4g.medium", Status: "provisioning"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Listing is enough: the refresh is what forgets it, and nothing else runs.
+	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "i-terminated") {
+		t.Errorf("a worker with no instance is still listed: %s", w.Body)
+	}
+	stored, err := cp.reg.Nodes("n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 0 {
+		t.Errorf("the record survived a refresh that found no instance: %+v", stored)
+	}
+}
+
+// TestAWorkerIsNotForgottenWhenTheLookupFails: forgetting is the dangerous
+// direction. A provider that cannot answer says nothing about which machines
+// are real, so every row has to survive that.
+func TestAWorkerIsNotForgottenWhenTheLookupFails(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.provisioningCluster(t, "n1")
+	cp.readyCluster(t, "n1")
+	cp.liveCluster(t, "n1")
+	if err := cp.reg.PutNode(cluster.Node{Cluster: "n1", ID: "i-unknown",
+		InstanceType: "t4g.medium", Status: "provisioning"}); err != nil {
+		t.Fatal(err)
+	}
+	// The provider answers with nothing, as a provider that lost track does.
+	cp.prov.nodeAddrsErr = errors.New("cloud credentials expired")
+
+	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "i-unknown") {
+		t.Errorf("a worker was forgotten because the provider could not answer: %s", w.Body)
+	}
 }
