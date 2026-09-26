@@ -425,18 +425,18 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 - [X] T092 Read `Provisioner.StaleAfter`, which is declared and defaulted but read nowhere, and
       mark a cluster whose phase has not advanced as needing attention; or delete the field and
       the sentence that promises it (edge case, "exceeds its expected duration") (missing).
-- [ ] T093 Revoke the superseded API key on the cluster during rotation, or amend the spec edge
+- [X] T093 Revoke the superseded API key on the cluster during rotation, or amend the spec edge
       case to say the old key is left in place and say so in the dashboard. Rotation currently
       mints a new key under the same name and revokes nothing, and `Remote` has no revoke method
       although the cluster exposes `DELETE /v1/keys/{key}` (edge case, FR-006) (partial).
-- [ ] T094 Expose `Capabilities.Delivery` on a response and render it on the cluster status page,
+- [X] T094 Expose `Capabilities.Delivery` on a response and render it on the cluster status page,
       or delete the field and the claim that the dashboard reports the mechanism. It is
       write-only today (research D10) (partial).
-- [ ] T095 Record the `add_node`, `remove_node`, `delete` and `rotate` operation kinds the data
+- [X] T095 Record the `add_node`, `remove_node`, `delete` and `rotate` operation kinds the data
       model defines, and expose the history it says the "what happened" view reads; or drop `kind`
       and the unused `Registry.Ops` reader. Only `create` is ever written and nothing reads the
       history in production (data-model.md, FR-008) (partial).
-- [ ] T096 Reject `0.0.0.0/0` as an SSH CIDR in `awsprov.New` and tighten the template's
+- [X] T096 Reject `0.0.0.0/0` as an SSH CIDR in `awsprov.New` and tighten the template's
       `SshCidr` pattern. The adapter's own documentation says that value would make the rescue
       path a permanent one, and only non-emptiness is checked (Operational Constraints, host
       exposure) (missing).
