@@ -26,10 +26,15 @@ const rootDevice = "/dev/sda1"
 // group and returns its instance id.
 //
 // The launch template is reused rather than re-specified, because it carries the
-// two settings that are not about capacity: IMDSv2 with a hop limit of 1, so a
-// pod on the worker cannot read instance metadata, and the instance profile that
-// lets it read its own bootstrap parameter. A worker built from anything else
+// setting that is not about capacity: IMDSv2 with a hop limit of 1, so a pod on
+// the worker cannot read instance metadata. A worker built from anything else
 // would be a weaker host than the one the operator priced.
+//
+// It does not carry the instance profile. That is set on the instance, not the
+// template, and runInstance passes none, so a worker cannot read the bootstrap
+// SecureString — it joins with the command its own user-data was given. The
+// narrower posture is the one worth having, but it belongs in the comment rather
+// than being implied by a template it is not in.
 //
 // Instance type and root size are passed alongside the template. EC2 lets a
 // launch override those two; image, user data and IAM may only come from the

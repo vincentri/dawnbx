@@ -177,8 +177,14 @@ Errors are JSON: `{"code", "message", "hint"}`.
 | `GET /v1/nodes/join` | admin: the command that adds a worker (audited) |
 | `DELETE /v1/nodes/{name}` | admin: remove a worker; `409` while it holds sandboxes |
 | `GET /v1/control-plane`, `GET /v1/providers` | control plane: which mode this is, and which providers it can use |
-| `POST /v1/clusters` | admin: start provisioning, given a `quote_id` from the estimate |
-| `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's key and password, no SSH needed |
+| `GET /v1/providers/{p}/regions`, `/instance-types?region=` | what a provider offers here, and at what price |
+| `POST /v1/providers/{p}/estimate` | price a configuration; creates nothing, and its `quote_id` is what the create demands |
+| `GET` / `POST /v1/clusters` | admin: list, and start provisioning given a `quote_id` from the estimate |
+| `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it; `409` while workers are attached |
+| `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's key and password, no SSH needed; `409` until it is ready |
+| `POST /v1/clusters/{name}/rotate` | admin, audited: mint a new pair and retire the old key |
+| `GET` / `POST /v1/clusters/{name}/nodes` | admin: list workers, add one |
+| `DELETE /v1/clusters/{name}/nodes/{node}` | admin: remove a worker; `409` while it holds sandboxes |
 
 `docs/content/docs/guide/api.mdx` is the long form; this table is a copy of it
 and nothing keeps the two equal, so change both.

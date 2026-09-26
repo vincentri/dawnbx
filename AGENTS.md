@@ -14,9 +14,18 @@ SDK, orchestration model and secret store live in its adapter and nowhere else, 
 `internal/cluster` must not import an adapter. In the contract, a provider is a
 path *value* (`/v1/providers/{provider}/…`), never a path family of its own, and no
 response body may carry a stack name, security group, launch template or secret
-parameter. Two tests enforce this: `internal/provider`'s import-purity test and the
-orchestration tests' use of a fake provider. Adding a second provider means a new
-adapter, not a migration.
+parameter. Adding a second provider means a new adapter, not a migration.
+
+A worker is the one exception, and it is deliberate: its id is whatever the
+adapter returned, returned to the operator because `DELETE
+/v1/clusters/{name}/nodes/{node}` needs a nameable id. It is a handle, never
+parsed — the contract says so in the same words.
+
+What enforces this: `internal/provider`'s import-purity test reads that package's
+own non-test files and fails on an AWS import or an adapter import. It covers
+`internal/provider` only, and claiming otherwise is the mistake this paragraph
+exists to prevent. `internal/cluster` is kept clean by the orchestration tests
+running against a fake provider, which proves testability, not the import rule.
 
 ## 1. All development runs in a git worktree
 

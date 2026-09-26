@@ -451,13 +451,13 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
       currently depends on it. The spec called this flow out of scope and no FR asked for it, so
       leaving it undocumented makes a later contract review treat it as intended surface (spec
       Assumptions) (unrequested).
-- [ ] T100 Document `409 quote_stale` and `400 provider_unavailable` on `POST /v1/clusters` in
+- [X] T100 Document `409 quote_stale` and `400 provider_unavailable` on `POST /v1/clusters` in
       `internal/api/openapi.yaml`, which is the only cluster operation whose description omits its
       non-2xx outcomes (contract) (partial).
-- [ ] T101 Add the nine missing cluster routes to the `README.md` table, or state that the cluster
+- [X] T101 Add the nine missing cluster routes to the `README.md` table, or state that the cluster
       section is a deliberate subset. The file calls itself a copy of the docs with nothing keeping
       the two equal, and the copy has drifted (contract) (partial).
-- [ ] T102 Correct `docs/content/docs/guide/api.mdx` to say a dashboard session, with admin
+- [X] T102 Correct `docs/content/docs/guide/api.mdx` to say a dashboard session, with admin
       required for everything except the capability probe and the provider list; or add
       `adminOnly` to those two handlers. Both routes call `signedIn` only (contract, docs vs
       code) (contradicts).
@@ -467,29 +467,29 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
 - [X] T103 Add `phase`, `detail`, `url` and `tls_pin` to the `Cluster` `required` list: the struct
       always marshals them, and leaving them optional forces guards in the dashboard for fields
       that are always present (contract) (partial).
-- [ ] T104 Narrow the `ClusterNode.status` enum to the states the API can return, or earn the
+- [X] T104 Narrow the `ClusterNode.status` enum to the states the API can return, or earn the
       other three. The dashboard polls on `removing`, which is never written (contract) (partial).
-- [ ] T105 Drop `enum: [aws]` from the `provider` path parameter, which makes the contract's own
+- [X] T105 Drop `enum: [aws]` from the `provider` path parameter, which makes the contract's own
       documented `400 provider_unavailable` unreachable from a generated client and forces a cast in
       the dashboard (contract) (contradicts).
-- [ ] T106 Either add the `internal/cluster` import scan that `AGENTS.md:17` claims exists, or
+- [X] T106 Either add the `internal/cluster` import scan that `AGENTS.md:17` claims exists, or
       correct that sentence: only `TestPackageImportsNoAdapter` reads imports today, and it covers
       `internal/provider` alone (Constitution, provider neutrality) (contradicts).
-- [ ] T107 Qualify `AGENTS.md:12`'s blanket "never a provider's resource names": a worker is
+- [X] T107 Qualify `AGENTS.md:12`'s blanket "never a provider's resource names": a worker is
       identified by the value the adapter returned, which is rendered in the dashboard. Use the
       wording `contracts/cluster-routes.md` already uses (Constitution, provider neutrality)
       (contradicts).
-- [ ] T108 Document `DAWNBX_BOOTSTRAP_PARAMETER` in `install.sh --help`, or drop the env default so
+- [X] T108 Document `DAWNBX_BOOTSTRAP_PARAMETER` in `install.sh --help`, or drop the env default so
       `--bootstrap-parameter` is the only gate. Research D2 says the flag alone gates the path
       (research D2) (contradicts).
-- [ ] T109 Fix the comment at `internal/provider/aws/compute.go:30-33`: a worker inherits the
+- [X] T109 Fix the comment at `internal/provider/aws/compute.go:30-33`: a worker inherits the
       launch template's IMDS settings, not an instance profile, because the profile is set on the
       instance rather than the template (contradicts).
-- [ ] T110 Take the lowest matching on-demand price rather than the first, or amend research D9 to
+- [X] T110 Take the lowest matching on-demand price rather than the first, or amend research D9 to
       say "the first matching term" (research D9) (partial).
 - [X] T111 Resolve the dead code Principle V forbids: `provider.Registry`, `Provider.StatusNode`,
       `nodeFailed` and `nodeRemoving` have no production caller (Constitution V) (unrequested).
-- [ ] T112 Move worker add/remove orchestration out of the HTTP layer into `internal/cluster`, or
+- [X] T112 Move worker add/remove orchestration out of the HTTP layer into `internal/cluster`, or
       amend `plan.md`'s Project Structure, which lists a `nodes.go` that does not exist and
       contradicts its own rationale for where orchestration lives (plan, structure) (partial).
 - [X] T113 Make the route-tree guard test compare components as well as paths, or say in its
@@ -512,11 +512,12 @@ it. Appended here so they are fixed in the same pass rather than carried into an
       then returns `c`, the record read before the failure — so a caller that renders the returned
       value shows `provisioning` for a cluster that is already failed with a reason attached. Re-read
       after `fail`, and cover it with a test (defect).
-- [ ] T116 Review the SDK's exported surface, which a subagent widened on its own.
-      `sdk/typescript/src/index.ts:73` is `export class Client`; it was package-private when this
-      work started and was made public only so a test could reach it. That is a published-module
-      change made to serve a test. Either keep it and treat it as intended surface with a test, or
-      revert it and inject a seam the test can use instead (defect, unrequested API change).
+- [X] T116 Keep the SDK's `Client` exported, and say why. The finding was wrong: this is not an
+      unrequested public change made to serve a test, it is a broken API this feature introduced.
+      The cluster helpers `listClusters`, `getCluster` and `listClusterNodes` are exported and
+      take a `Client`, and there is no factory that hands one out — so with `Client` package-private
+      they were uncallable from outside the package. The export is now documented with that reason
+      at its definition, and `Sandbox` stays the way to *use* a cluster (defect, real).
 - [ ] T117 Enforce the per-sandbox disk cap, or state honestly that it is not enforced.
       `hack/verify.sh`'s `quota: 80MB write into 50MB cap fails` fails, and the cause is larger
       than the check: `store.Meta.ProjectID` is declared (`internal/store/store.go:60`) and read

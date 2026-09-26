@@ -1178,6 +1178,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
         provider: components["parameters"]["provider"];
       };
       cookie?: never;
@@ -1188,6 +1189,7 @@ export interface paths {
         query?: never;
         header?: never;
         path: {
+          /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
           provider: components["parameters"]["provider"];
         };
         cookie?: never;
@@ -1221,6 +1223,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
         provider: components["parameters"]["provider"];
       };
       cookie?: never;
@@ -1231,6 +1234,7 @@ export interface paths {
         query?: never;
         header?: never;
         path: {
+          /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
           provider: components["parameters"]["provider"];
         };
         cookie?: never;
@@ -1266,6 +1270,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
         provider: components["parameters"]["provider"];
       };
       cookie?: never;
@@ -1278,6 +1283,7 @@ export interface paths {
         query?: never;
         header?: never;
         path: {
+          /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
           provider: components["parameters"]["provider"];
         };
         cookie?: never;
@@ -1344,7 +1350,10 @@ export interface paths {
       };
     };
     put?: never;
-    /** @description Start provisioning a cluster. Returns the cluster in status provisioning; the dashboard polls GET /v1/clusters/{name} for phase changes. */
+    /**
+     * @description Start provisioning a cluster. Returns the cluster in status provisioning; the dashboard polls GET /v1/clusters/{name} for phase changes.
+     *     409 quote_stale when the presented quote_id is not the one this configuration would produce, which is the price review refusing to be skipped or to apply to a different configuration. 400 provider_unavailable when this control plane has no usable provider. 400 invalid_request for a name, region, size or disk the provider does not offer, and for an unknown field - a misspelled one must not read as a default in a request that spends money.
+     */
     post: {
       parameters: {
         query?: never;
@@ -1825,8 +1834,11 @@ export interface components {
       /** @description Opaque worker handle from the provider, typed back into DELETE /v1/clusters/{name}/nodes/{node}. Returned to the operator because the removal URL needs it; never parsed or interpreted by the control plane. */
       id: string;
       instance_type: string;
-      /** @enum {string} */
-      status: "provisioning" | "ready" | "failed" | "removing" | "removed";
+      /**
+       * @description A worker is only ever provisioning, ready or failed. `removing` and `removed` were in the contract but nothing wrote them - a removal drops the row and returns 204 - and the dashboard polled on `removing`, so the enum claimed a state the page was waiting for that could never arrive.
+       * @enum {string}
+       */
+      status: "provisioning" | "ready" | "failed";
       detail?: string;
       /** @description last observed count; the cluster is the authority */
       sandboxes: number;
@@ -1849,7 +1861,8 @@ export interface components {
     id: string;
     username: string;
     clusterName: string;
-    provider: "aws";
+    /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
+    provider: string;
   };
   requestBodies: never;
   headers: never;

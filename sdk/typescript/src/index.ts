@@ -70,6 +70,15 @@ export class DawnbxError extends Error {
  * caller can actually pass: they take a `Client`, so keeping this private would
  * make them uncallable from outside the module.
  */
+/**
+ * A handle on one dawnbx server: its URL and the key it authenticates with.
+ *
+ * Exported because the cluster-management helpers below take one, and a public
+ * function whose parameter type is not exported is an API nobody outside this
+ * package can call. Sandbox remains the way to *use* a cluster; a Client is how
+ * you address a server, which for cluster management is a control plane rather
+ * than a cluster.
+ */
 export class Client {
   readonly url: string
   private readonly key: string

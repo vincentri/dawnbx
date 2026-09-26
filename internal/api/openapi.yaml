@@ -438,6 +438,14 @@ paths:
       description: >
         Start provisioning a cluster. Returns the cluster in status provisioning;
         the dashboard polls GET /v1/clusters/{name} for phase changes.
+
+        409 quote_stale when the presented quote_id is not the one this
+        configuration would produce, which is the price review refusing to be
+        skipped or to apply to a different configuration. 400
+        provider_unavailable when this control plane has no usable provider.
+        400 invalid_request for a name, region, size or disk the provider does
+        not offer, and for an unknown field - a misspelled one must not read as
+        a default in a request that spends money.
       requestBody:
         content:
           application/json:
@@ -574,7 +582,16 @@ components:
     id: { name: id, in: path, required: true, schema: { type: string } }
     username: { name: username, in: path, required: true, schema: { type: string } }
     clusterName: { name: name, in: path, required: true, schema: { type: string } }
-    provider: { name: provider, in: path, required: true, schema: { type: string, enum: [aws] } }
+    provider:
+      name: provider
+      in: path
+      required: true
+      description: >
+        A provider this build can provision with. Not an enum: the contract's own
+        rule is that an unavailable one answers 400 provider_unavailable rather
+        than an empty result, and a type that rejected the value would make that
+        400 unreachable from a generated client.
+      schema: { type: string }
   responses:
     Error:
       description: error
@@ -783,7 +800,15 @@ components:
             operator because the removal URL needs it; never parsed
             or interpreted by the control plane.
         instance_type: { type: string }
-        status: { type: string, enum: [provisioning, ready, failed, removing, removed] }
+        status:
+          type: string
+          enum: [provisioning, ready, failed]
+          description: >
+            A worker is only ever provisioning, ready or failed. `removing` and
+            `removed` were in the contract but nothing wrote them - a removal
+            drops the row and returns 204 - and the dashboard polled on
+            `removing`, so the enum claimed a state the page was waiting for
+            that could never arrive.
         detail: { type: string }
         sandboxes: { type: integer, description: last observed count; the cluster is the authority }
         created: { type: string, format: date-time }

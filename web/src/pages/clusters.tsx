@@ -73,7 +73,11 @@ const clusterPath = (id: string) => ({ params: { path: { name: id } } });
 
 // openapi.yaml pins {provider} to the one phase-one provider, so this is
 // where a second cloud lands: a new value here, never a new path family.
-const providerPath = (id: string) => ({ params: { path: { provider: id as "aws" } } });
+// The provider is a plain string in the generated types, because the contract
+// deliberately does not pin it to one cloud: an unavailable provider answers 400
+// provider_unavailable, and a type that rejected the value would make that
+// unreachable from this client.
+const providerPath = (id: string) => ({ params: { path: { provider: id } } });
 
 // must() keeps the envelope's code on the thrown error; the codes below are
 // the ones that change what the operator can do next.
@@ -675,9 +679,7 @@ function Nodes({ name: id, go }: { name: string; go: Go }) {
     queryFn: async () => (await must(api.GET("/v1/clusters/{name}/nodes", clusterPath(id)))).nodes,
     // Poll only while something is moving; a settled worker list is static.
     refetchInterval: (q) =>
-      (q.state.data ?? []).some((n) => n.status === "provisioning" || n.status === "removing")
-        ? 5000
-        : false,
+      (q.state.data ?? []).some((n) => n.status === "provisioning") ? 5000 : false,
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ["cluster-nodes", id] });
   const add = useMutation({

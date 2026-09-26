@@ -23,7 +23,9 @@
 #                        read the admin password from SSM SecureString NAME; server only,
 #                        and the password never reaches a log or a command line
 # Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default latest),
-#      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
+#      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset),
+#      DAWNBX_BOOTSTRAP_PARAMETER (same as --bootstrap-parameter, for image
+#      builders that cannot pass a flag; the flag wins when both are set)
 set -euo pipefail
 
 DAWNBX_VERSION=${DAWNBX_VERSION:-dev}

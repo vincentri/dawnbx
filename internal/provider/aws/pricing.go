@@ -101,11 +101,11 @@ func filters(region string, kv ...string) []pricetypes.Filter {
 	return out
 }
 
-// firstRate is the whole price lookup: ask for products matching the filters,
-// parse the first one that quotes the unit asked for, and fail loudly if none
-// does. A silently missing price is worse than an error here, because an
-// estimate with a zero line reads as free and an operator approves it.
-func (c *clients) firstRate(ctx context.Context, service, region, unit string, f []pricetypes.Filter) (float64, error) {
+// lowestRate is the whole price lookup: ask for products matching the filters,
+// take the lowest that quotes the unit asked for, and fail loudly if none does.
+// A silently missing price is worse than an error here, because an estimate
+// with a zero line reads as free and an operator approves it.
+func (c *clients) lowestRate(ctx context.Context, service, region, unit string, f []pricetypes.Filter) (float64, error) {
 	out, err := c.pricing.GetProducts(ctx, &pricing.GetProductsInput{
 		ServiceCode:   aws.String(service),
 		Filters:       f,
@@ -115,14 +115,23 @@ func (c *clients) firstRate(ctx context.Context, service, region, unit string, f
 	if err != nil {
 		return 0, fmt.Errorf("price %s in %s: %w", service, region, err)
 	}
+	// The lowest matching rate, not the first. A price list carries 1-year and
+	// 3-year terms, savings plans and capacity reservations side by side, so
+	// first-match is whichever one the API happened to order first — and
+	// research D9 promised the lowest. The filters above already pin region,
+	// tenancy, OS and capacity status, so this only chooses between terms.
+	lowest := -1.0
 	for _, raw := range out.PriceList {
 		var p priceList
 		if err := json.Unmarshal([]byte(raw), &p); err != nil {
 			return 0, fmt.Errorf("price %s in %s: unreadable price list entry: %w", service, region, err)
 		}
-		if v, ok := p.rate(unit); ok {
-			return v, nil
+		if v, ok := p.rate(unit); ok && (lowest < 0 || v < lowest) {
+			lowest = v
 		}
+	}
+	if lowest >= 0 {
+		return lowest, nil
 	}
 	return 0, fmt.Errorf("%w: no %s price for %s (%s)", provider.ErrNotFound, unit, region, service)
 }
@@ -133,7 +142,7 @@ func (c *clients) firstRate(ctx context.Context, service, region, unit string, f
 // software-licensed variants of the same instance type at very different
 // prices, and quoting one of those would be quoting a different machine.
 func (c *clients) instanceRate(ctx context.Context, region, instanceType string) (float64, error) {
-	return c.firstRate(ctx, svcEC2, region, unitHours, filters(region,
+	return c.lowestRate(ctx, svcEC2, region, unitHours, filters(region,
 		"instanceType", instanceType,
 		"operatingSystem", "Linux",
 		"tenancy", "Shared",
@@ -146,7 +155,7 @@ func (c *clients) instanceRate(ctx context.Context, region, instanceType string)
 // nothing else; the instance's own IOPS and throughput are included at the size
 // the instance type brings.
 func (c *clients) storageRate(ctx context.Context, region string) (float64, error) {
-	return c.firstRate(ctx, svcEC2, region, unitGBMon, filters(region,
+	return c.lowestRate(ctx, svcEC2, region, unitGBMon, filters(region,
 		"volumeApiName", "gp3",
 		"productFamily", "Storage",
 	))
@@ -157,7 +166,7 @@ func (c *clients) storageRate(ctx context.Context, region string) (float64, erro
 // charged twice for the same thing and only one of them is a line item an
 // operator can predict.
 func (c *clients) publicIPv4Rate(ctx context.Context, region string) (float64, error) {
-	return c.firstRate(ctx, svcVPC, region, unitHours, filters(region,
+	return c.lowestRate(ctx, svcVPC, region, unitHours, filters(region,
 		"productFamily", "Public IPv4 Address",
 	))
 }

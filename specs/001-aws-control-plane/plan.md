@@ -125,7 +125,6 @@ internal/
 ├── cluster/
 │   ├── cluster.go                # registry: Create/Get/List/SetStatus over the auth DB
 │   ├── provision.go              # state machine, single-flight per cluster
-│   ├── nodes.go                  # add/remove worker
 │   ├── client.go                 # client for a provisioned cluster's own API (pinned TLS)
 │   ├── secret.go                 # AES-256-GCM at-rest encryption of cluster credentials
 │   └── *_test.go
@@ -158,10 +157,20 @@ install.sh                        # + --bootstrap-parameter; awscli only when it
 `internal/`, so this feature follows the existing shape rather than introducing a new layout. The
 provider seam is its own package because FR-013 requires the interface to exist *before*
 provider-specific code, and `internal/api` must not learn anything about AWS. `internal/cluster`
-owns orchestration and the DB records; it depends on `internal/provider` but never on
-`internal/provider/aws` (the adapter is injected at startup). The cluster list, node list and
-operation history live in the existing auth database so one `--database-url` story, one auth gate
-and one migration mechanism are reused instead of a second store.
+owns the records, the state machine and the client for a provisioned cluster; it depends on
+`internal/provider` but never on `internal/provider/aws` (the adapter is injected at startup). The
+cluster list, node list and operation history live in the existing auth database so one
+`--database-url` story, one auth gate and one migration mechanism are reused instead of a second
+store.
+
+**Where node orchestration lives, and why.** The plan originally named an
+`internal/cluster/nodes.go`; the build put add/remove in `internal/api/clusters.go` instead. That is
+deliberate and this is the record of it. Adding or removing a worker is three steps — ask the cluster
+for its join command or for the sandbox counts, call the provider, record the row — and the first
+of those is an HTTP conversation with the cluster, which is what the route already owns. A separate
+file would have been a second seam for the same three calls with no rule of its own. What
+`internal/cluster` keeps is what other callers also need: `Registry.PutNode`, `SetNodeStatus` and
+`DropNode`, so the records can be read and written without going through HTTP.
 
 ## Cross-Cutting Notes for Implementers
 
