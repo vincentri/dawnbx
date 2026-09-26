@@ -1,8 +1,9 @@
 # Cluster Management Routes
 
 Human-readable route table for the new provider-neutral cluster surface. The **authoritative**
-contract is `internal/api/openapi.yaml`; `openapi-delta.yaml` in this directory is the verbatim
-fragment to merge into it. This file is the source for the `## Clusters` table in
+contract is `internal/api/openapi.yaml` — one document, edited in place. There is deliberately
+no delta to merge: one drifted three times, and re-merging it would have undone three fixes.
+This file is the human-readable companion to the `## Clusters` table in
 `docs/content/docs/guide/api.mdx` and the route list in `README.md` — both of which are hand-kept
 copies today, with nothing keeping them equal (`AGENTS.md`, contract section).
 
@@ -36,7 +37,7 @@ copies today, with nothing keeping them equal (`AGENTS.md`, contract section).
 | Method | Path | Gate | Purpose |
 |---|---|---|---|
 | `GET` | `/v1/control-plane` | session | Capability probe: `{"control_plane":true,"providers":["aws"],"version":"v1"}`. The dashboard uses it to decide which nav links to render. Always `control_plane:false` on a cluster. |
-| `GET` | `/v1/providers` | session | `{"providers":[{"id":"aws","available":true},{"id":"gcp","available":false},{"id":"azure","available":false}]}` — FR-002. |
+| `GET` | `/v1/providers` | session | `{"providers":[{"id":"aws","delivery":"<the adapter's own word for it>","available":true},{"id":"gcp","delivery":"","available":false},{"id":"azure","delivery":"","available":false}]}` — FR-002. |
 | `GET` | `/v1/providers/{provider}/regions` | session, admin | Regions that provider can provision in with the configured credential source. A provider not available in phase one is `400 provider_unavailable`, never an empty list. |
 | `GET` | `/v1/providers/{provider}/instance-types` | session, admin | `{"instance_types":[{"id":"t4g.medium","hourly_usd":0.0168,"monthly_usd":12.26},…]}` for the caller's region, from the adapter's own catalogue. |
 | `POST` | `/v1/providers/{provider}/estimate` | session, admin | Body `{region, instance_type, disk_gib, domain}` → `{"quote_id":"…","hourly_usd":…,"monthly_usd":…,"lines":[{"label":"compute","hourly_usd":…,"monthly_usd":…},{"label":"storage",…},{"label":"public_ipv4",…}],"excluded":["data_transfer","taxes","provider_discounts"]}`. No side effects. FR-005, SC-009. |
@@ -44,7 +45,7 @@ copies today, with nothing keeping them equal (`AGENTS.md`, contract section).
 | `POST` | `/v1/clusters` | session, admin | Body `{name, region, instance_type, disk_gib, domain, quote_id}` → the cluster in `provisioning`. `quote_id` must match the configuration and be unexpired; a mismatch is `409 quote_stale` and the operator must re-review the price. Rejects unknown keys, so GCP/Azure cannot be created through this route (FR-002, SC-006). |
 | `GET` | `/v1/clusters/{name}` | session, admin | One cluster including `status`, `phase`, `detail`, `url`, `tls_pin`, `created`, `updated`. |
 | `GET` | `/v1/clusters/{name}/credentials` | session, admin, **audited** | `{api_key, admin_password}`, and `409 credentials_not_ready` until the cluster is `ready`. The only route that returns plaintext. Audited as `cluster.credentials.view`, matching `node.join-token.view` (`internal/api/manage.go:313`). FR-006. |
-| `POST` | `/v1/clusters/{name}/rotate` | session, admin, audited | Mints a new admin password and a new API key, re-delivers the password to the provider's secret channel, and records the rotation. The running cluster keeps both old credentials until an operator applies the new ones; `detail` says so rather than implying it took effect. FR-006. |
+| `POST` | `/v1/clusters/{name}/rotate` | session, admin, audited | Mints a new admin password and a new API key, re-delivers the password to the provider's secret channel, and revokes the cluster's previous API key in the same call. The previous password cannot be revoked the same way — the running cluster only learns a new one when an operator applies it, and that is what stops a rotation locking everyone out. `detail` says which of the two happened. FR-006. |
 | `GET` | `/v1/clusters/{name}/nodes` | session, admin | `{"nodes":[…]}` from `cluster_nodes`, refreshed from the cluster's own `GET /v1/nodes` when it is reachable. |
 | `POST` | `/v1/clusters/{name}/nodes` | session, admin | Body `{instance_type, disk_gib}` → a node in `provisioning`. 503 `cluster_unavailable` when the cluster is not `ready`. FR-010. |
 | `DELETE` | `/v1/clusters/{name}/nodes/{node}` | session, admin | 204. 409 `node_holds_sandboxes` when the cluster reports sandboxes on it, with the count. FR-011. |
@@ -94,5 +95,9 @@ that set. It belongs to the dashboard, which has a session and a person behind i
   value under `/v1/providers/{provider}/…`, so a second provider adds a value, not a path family.
   An earlier draft had `/v1/aws/regions`, `/v1/aws/instance-types` and `/v1/aws/estimate`, which
   would have made the contract grow one branch per cloud (D10).
-- No route returns a provider's resource identifiers. `provider_state` is adapter-internal and is
-  never projected, so the contract cannot grow an AWS-shaped field by accident (D10).
+- No route returns a provider's *resource* identifiers — a stack, a security group, a launch
+  template, a secret-parameter name. `provider_state` is adapter-internal and is never projected,
+  so the contract cannot grow an AWS-shaped field by accident (D10). The one identifier that does
+  cross is the worker handle, and it crosses as a handle: the route that removes a worker needs an
+  id an operator can type. The constitution grants that exception explicitly and the same exception
+  is restated in the worker-handle note above.

@@ -61,7 +61,7 @@ dashboard bundle is committed and must be rebuilt in the same commit
 |---|---|---|
 | I. The gate is the definition of done | PASS | Every task lists the gate; `hack/coverage-floor.txt` is raised, never lowered. New Go packages carry unit tests from the first task so the 90.8% floor is not traded away. |
 | II. Isolated work, explicit remote access | PASS | Work happens in `../dawnbx-aws-control-plane` on `task/aws-control-plane`; no push, no PR. |
-| III. One contract, five files | PASS | Cluster routes are added to `internal/api/openapi.yaml`, then `npm run gen --prefix web`, both SDKs, `docs/content/docs/guide/api.mdx`, and `README.md`. `contracts/openapi-delta.yaml` is a *delta to be merged*, not a second contract. |
+| III. One contract, five files | PASS | Cluster routes are added to `internal/api/openapi.yaml`, then `npm run gen --prefix web`, both SDKs, `docs/content/docs/guide/api.mdx`, and `README.md`. The contract is one document edited in place; an earlier draft also carried a merge-source delta, which drifted from the contract three times and was deleted rather than kept in sync. |
 | IV. A behaviour change ships with a test | PASS | New Go code ships with `httptest`/fake-client tests; each new page ships a co-located `*.test.tsx`; any `web/` change commits the rebuilt `internal/api/ui`. |
 | V. No speculative infrastructure | PASS with one justified entry | Only AWS exists. GCP/Azure are two rows in a provider table, not stubs. The provider interface is the seam the spec asked for, not speculation. See Complexity Tracking. |
 | Operational: cluster boundary | PASS | SDKs and the CLI keep talking to a cluster URL; the control plane never proxies sandbox traffic (FR-014). |
@@ -94,8 +94,7 @@ specs/001-aws-control-plane/
 ├── data-model.md                 # Phase 1: three tables, states, transitions
 ├── quickstart.md                 # Phase 1: end-to-end validation guide
 ├── contracts/
-│   ├── cluster-routes.md         # human-readable route table (docs + README source)
-│   └── openapi-delta.yaml        # verbatim fragment to merge into internal/api/openapi.yaml
+│   └── cluster-routes.md         # human-readable companion to the contract
 ├── checklists/
 │   └── requirements.md           # spec quality checklist
 └── tasks.md                      # Phase 2 output (/speckit.tasks)

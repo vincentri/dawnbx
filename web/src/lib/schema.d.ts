@@ -1228,10 +1228,12 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** @description Host sizes the named provider offers, with the current price for the control plane's configured region. The list comes from the provider adapter, never from a table in this contract. */
+    /** @description Host sizes the named provider offers, with the current price for a region. Omit `region` and the provider's first advertised one is used, so the answer is indicative rather than authoritative; the estimate, which is priced for the region you name, is what governs. The list comes from the provider adapter, never from a table in this contract. */
     get: {
       parameters: {
-        query?: never;
+        query?: {
+          region?: string;
+        };
         header?: never;
         path: {
           /** @description A provider this build can provision with. Not an enum: the contract's own rule is that an unavailable one answers 400 provider_unavailable rather than an empty result, and a type that rejected the value would make that 400 unreachable from a generated client. */
@@ -1509,7 +1511,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** @description Mint a new administrator password and API key and re-deliver the password to the provider's secret channel. The running cluster keeps both old credentials until an operator applies the new ones. Admin only, audited. */
+    /** @description Mint a new administrator password and API key and re-deliver the password to the provider's secret channel. The cluster's previous API key is revoked in the same call; its previous password cannot be, because the running cluster only learns a new one when an operator applies it, and that is what stops a rotation locking everyone out. Admin only, audited. */
     post: {
       parameters: {
         query?: never;
@@ -1809,7 +1811,7 @@ export interface components {
       disk_gib: number;
       domain: string;
       /** @enum {string} */
-      status: "provisioning" | "ready" | "failed" | "deleting" | "deleted";
+      status: "provisioning" | "ready" | "failed" | "deleting";
       /** @description current sub-step; empty unless provisioning */
       phase: string;
       /** @description non-secret diagnostic from the bootstrap */

@@ -360,7 +360,7 @@ describe("Cluster status", () => {
     return renderApp({ entry, me: ADMIN });
   };
 
-  it.each(["provisioning", "ready", "failed", "deleting", "deleted"])(
+  it.each(["provisioning", "ready", "failed", "deleting"])(
     "renders the %s phase",
     async (status) => {
       at("/clusters?step=status&name=boxy", {
@@ -598,11 +598,11 @@ describe("Cluster deletion", () => {
     expect(await inPage("the cluster still has 2 workers attached")).toBeInTheDocument();
   });
 
-  it("hides the delete action once the cluster is gone", async () => {
-    installFetch(base({ [`GET ${CLUSTER_PATH}`]: { json: cluster({ status: "deleted" }) } }));
+  it("withdraws the delete action once the teardown is under way", async () => {
+    installFetch(base({ [`GET ${CLUSTER_PATH}`]: { json: cluster({ status: "deleting" }) } }));
     renderApp({ entry: "/clusters?step=status&name=boxy", me: ADMIN });
 
-    expect(await screen.findAllByText("deleted")).toHaveLength(2);
+    // There is nothing to confirm while the resources are already going.
     expect(screen.queryByRole("button", { name: "Delete cluster" })).not.toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@ Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `int
 
 This file is the only agent rules file. Do not add a per-folder `AGENTS.md` until a section runs 15+ lines and is irrelevant to most tasks, or this file passes ~150 lines. A nested file is additive — never a copy of this one — and the more specific file wins where they conflict.
 
-**Governance:** `.specify/memory/constitution.md` is the constitution (v1.1.2, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
+**Governance:** `.specify/memory/constitution.md` is the constitution (v1.2.0, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
 
 **Cluster management is provider-neutral.** The control plane (`dawnbx-server
 --control-plane`) manages clusters; sandboxes still run only inside them. The

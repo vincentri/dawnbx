@@ -100,7 +100,8 @@ this phase can be tested without it.
 
 - [X] T015 `internal/api/openapi.yaml` — add `/v1/control-plane` and `/v1/providers` plus the
       `ControlPlane` and `Provider` schemas. Merge from
-      `specs/001-aws-control-plane/contracts/openapi-delta.yaml`; the delta is not a contract.
+      `internal/api/openapi.yaml`, edited in place. (Phase 8 later deleted the
+      merge-source delta entirely — see T130.)
 - [X] T016 `npm run gen --prefix web` and commit the regenerated `web/src/lib/schema.d.ts`.
 - [X] T017 [P] `sdk/python/src/dawnbx/__init__.py` — read-only `control_plane()` and
       `providers()` helpers, same error handling and retry rule as the existing client.
@@ -377,8 +378,8 @@ with credentials — enough to stop using SSH for the happy path.
 - Four traps, all cited in `plan.md`, that a task that skips its citation will walk into: the
   `{id}` path-parameter trap, the duplicated route tree, `NoEcho` not protecting `UserData`, and
   the `/v1/nodes` doc drift.
-- The `contracts/openapi-delta.yaml` file is a merge source, not a contract. It is never shipped
-  and never served.
+- `internal/api/openapi.yaml` is the contract and is edited in place. A merge-source delta used to
+  sit beside it, drifted from the contract three times, and was deleted: see Phase 9, T130.
 - If a task turns out to need a change to `research.md` D1 or D10, stop: that is a design change,
   not an implementation one, and it goes back through the spec.
 
@@ -410,7 +411,7 @@ than by trusting a checked box. Ordered CRITICAL, then HIGH, then MEDIUM, then L
       top-level `region` the handler already returns. Today the contract requires a field nothing
       marshals, which makes `web/src/pages/clusters.tsx:392` dead (contract, SC-009) (contradicts).
 - [X] T090 Remove `public_ip` from the `Cluster` schema in `internal/api/openapi.yaml` and in
-      `contracts/openapi-delta.yaml`, and delete the dead branch at
+      the contract itself, and delete the dead branch at
       `web/src/pages/clusters.tsx:481-483`. The value lives only inside the adapter's opaque
       handle, and the contract states the only provider facts the API exposes are `provider` and
       `tls_pin` (Constitution, provider neutrality) (contradicts).
@@ -585,19 +586,19 @@ on the visible surface and left the one behind it.
 - [ ] T125 Either expose the operation history the comment claims the dashboard reads, or delete
       `Registry.Ops` and the claim. `cluster_ops` is written and never read in production
       (T095) (partial).
-- [ ] T126 Repair `hack/smoke-control-plane.sh` and wire it into the gate. T094's `delivery` field
+- [X] T126 Repair `hack/smoke-control-plane.sh` and wire it into the gate. T094's `delivery` field
       landed between `id` and `available`, so the script's grep can never match and three checks
       fail; it is not in `hack/check.sh`, which is why nothing noticed (contradicts).
 - [ ] T127 Delete `nodeFailed`, `nodeRemoving` and `Provider.StatusNode`. All three are declared
       with no production caller, and their only users are tests (T111, Principle V) (unrequested).
-- [ ] T128 Extend `install.sh --help` to `sed -n '2,28p'`. It currently stops two lines before
+- [X] T128 Extend `install.sh --help` to `sed -n '2,28p'`. It currently stops two lines before
       the `DAWNBX_BOOTSTRAP_PARAMETER` entry it is meant to document (T108) (partial).
-- [ ] T129 Update `AGENTS.md:7` to constitution v1.1.1, and the copy in `tasks.md`. All three
+- [X] T129 Update `AGENTS.md:7` to constitution v1.1.1, and the copy in `tasks.md`. All three
       assessment slices found this independently (Constitution, Governance) (contradicts).
-- [ ] T130 Re-sync `contracts/openapi-delta.yaml` with the authoritative `openapi.yaml`, or delete
+- [X] T130 Re-sync `contracts/openapi-delta.yaml` with the authoritative `openapi.yaml`, or delete
       it. T104 and T105 landed in one file only, so the next merge would reintroduce both — the
       exact trap a delta is supposed to remove (contract) (contradicts).
-- [ ] T131 Declare `region` on the instance-types route or stop advertising it. Both doc tables
+- [X] T131 Declare `region` on the instance-types route or stop advertising it. Both doc tables
       promise `?region=`, the contract declares no such parameter, so the generated client cannot
       send it and the dashboard prices the provider's first region (contract, docs) (contradicts).
 - [ ] T132 Reword the rotate confirmation to match the handler. It still says the old pair survives
@@ -607,39 +608,39 @@ on the visible surface and left the one behind it.
 - [ ] T134 Render a terminal "this cluster is gone" state after a delete, instead of letting the
       follow-up refetch 404 through the generic error path and read as a destructive failure
       (FR-018) (partial).
-- [ ] T135 Add one OpenAPI lint step to `hack/check.sh` and CI. T088's second clause — validate
+- [X] T135 Add one OpenAPI lint step to `hack/check.sh` and CI. T088's second clause — validate
       with a spec linter rather than relying on `npm run gen` — was not done, so an invalid
       document is still only caught by a tolerant tool (T088) (partial).
-- [ ] T136 Test the Python cluster helpers and quote the cluster name in them, as the TypeScript SDK
+- [X] T136 Test the Python cluster helpers and quote the cluster name in them, as the TypeScript SDK
       already does. The floor still holds at 96%, so this is a gap on the new surface rather than a
       gate failure (Principle IV) (missing).
-- [ ] T137 Correct `docs/content/docs/index.mdx:12` — "There is no control plane in someone
+- [X] T137 Correct `docs/content/docs/index.mdx:12` — "There is no control plane in someone
       else's cloud" is now the feature's headline — and document how to start one (contradicts).
-- [ ] T138 Fix the vacuous assertion at `clusters.test.tsx:163`: it counts calls against the array
+- [X] T138 Fix the vacuous assertion at `clusters.test.tsx:163`: it counts calls against the array
       `installFetch` just returned, which resets the log first, so it cannot fail. Principle IV
       bans a test that merely proves a mock was called (partial).
 - [ ] T139 Render the delivery guarantee where the operator actually is. It shows only on the
       provider step *after* a choice is made, and choosing navigates away from it (T094) (partial).
-- [ ] T140 Carry the worker-handle exception into the constitution's neutrality bullet and reconcile
+- [X] T140 Carry the worker-handle exception into the constitution's neutrality bullet and reconcile
       `cluster-routes.md`, which grants it at `:29-32` and denies it at `:90-91`. Constitution
       v1.1.2 (contradicts).
 
 ### LOW
 
-- [ ] T141 Amend `plan.md:48`: there is no 30 s poll cadence anywhere, in flight or not (contradicts).
-- [ ] T142 Add the nine control-plane flags to the `AGENTS.md:87` list, noting that `-key-pair` and
+- [X] T141 Amend `plan.md:48`: there is no 30 s poll cadence anywhere, in flight or not (contradicts).
+- [X] T142 Add the nine control-plane flags to the `AGENTS.md:87` list, noting that `-key-pair` and
       `-ssh-cidr` gate the rescue path and a control plane without them provisions nothing
       (partial).
-- [ ] T143 Add the `admin:` markers to the README's provider rows and carry the session wording
+- [X] T143 Add the `admin:` markers to the README's provider rows and carry the session wording
       across from `api.mdx` (contradicts).
 - [ ] T144 Add `delivery` to the three example rows in `contracts/cluster-routes.md:39` (contradicts).
-- [ ] T145 Do T082's nodes.mdx pointer, or amend its record. The route rows are documented only in
+- [X] T145 Do T082's nodes.mdx pointer, or amend its record. The route rows are documented only in
       `api.mdx` (contradicts).
 - [ ] T146 Show the rescue-only sentence for any non-empty `detail`, not only inside the failure
       panel, so a ready cluster with a detail still has the guidance (US2/AC3) (partial).
-- [ ] T147 Gate the Clusters nav link on admin, or have the page match the nav. A member is offered
+- [X] T147 Gate the Clusters nav link on admin, or have the page match the nav. A member is offered
       a link that refuses them (unrequested).
-- [ ] T148 Send `VpcCidr` from the adapter or document the `172.31.0.0/16` requirement. Today a
+- [X] T148 Send `VpcCidr` from the adapter or document the `172.31.0.0/16` requirement. Today a
       worker added to a cluster in any other CIDR cannot reach 6443 and reports nothing
       (research D7, FR-010) (partial).
 - [ ] T149 Add the shared `Error` response to the three unauthenticated operations, or state in

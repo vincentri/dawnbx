@@ -115,8 +115,9 @@ func (f *fakeProvider) SetBootstrap(_ context.Context, _ Handle, b Bootstrap) er
 	return nil
 }
 
-// NewFake builds a fake provider for a test to steer. Exported so the
-// internal/cluster tests can construct one without an adapter package.
+// newFake builds a fake provider for a test to steer. Unexported on purpose:
+// this is package provider's own double, and internal/cluster and internal/api
+// each have one of their own, so nothing outside this file can reach either.
 func newFake(id string, states ...Status) *fakeProvider {
 	return &fakeProvider{
 		id:     id,

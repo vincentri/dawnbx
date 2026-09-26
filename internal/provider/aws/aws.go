@@ -373,8 +373,6 @@ func (a *AWS) AddNode(ctx context.Context, h provider.Handle, spec provider.Node
 	return c.runInstance(ctx, ph, spec, workerUserData(a.releaseURL, command))
 }
 
-// StatusNode reports one worker.
-
 // RemoveNode takes a worker out of the cluster and then terminates it.
 //
 // The cluster is asked first, because only it knows whether the node holds

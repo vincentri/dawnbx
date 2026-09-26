@@ -87,8 +87,20 @@ const textOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const usd = (n: number) => `$${n.toFixed(4)}`;
 const month = (n: number) => `$${n.toFixed(2)}`;
 
-const statusVariant = (s: string) =>
-  s === "ready" ? "default" : s === "failed" ? "destructive" : "secondary";
+// stalled is a cluster the provisioner has not moved for longer than its budget.
+// It is not a failure — it may still come up — but it is not "working either",
+// and the list is where an operator scans for something that needs a look.
+const stalled = (c: { status: string; detail?: string }) =>
+  c.status === "provisioning" && !!c.detail?.startsWith("no progress for");
+
+const statusVariant = (c: { status: string; detail?: string }) =>
+  c.status === "ready"
+    ? "default"
+    : c.status === "failed"
+      ? "destructive"
+      : stalled(c)
+        ? "outline"
+        : "secondary";
 
 export function Clusters() {
   const me = useMe().data!;
@@ -507,7 +519,7 @@ function Status({ name: id, go }: { name: string; go: Go }) {
         {c && (
           <>
             <div className="flex items-center gap-2">
-              <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+              <Badge variant={statusVariant(c)}>{stalled(c) ? "stalled" : c.status}</Badge>
               <span className="text-sm text-muted-foreground">
                 {c.provider} · {c.region} · {c.instance_type} · {c.disk_gib} GiB
                 {c.domain ? ` · ${c.domain}` : ""}
@@ -515,6 +527,10 @@ function Status({ name: id, go }: { name: string; go: Go }) {
               <span className="text-xs text-muted-foreground">updated {age(c.updated)} ago</span>
             </div>
             <Timeline c={c} />
+            <p className="text-sm text-muted-foreground">
+              SSH is for rescue work — a wedged host, a full disk, a broken upgrade. It is not part
+              of this flow, whatever state the cluster is in.
+            </p>
             <Failure c={c} />
             {/* The detail is also the only place a cluster that is stuck but not
                 failed says why. Without it a wedged cluster renders as a calm
@@ -551,7 +567,7 @@ function Status({ name: id, go }: { name: string; go: Go }) {
               <Button variant="outline" onClick={() => go({ step: "nodes", name: id })}>
                 Worker nodes
               </Button>
-              {c.status !== "deleted" && (
+              {c.status !== "deleting" && (
                 <Confirm
                   title={`Delete ${id}?`}
                   body="Its workers, sandboxes and the host itself are destroyed. This cannot be undone."
@@ -617,10 +633,6 @@ function Failure({ c }: { c: Cluster }) {
         Next step: read the reason above, then delete this cluster and configure another. Anything
         paid for by this attempt is removed automatically; this diagnostic is what is kept. No
         secret value is in it.
-      </p>
-      <p className="text-muted-foreground">
-        SSH is for rescue work — a wedged host, a full disk, a broken upgrade. It is not part of
-        this flow.
       </p>
     </div>
   );
@@ -816,7 +828,7 @@ function NodeRow(props: { n: ClusterNode; onRemove: () => void; removing: boolea
       <TableCell className="font-mono">{n.id}</TableCell>
       <TableCell>{n.instance_type}</TableCell>
       <TableCell>
-        <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+        <Badge variant={statusVariant(n)}>{n.status}</Badge>
         {n.detail && <span className="ml-2 text-xs text-muted-foreground">{n.detail}</span>}
       </TableCell>
       <TableCell>{n.sandboxes}</TableCell>
@@ -866,7 +878,7 @@ function ClusterList() {
             onClick={() => nav({ to: "/clusters", search: { step: "status", name: c.name } })}
           >
             <span className="truncate font-mono">{c.name}</span>
-            <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+            <Badge variant={statusVariant(c)}>{stalled(c) ? "stalled" : c.status}</Badge>
           </button>
         ))}
         {clusters.data?.length === 0 && (

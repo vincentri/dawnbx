@@ -16,6 +16,10 @@ security:
   - cookie: []
 
 paths:
+  # /v1/version and /v1/logout carry no `default` Error response on purpose:
+  # neither has an error path (internal/api/api.go writes a bare 200 and a bare
+  # 204), and a default that can never fire is a promise the client codes
+  # against. /v1/login does have one, and declares it.
   /v1/version:
     get:
       security: []
@@ -368,9 +372,16 @@ paths:
     parameters: [{ $ref: "#/components/parameters/provider" }]
     get:
       description: >
-        Host sizes the named provider offers, with the current price for the
-        control plane's configured region. The list comes from the provider
-        adapter, never from a table in this contract.
+        Host sizes the named provider offers, with the current price for a
+        region. Omit `region` and the provider's first advertised one is used, so
+        the answer is indicative rather than authoritative; the estimate, which
+        is priced for the region you name, is what governs. The list comes from
+        the provider adapter, never from a table in this contract.
+      parameters:
+        - name: region
+          in: query
+          required: false
+          schema: { type: string }
       responses:
         "200":
           description: ok
@@ -516,8 +527,10 @@ paths:
     post:
       description: >
         Mint a new administrator password and API key and re-deliver the password
-        to the provider's secret channel. The running cluster keeps both old
-        credentials until an operator applies the new ones. Admin only, audited.
+        to the provider's secret channel. The cluster's previous API key is
+        revoked in the same call; its previous password cannot be, because the
+        running cluster only learns a new one when an operator applies it, and
+        that is what stops a rotation locking everyone out. Admin only, audited.
       responses:
         "200":
           description: the rotated cluster
@@ -768,7 +781,7 @@ components:
         domain: { type: string }
         status:
           type: string
-          enum: [provisioning, ready, failed, deleting, deleted]
+          enum: [provisioning, ready, failed, deleting]
         phase: { type: string, description: current sub-step; empty unless provisioning }
         detail: { type: string, description: non-secret diagnostic from the bootstrap }
         hourly_usd: { type: number }
