@@ -55,12 +55,12 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 - Router basepath and Vite `base` are `/ui`; the dev proxy sends `/v1` to `http://127.0.0.1:8080`, which the server reaches because `hack/dev-vm.sh` forwards its loopback port.
 - `web/src/lib/schema.d.ts` is generated and committed — regenerate it, never hand-edit it.
 - `web/index.html` hardcodes `class="dark"`, so the light tokens in `web/src/index.css` are unreachable. Light-mode work starts by removing that.
-- `web/components.json` points the `@/hooks` alias at a directory that does not exist; `textarea.tsx` and `Tooltip*` are unused. Do not import against them.
+- `web/components.json` points the `@/hooks` alias at a directory that does not exist. Do not add imports against it.
 - Status and node views poll every 5s and `useMe` has `staleTime: Infinity`, so a logout in another tab does not refresh this one.
 
 ## 6. `sdk/` — Python and TypeScript
 
-- Both SDKs are hand-written clients over the same six `/v1/sandboxes*` routes. There is no codegen: any route or semantic change lands in both files in the same change, including the retry rule — 3 tries for GET, 1 for mutations, retry only on body code `cluster_unavailable` or a transport error.
+- Both SDKs are hand-written clients over the same `/v1/sandboxes*` routes. There is no codegen: any route or semantic change lands in both files in the same change, including the retry rule — 3 tries for GET, 1 for mutations, retry only on body code `cluster_unavailable` or a transport error.
 - `ttl: null` means keep-forever, an absent key means default. The two sentinels (`_UNSET`, `undefined`) implement that and must stay in sync.
 - Neither SDK wraps the terminal WebSocket, `/v1/version` or `/v1/status`; `list()` is unbounded and org-filtered server-side for non-admin keys.
 - `npm test --prefix sdk/typescript` compiles first and then exercises `dist/`, so it proves the build output, not `src/`.
@@ -69,7 +69,7 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 
 ## 7. `docs/` — docs site
 
-- Fumadocs on Next with `output: 'export'`: `npm run build --prefix docs` writes static HTML to `docs/out/`. Content is MDX in `docs/content/docs/` with `meta.json` sidebars, and a page missing from `meta.json` still renders.
+- Fumadocs on Next, `output: 'export'` in `docs/next.config.mjs`, so `npm run build --prefix docs` produces a static site in `docs/out/`. Content is MDX in `docs/content/docs/` with `meta.json` sidebars, and a page missing from `meta.json` still renders.
 - `SITE_URL` unset bakes `http://localhost:3000` into the OG and Twitter tags. Set it when publishing.
 - Dependencies deliberately differ from `web/` (typescript `^7`, `cn` `^0.3`) because Next 16 needs them. Do not "align" them.
 - Known wrong today: `docs/content/docs/guide/api.mdx` says the server serves `/openapi.yaml`. No such route exists. Fix it when you touch that page.
