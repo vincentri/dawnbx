@@ -539,3 +539,111 @@ it. Appended here so they are fixed in the same pass rather than carried into an
 
       `store.Meta.ProjectID` named the unbuilt mechanism, is read nowhere, and is deleted rather
       than left to imply a design that does not exist (defect, pre-existing).
+
+---
+
+## Phase 9: Convergence (second pass)
+
+Produced by a second `/speckit.converge` after Phase 8 was implemented. Every finding below is
+new damage or an unfinished edge of that pass — Phase 8's eleven decisions were re-verified and
+all eleven landed as recorded. Two of these are the same defect seen from both ends: a fix landed
+on the visible surface and left the one behind it.
+
+### HIGH
+
+- [ ] T118 Remove the SDK cluster helpers, or give both clients a way to present a session. The
+      three exported helpers target routes gated `adminOnly`→`signedIn`, which refuses any request
+      carrying no user, and both clients send only `Authorization: Bearer`. They can therefore only
+      ever receive 403, and the TypeScript docstring says so beside the code that ships them
+      (contract "Read-only SDK surface", FR-013) (contradicts).
+- [ ] T119 Measure the stall against a phase change rather than the newest op row. `stalled()` reads
+      `LastProgress`, which is the newest `create` row, and `PhaseFor` writes a new row whenever the
+      detail changes — which writing the stall note does. The note resets its own clock, so it is
+      visible for one 5 s poll in every 20 minutes (T092) (partial).
+- [ ] T120 Gate the Settings **Nodes panel**, not only its trigger. Radix renders content by value,
+      and `/settings` accepts any `tab`, so `/ui/settings?tab=nodes` still mounts the panel, polls a
+      503 route every 5 s and renders an empty grid with no error. Add a test at that URL (T097,
+      US1/AC1) (partial).
+- [ ] T121 Wait for the stack to be gone before forgetting the record. `Destroy` issues `DeleteStack`
+      with no waiter and `Delete` then forgets immediately, so FR-018's "MUST NOT delete the record
+      until the provider confirms" and the docs' "kept until the provider confirms" are both false
+      (FR-018, `docs/…/api.mdx:71`) (contradicts).
+- [ ] T122 Deliver the capability helpers T017–T019 describe, or amend those records. All three are
+      ticked and none of the `control_plane()`/`providers()` helpers exists in either SDK; what was
+      built is the cluster CRUD read surface instead (Constitution III) (missing).
+- [ ] T123 Route `/` to `/clusters` in control-plane mode. The landing page is the sandboxes list,
+      which polls a 503 route every 2 s and renders an error — so the target deployment mode opens
+      on an error page (FR-001, US1/AC1) (partial).
+- [ ] T124 Refuse `0.0.0.0/0` for `VpcCidr`, as T096 did for `SshCidr`. The 6443 ingress writes
+      that value straight into the rule, and the constitution says public 6443 is forbidden. The
+      default is safe; the pattern permits what the prose forbids
+      (Constitution, Host exposure) (missing).
+
+### MEDIUM
+
+- [ ] T125 Either expose the operation history the comment claims the dashboard reads, or delete
+      `Registry.Ops` and the claim. `cluster_ops` is written and never read in production
+      (T095) (partial).
+- [ ] T126 Repair `hack/smoke-control-plane.sh` and wire it into the gate. T094's `delivery` field
+      landed between `id` and `available`, so the script's grep can never match and three checks
+      fail; it is not in `hack/check.sh`, which is why nothing noticed (contradicts).
+- [ ] T127 Delete `nodeFailed`, `nodeRemoving` and `Provider.StatusNode`. All three are declared
+      with no production caller, and their only users are tests (T111, Principle V) (unrequested).
+- [ ] T128 Extend `install.sh --help` to `sed -n '2,28p'`. It currently stops two lines before
+      the `DAWNBX_BOOTSTRAP_PARAMETER` entry it is meant to document (T108) (partial).
+- [ ] T129 Update `AGENTS.md:7` to constitution v1.1.1, and the copy in `tasks.md`. All three
+      assessment slices found this independently (Constitution, Governance) (contradicts).
+- [ ] T130 Re-sync `contracts/openapi-delta.yaml` with the authoritative `openapi.yaml`, or delete
+      it. T104 and T105 landed in one file only, so the next merge would reintroduce both — the
+      exact trap a delta is supposed to remove (contract) (contradicts).
+- [ ] T131 Declare `region` on the instance-types route or stop advertising it. Both doc tables
+      promise `?region=`, the contract declares no such parameter, so the generated client cannot
+      send it and the dashboard prices the provider's first region (contract, docs) (contradicts).
+- [ ] T132 Reword the rotate confirmation to match the handler. It still says the old pair survives
+      until applied, while T093 now revokes the old API key (contradicts).
+- [ ] T133 Drop `deleted` from `Cluster.status` or record it before forgetting. Nothing writes it —
+      the same defect T104 fixed on `ClusterNode.status` and left here (T104) (contradicts).
+- [ ] T134 Render a terminal "this cluster is gone" state after a delete, instead of letting the
+      follow-up refetch 404 through the generic error path and read as a destructive failure
+      (FR-018) (partial).
+- [ ] T135 Add one OpenAPI lint step to `hack/check.sh` and CI. T088's second clause — validate
+      with a spec linter rather than relying on `npm run gen` — was not done, so an invalid
+      document is still only caught by a tolerant tool (T088) (partial).
+- [ ] T136 Test the Python cluster helpers and quote the cluster name in them, as the TypeScript SDK
+      already does. The floor still holds at 96%, so this is a gap on the new surface rather than a
+      gate failure (Principle IV) (missing).
+- [ ] T137 Correct `docs/content/docs/index.mdx:12` — "There is no control plane in someone
+      else's cloud" is now the feature's headline — and document how to start one (contradicts).
+- [ ] T138 Fix the vacuous assertion at `clusters.test.tsx:163`: it counts calls against the array
+      `installFetch` just returned, which resets the log first, so it cannot fail. Principle IV
+      bans a test that merely proves a mock was called (partial).
+- [ ] T139 Render the delivery guarantee where the operator actually is. It shows only on the
+      provider step *after* a choice is made, and choosing navigates away from it (T094) (partial).
+- [ ] T140 Carry the worker-handle exception into the constitution's neutrality bullet and reconcile
+      `cluster-routes.md`, which grants it at `:29-32` and denies it at `:90-91`. Constitution
+      v1.1.2 (contradicts).
+
+### LOW
+
+- [ ] T141 Amend `plan.md:48`: there is no 30 s poll cadence anywhere, in flight or not (contradicts).
+- [ ] T142 Add the nine control-plane flags to the `AGENTS.md:87` list, noting that `-key-pair` and
+      `-ssh-cidr` gate the rescue path and a control plane without them provisions nothing
+      (partial).
+- [ ] T143 Add the `admin:` markers to the README's provider rows and carry the session wording
+      across from `api.mdx` (contradicts).
+- [ ] T144 Add `delivery` to the three example rows in `contracts/cluster-routes.md:39` (contradicts).
+- [ ] T145 Do T082's nodes.mdx pointer, or amend its record. The route rows are documented only in
+      `api.mdx` (contradicts).
+- [ ] T146 Show the rescue-only sentence for any non-empty `detail`, not only inside the failure
+      panel, so a ready cluster with a detail still has the guidance (US2/AC3) (partial).
+- [ ] T147 Gate the Clusters nav link on admin, or have the page match the nav. A member is offered
+      a link that refuses them (unrequested).
+- [ ] T148 Send `VpcCidr` from the adapter or document the `172.31.0.0/16` requirement. Today a
+      worker added to a cluster in any other CIDR cannot reach 6443 and reports nothing
+      (research D7, FR-010) (partial).
+- [ ] T149 Add the shared `Error` response to the three unauthenticated operations, or state in
+      the contract why they are exempt (contradicts).
+- [ ] T150 Fix `provider_test.go:120`: the comment says the fake is exported for other packages and
+      it is neither exported nor shared (contradicts).
+- [ ] T151 Give a stalled cluster a distinct badge in the list as well as the panel. The list
+      cannot tell a wedged cluster from a healthy one (T091) (partial).
