@@ -57,9 +57,8 @@ type Meta struct {
 	Memory    string     `json:"memory,omitempty"`
 	// GraceUntil skips the per-sandbox disk cap after start() so the user can clean up.
 	GraceUntil *time.Time `json:"grace_until,omitempty"`
-	ProjectID  uint32     `json:"project_id,omitempty"` // ext4 project quota id, 0 = no quota
-	Org        string     `json:"org,omitempty"`        // owning org; empty = "default" (made before orgs)
-	KeyID      string     `json:"key_id,omitempty"`     // API key that created it; empty for dashboard users
+	Org        string     `json:"org,omitempty"`    // owning org; empty = "default" (made before orgs)
+	KeyID      string     `json:"key_id,omitempty"` // API key that created it; empty for dashboard users
 	// Node holds /workspace (hostPath on its disk); the pod is pinned there. Empty = not scheduled yet.
 	Node string `json:"node,omitempty"`
 }

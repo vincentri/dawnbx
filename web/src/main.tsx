@@ -4,9 +4,10 @@ import { createRootRoute, createRoute, createRouter, RouterProvider } from "@tan
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
+import { IndexPage } from "@/components/index-page";
 import { Toaster } from "@/components/ui/sonner";
 import { setSignedOut } from "@/lib/api";
-import { Sandboxes } from "@/pages/sandboxes";
+import { Clusters, clusterSearch } from "@/pages/clusters";
 import { Settings } from "@/pages/settings";
 import { Shell, signOut } from "@/pages/shell";
 import { TerminalPage } from "@/pages/terminal";
@@ -20,12 +21,22 @@ setSignedOut(() => signOut(queryClient));
 
 const root = createRootRoute({ component: Shell });
 const routeTree = root.addChildren([
+  // The index is the sandboxes list, which is right on a cluster and an error
+  // page on a control plane: /v1/sandboxes is a hard 503 there. IndexPage picks
+  // the right one for the server it is talking to, rather than the nav having to
+  // remember.
   createRoute({
     getParentRoute: () => root,
     path: "/",
-    component: Sandboxes,
+    component: IndexPage,
     validateSearch: (s: Record<string, unknown>): { id?: string } =>
       typeof s.id === "string" ? { id: s.id } : {},
+  }),
+  createRoute({
+    getParentRoute: () => root,
+    path: "/clusters",
+    component: Clusters,
+    validateSearch: clusterSearch,
   }),
   createRoute({
     getParentRoute: () => root,

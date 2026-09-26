@@ -11,6 +11,12 @@
 # the only coverage the k8s edges of internal/sandbox get; see the coverage
 # floors in hack/coverage-floor.txt for why they are not unit tested.
 #
+# The control-plane smoke is a second opt-in tier, for the same reason:
+#   SMOKE=1 bash hack/check.sh
+# It builds dawnbx-server and runs it on a random port, so it belongs with the
+# live tier rather than in the default gate. It proves the mode starts and
+# serves; it is not a lint and not a per-change signal.
+#
 # A fresh worktree needs its dependencies first:
 #   npm ci --prefix web && npm ci --prefix sdk/typescript && npm ci --prefix docs
 #   python3 -m venv .venv && .venv/bin/pip install coverage
@@ -46,6 +52,16 @@ run "eslint (ts sdk)" bash -c 'cd sdk/typescript && npx eslint .'
 run "prettier (ts sdk)" bash -c 'cd sdk/typescript && npx prettier --check .'
 run "ruff check" ruff check sdk/python
 run "ruff format" ruff format --check sdk/python
+# The one contract, linted. This is the generator the dashboard's types come
+# from, run against the file itself: it fails on a YAML mistake, an unresolvable
+# $ref, or an operation that cannot be typed, which is the class of drift the
+# five hand-kept copies cannot catch. It writes to a temp file, never to the
+# committed src/lib/schema.d.ts, so a stale bundle stays its own separate check
+# below. CI runs this same script, so it is one step and not two.
+run "openapi contract" bash -c '
+  out=$(mktemp -d)/schema.d.ts
+  cd web && ./node_modules/.bin/openapi-typescript ../internal/api/openapi.yaml -o "$out"
+'
 
 # ---- build ------------------------------------------------------------------
 run "go build" go build ./...
@@ -107,6 +123,11 @@ stale=$(git status --porcelain internal/api/ui)
 }
 
 run "agent rules cites" python3 hack/check-harness-cites.py
+
+# ---- optional control-plane smoke --------------------------------------------
+if [ "${SMOKE:-0}" = 1 ]; then
+  run "control-plane smoke" bash hack/smoke-control-plane.sh
+fi
 
 # ---- optional live tier ------------------------------------------------------
 if [ "${CHECK_LIVE:-0}" = 1 ]; then

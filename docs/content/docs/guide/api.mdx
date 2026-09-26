@@ -4,7 +4,10 @@ description: Every route dawnbx exposes.
 ---
 
 All routes are under `/v1` and need `Authorization: Bearer <key>`, except where
-noted. Key, user, org and password routes need a dashboard session instead.
+noted. Key, user, org and password routes need a dashboard session instead. The
+cluster routes below need a dashboard session too, and an API key can never
+manage infrastructure; all of them need an administrator's except the capability
+probe and the provider list, which read nothing and spend nothing.
 
 Errors are JSON:
 
@@ -40,6 +43,54 @@ Errors are JSON:
 | `POST /v1/users/{name}/password` | admin: `{"password"}` |
 | `POST /v1/login`, `/logout` | dashboard session cookie (needs header `X-Dawnbx: 1`) |
 | `GET /v1/version` | no auth |
+
+## Nodes
+
+| Route | |
+|---|---|
+| `GET /v1/nodes` | admin: the cluster's boxes, their role, Ready state and sandbox count |
+| `GET /v1/nodes/join` | admin: the command that adds a worker (audited; the token is a node credential) |
+| `DELETE /v1/nodes/{name}` | admin: remove a worker; `409` while it still holds sandboxes |
+
+These report on the cluster dawnbx is *running in*. To make new clusters, use
+the control plane below.
+
+## Clusters
+
+Served by `dawnbx-server --control-plane`, which manages clusters and has no
+cluster of its own. Every route needs a dashboard session, and all but the
+capability probe and the provider list need an administrator's. Every one of them
+is provider-neutral: the provider is a path value, never a path of its own.
+
+| Route | |
+|---|---|
+| `GET /v1/control-plane` | `{"control_plane": true, "providers": ["aws"], "version": "v1"}`; a cluster answers `false` |
+| `GET /v1/providers` | which providers this control plane can use, and which are listed but not yet available |
+| `GET /v1/providers/{p}/regions`, `/instance-types?region=` | what that provider offers, and what it costs here |
+| `POST /v1/providers/{p}/estimate` | price a configuration; creates nothing, and its `quote_id` is what `POST /v1/clusters` demands |
+| `GET` / `POST /v1/clusters` | admin: list, and start provisioning `{"name", "region", "instance_type", "disk_gib", "domain", "quote_id"}` |
+| `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it. The dashboard does this behind a confirmation; the route refuses with `409 cluster_has_nodes` while workers are attached, and the record is kept until the provider confirms the resources are gone |
+| `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's API key and admin password, in plaintext; `409` until the cluster is `ready` |
+| `POST /v1/clusters/{name}/rotate` | admin, audited: mint a new password and key |
+| `GET` / `POST /v1/clusters/{name}/nodes` | admin: list workers, add one |
+| `DELETE /v1/clusters/{name}/nodes/{node}` | admin: remove a worker; `409 node_holds_sandboxes` while it holds any |
+
+`instance-types` takes an optional `region`. With none, the catalogue is priced
+for the provider's *first* advertised region, which is not necessarily the one
+you will provision in, so read those numbers as indicative. `POST
+/v1/providers/{p}/estimate` is priced for the region you actually name, and it
+is what governs: its `quote_id` is the only thing `POST /v1/clusters` accepts,
+and a create whose configuration does not match the quote is `409 quote_stale`.
+
+A cluster's `url` is non-empty only once it is `ready`, which means its own API
+answered a login with the password the control plane injected. `tls_pin` is the
+certificate fingerprint: compare it out of band if you want more than the
+control plane's first connection.
+
+The administrator password is injected into a new host through the provider's
+secret store, never through the template and never over SSH. The API key is not
+injected at all — the cluster mints it for itself once it accepts that password,
+so the key appears in the cluster's own key list and is revocable there.
 
 ## OpenAPI
 

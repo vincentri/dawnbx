@@ -52,6 +52,57 @@ The old key stops working.
 Run it without a terminal (cloud-init, CI) and it prints the *paths* of the key
 and password files, never the secrets themselves. Read them over SSH.
 
+## As a control plane
+
+`install.sh` gives you **one box that runs sandboxes**. That is the whole of
+every section above.
+
+The other mode is `dawnbx-server --control-plane`: the same dashboard, API and
+database, but it manages *clusters* instead of running sandboxes, and has no
+cluster and no sandbox volume of its own. You point it at a cloud, and it
+provisions a k3s host per cluster from the dashboard. It is the mode to use if
+you would rather not provision a box by hand.
+
+```sh
+sudo dawnbx-server --control-plane \
+  --listen 127.0.0.1:8080 \
+  --region eu-west-1 \
+  --release-url https://example.com/dawnbx \
+  --template /opt/dawnbx/deploy/aws/dawnbx.yaml \
+  --admin-password "$DAWNBX_ADMIN_PASSWORD"
+```
+
+The flags it needs:
+
+| Flag | |
+|---|---|
+| `--control-plane` | run as a control plane. Without it the same binary refuses to start without a cluster and a mounted data volume |
+| `--region` | the region to provision clusters in |
+| `--release-url` | HTTPS base serving `install.sh` and the release binaries, so a provisioned cluster can install itself. There is no public release yet, so you host one |
+| `--template` | path to the CloudFormation template used to create a host. Empty reads `deploy/aws/dawnbx.yaml` **relative to the working directory**, so run the binary from a checkout or pass the path |
+| `--admin-password` | the dashboard login. Defaults to `$DAWNBX_ADMIN_PASSWORD`, then `admin.env`, then a generated one |
+| `--control-plane-key` | 32 bytes that encrypt cluster credentials at rest. Generated once into `<data-dir>/server/control-plane.key` if unset; set it to keep that file across rebuilds |
+| `--key-pair`, `--ssh-cidr` | **rescue access only** — an EC2 key pair and the CIDR allowed to SSH a provisioned host. The normal path needs neither: the administrator password is injected through the cloud's secret store and the API key is minted by the cluster itself. A control plane without them starts and provisions, but a host whose normal path has failed is a host you cannot reach |
+
+**You sign in as an administrator.** The control plane creates one dashboard
+user — `admin`, or whatever `$DAWNBX_ADMIN_USER` names — and it is an admin,
+because every cluster route but the capability probe and the provider list
+refuses a member. A member account can be added under **Settings > Users**, but
+on a control plane all it can do is read its own keys; the Clusters page tells
+it so.
+
+**Phase one is one AWS account and one credential source.** The control plane
+takes credentials from the standard AWS chain — environment, shared config or
+SSO, or a web identity — and uses that one source for every cluster it
+provisions. There is no per-cluster credential, and no way to point one cluster
+at one account and another at a different account. A lapsed credential does not
+stop the control plane: it starts, lists the clusters it already has, and shows
+the provider as listed-but-unavailable.
+
+To add a cluster: open the dashboard, choose AWS, pick a region and a size,
+review the estimate, and confirm. You get back the cluster's URL, its API key
+and its administrator password — no SSH, and nothing to read off a host.
+
 ## On AWS
 
 `deploy/aws/dawnbx.yaml` is a CloudFormation stack: one arm64 EC2 instance

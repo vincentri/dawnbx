@@ -16,6 +16,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, must, type Principal } from "@/lib/api";
 
+// A control plane has no local cluster, so it has no sandboxes and no
+// /v1/status to report. The probe is what tells the nav which it is; a
+// cluster answers control_plane false, and a server too old to answer is
+// treated as a cluster rather than as an error the operator must clear.
+export function useControlPlane() {
+  return useQuery({
+    queryKey: ["control-plane"],
+    queryFn: () => must(api.GET("/v1/control-plane")),
+  });
+}
+
+// useServer is the one answer the nav and the settings page both use.
+//
+// Both parts matter, and they are not the same question. `settled` is "the
+// probe has answered", which a surface needs before it shows anything: a
+// cluster and a probe still in flight both read as "not a control plane", so
+// gating on control_plane alone flashes a surface and then hides it.
+// `controlPlane` is the settled answer, and a probe that errored counts as a
+// cluster — offering a link the server would answer 503 is worse than a missing
+// one.
+export function useServer() {
+  const cp = useControlPlane();
+  return { settled: !cp.isPending, controlPlane: !cp.isPending && cp.data?.control_plane === true };
+}
+
 // useMe is the signed-in dashboard user, or null. API keys can't use the dashboard.
 export function useMe() {
   return useQuery({
@@ -37,31 +62,53 @@ export function signOut(qc: QueryClient) {
 
 export function Shell() {
   const me = useMe();
+  const { settled, controlPlane } = useServer();
   if (me.isPending) return null;
   if (!me.data) return <Login />;
+  const clusters = (
+    <Button variant="ghost" size="sm" asChild key="clusters">
+      <Link
+        to="/clusters"
+        activeOptions={{ exact: true, includeSearch: false }}
+        activeProps={{ className: "bg-muted" }}
+      >
+        Clusters
+      </Link>
+    </Button>
+  );
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-4 border-b px-4 py-2">
-        <Link to="/" className="flex items-center gap-2 font-semibold">
+        <Link
+          to={controlPlane ? "/clusters" : "/"}
+          className="flex items-center gap-2 font-semibold"
+        >
           <BoxIcon className="size-4" /> dawnbx
         </Link>
         <nav className="flex gap-1 text-sm">
-          <Button variant="ghost" size="sm" asChild>
-            <Link
-              to="/"
-              activeOptions={{ exact: true, includeSearch: false }}
-              activeProps={{ className: "bg-muted" }}
-            >
-              Sandboxes
-            </Link>
-          </Button>
+          {settled && !controlPlane && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link
+                to="/"
+                activeOptions={{ exact: true, includeSearch: false }}
+                activeProps={{ className: "bg-muted" }}
+              >
+                Sandboxes
+              </Link>
+            </Button>
+          )}
+          {/* Clusters is admin-only: /v1/clusters refuses a member, so a
+              member following the link lands on a page that says so. */}
+          {settled && me.data.admin && clusters}
           <Button variant="ghost" size="sm" asChild>
             <Link to="/settings" activeProps={{ className: "bg-muted" }}>
               Settings
             </Link>
           </Button>
         </nav>
-        <Status />
+        {/* /v1/status belongs to a cluster and answers 503 without one, so it
+            is not mounted until the probe says there is something to report. */}
+        {settled && !controlPlane ? <Status /> : <div className="flex-1" />}
         <UserMenu me={me.data} />
       </header>
       <main className="min-h-0 flex-1">

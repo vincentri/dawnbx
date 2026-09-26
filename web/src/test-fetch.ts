@@ -98,6 +98,17 @@ export function apiError(message: string, hint?: string, status = 400): Reply {
 /** What the server returns when the session cookie is gone. */
 export const noSession: Reply = apiError("no session", "sign in again", 401);
 
+/** An error with a specific envelope code, for the pages that branch on one. */
+export const codedError = (
+  code: string,
+  message: string,
+  status: number,
+  hint?: string,
+): Reply => ({
+  status,
+  json: { code, message, hint },
+});
+
 /** Body of the single call to `path` (exact pathname), or throws. */
 export function bodyOf(calls: FetchCall[], method: string, path: string): unknown {
   const hits = calls.filter(

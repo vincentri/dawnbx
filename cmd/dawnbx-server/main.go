@@ -1,9 +1,9 @@
-// dawnbx-server exposes the sandbox API and reaps sandboxes. Runs as the dawnbx systemd unit.
 package main
 
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -25,20 +25,31 @@ import (
 
 	"dawnbx/internal/api"
 	"dawnbx/internal/auth"
+	"dawnbx/internal/cluster"
+	"dawnbx/internal/provider"
+	awsprov "dawnbx/internal/provider/aws"
 	"dawnbx/internal/sandbox"
 	"dawnbx/internal/store"
 )
 
 // config is the daemon's whole configuration: everything the flags resolve to.
 type config struct {
-	dataDir     string
-	listen      string
-	httpsListen string
-	domain      string
-	kubeconfig  string
-	dbURL       string
-	pool        int
-	version     bool
+	dataDir       string
+	listen        string
+	httpsListen   string
+	domain        string
+	kubeconfig    string
+	dbURL         string
+	pool          int
+	version       bool
+	controlPlane  bool
+	controlKey    string
+	releaseURL    string
+	templatePath  string
+	keyName       string
+	sshCIDR       string
+	region        string
+	adminPassword string
 }
 
 // parseFlags registers the flags on fs and resolves them into a config. fs is
@@ -53,17 +64,40 @@ func parseFlags(fs *flag.FlagSet, args []string) (config, error) {
 	dbURL := fs.String("database-url", "", "postgres://... to share auth across API nodes (default: SQLite at <data-dir>/server/dawnbx.db)")
 	pool := fs.Int("pool", 2, "warm sandboxes kept running for instant create/fork (0 = off)")
 	version := fs.Bool("version", false, "print version and exit")
+
+	// Control-plane mode: the dashboard, the database and the cluster lifecycle,
+	// with no Kubernetes cluster and no sandbox volume on this machine.
+	controlPlane := fs.Bool("control-plane", false,
+		"run the control plane: manage clusters from the dashboard without a local cluster or volume")
+	controlKey := fs.String("control-plane-key", "",
+		"32-byte key that encrypts cluster credentials at rest (default: generated once into <data-dir>/server/control-plane.key)")
+	adminPassword := fs.String("admin-password", "",
+		"dashboard login for the control plane's own admin (default: $DAWNBX_ADMIN_PASSWORD, then admin.env, then a generated one)")
+	region := fs.String("region", "", "cloud region to provision clusters in")
+	releaseURL := fs.String("release-url", "", "https:// base serving install.sh and the release binaries for provisioned clusters")
+	templatePath := fs.String("template", "", "path to the CloudFormation template used to create a cluster host")
+	keyName := fs.String("key-pair", "", "EC2 key pair for provisioned hosts (rescue access only)")
+	sshCIDR := fs.String("ssh-cidr", "", "CIDR allowed to reach a provisioned host over SSH (rescue access only)")
+
 	// Parse first: the values are read through the pointers it fills in.
 	err := fs.Parse(args)
 	return config{
-		dataDir:     *data,
-		listen:      *listen,
-		httpsListen: *httpsListen,
-		domain:      *domain,
-		kubeconfig:  *kubeconfig,
-		dbURL:       *dbURL,
-		pool:        *pool,
-		version:     *version,
+		dataDir:       *data,
+		listen:        *listen,
+		httpsListen:   *httpsListen,
+		domain:        *domain,
+		kubeconfig:    *kubeconfig,
+		dbURL:         *dbURL,
+		pool:          *pool,
+		version:       *version,
+		controlPlane:  *controlPlane,
+		controlKey:    *controlKey,
+		adminPassword: *adminPassword,
+		region:        *region,
+		releaseURL:    *releaseURL,
+		templatePath:  *templatePath,
+		keyName:       *keyName,
+		sshCIDR:       *sshCIDR,
 	}, err
 }
 
@@ -78,6 +112,9 @@ type serverDeps struct {
 	reconcile  time.Duration
 	shutdown   time.Duration
 	readHeader time.Duration
+	// newProvider builds the cloud adapter in control-plane mode. It is a
+	// field so a test can supply a fake and never reach AWS.
+	newProvider func(ctx context.Context, cfg config) (provider.Provider, error)
 }
 
 func productionDeps() serverDeps {
@@ -98,6 +135,9 @@ func productionDeps() serverDeps {
 		reconcile:  30 * time.Second,
 		shutdown:   10 * time.Second,
 		readHeader: 10 * time.Second,
+		// newProvider is filled in per-process by wireCloud, which needs the
+		// cluster registry to build the worker hooks below.
+		newProvider: nil,
 	}
 }
 
@@ -118,6 +158,9 @@ func serve(ctx context.Context, cfg config, d serverDeps) error {
 		return nil
 	}
 	log.SetFlags(0) // journald timestamps
+	if cfg.controlPlane {
+		return serveControlPlane(ctx, cfg, d)
+	}
 
 	st, err := store.Open(cfg.dataDir)
 	if err != nil {
@@ -156,7 +199,91 @@ func serve(ctx context.Context, cfg config, d serverDeps) error {
 	defer stop()
 	go m.Run(ctx, d.reconcile)
 
-	h := (&api.Server{M: m, Auth: db}).Handler()
+	return listen(ctx, cfg, d, (&api.Server{M: m, Auth: db}).Handler())
+}
+
+// serveControlPlane is the same daemon without a cluster. It serves the
+// dashboard, the identity surface and the cluster lifecycle, and it never opens
+// the sandbox store — that store deliberately refuses a data dir without the
+// .dawnbx-volume marker, because an unmounted volume must not read as "all
+// sandboxes gone". A control plane holds no sandboxes, so it has no volume and
+// makes no such promise.
+func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
+	srvDir := filepath.Join(cfg.dataDir, "server")
+	if err := os.MkdirAll(srvDir, 0o700); err != nil {
+		return fmt.Errorf("control-plane data dir: %w", err)
+	}
+	dbURL := cfg.dbURL
+	if dbURL == "" {
+		dbURL = filepath.Join(srvDir, "dawnbx.db")
+	}
+	db, err := auth.Open(dbURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// The admin login is the same one the cluster mode uses, so an operator has
+	// one account either way. A generated password is written to admin.env and
+	// its path logged, never its value: this log goes to journald.
+	envFile := filepath.Join(srvDir, "admin.env")
+	env := adminEnv(envFile)
+	pw := cmp.Or(cfg.adminPassword, os.Getenv("DAWNBX_ADMIN_PASSWORD"), env["DAWNBX_ADMIN_PASSWORD"])
+	if pw == "" {
+		pw, err = generateAdminPassword()
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(envFile, []byte("DAWNBX_ADMIN_PASSWORD="+pw+"\n"), 0o600); err != nil {
+			return fmt.Errorf("write admin.env: %w", err)
+		}
+		log.Printf("generated a control-plane admin password; read it with: sudo cat %s", envFile)
+	}
+	if err := db.EnsureAdmin(cmp.Or(os.Getenv("DAWNBX_ADMIN_USER"), env["DAWNBX_ADMIN_USER"], "admin"), pw); err != nil {
+		return fmt.Errorf("admin user: %v", err)
+	}
+
+	seal, err := cluster.LoadSealer(os.Getenv("DAWNBX_CONTROL_PLANE_KEY"), cmp.Or(cfg.controlKey, filepath.Join(srvDir, "control-plane.key")))
+	if err != nil {
+		return err
+	}
+	registry := cluster.NewRegistry(db, seal, auth.DefaultOrg)
+
+	// The worker hooks ask the *cluster* for its own join command and its own
+	// sandbox counts, never the cloud: that keeps the k3s knowledge inside the
+	// cluster and gives FR-011 the cluster's own 409 rather than a cached guess.
+	signer := signerFor(registry)
+	// The registry is the one place that knows which providers exist. Phase one
+	// builds one; the other two are declared so the dashboard can show them as
+	// choices it cannot take yet, which is what the spec asks for and what an
+	// operator needs to know the product has a roadmap rather than a gap.
+	prow := provider.NewRegistry()
+	prow.Declare("aws")
+	prow.Declare("azure")
+	prow.Declare("gcp")
+	prov, err := wireCloud(ctx, cfg, d, signer)
+	if err != nil {
+		// A control plane with no working cloud credentials is still useful: it
+		// lists what it already manages and says why it cannot make more. This
+		// is a warning, not a fatal, so an operator can fix a lapsed credential
+		// without a restart loop.
+		log.Printf("no cloud provider available (%v); cluster management is disabled until it is fixed", err)
+	} else {
+		prow.Register(prov)
+		provisioner := cluster.NewProvisioner(registry, prov)
+		provisioner.SetClientFactory(func(url string) cluster.ClusterClient { return cluster.NewRemote(url) })
+		ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		go provisioner.Watch(ctx)
+		srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, provisioner)}
+		return listen(ctx, cfg, d, srv.ControlPlaneHandler())
+	}
+	srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, nil)}
+	return listen(ctx, cfg, d, srv.ControlPlaneHandler())
+}
+
+// listen serves h on every configured site until ctx ends.
+func listen(ctx context.Context, cfg config, d serverDeps, h http.Handler) error {
 	sites := []site{{
 		srv:   &http.Server{Addr: cfg.listen, Handler: h, ReadHeaderTimeout: d.readHeader},
 		serve: plainServe(d),
@@ -197,6 +324,98 @@ func serve(ctx context.Context, cfg config, d serverDeps) error {
 		}
 	}
 	return nil
+}
+
+// signerFor returns a function that builds a trusted, signed-in client for a
+// cluster URL. It looks the cluster up by URL to get its recorded pin, so a
+// worker operation cannot be redirected to a host that is not the one we made.
+func signerFor(reg *cluster.Registry) func(ctx context.Context, url string) (*cluster.Remote, error) {
+	return func(ctx context.Context, url string) (*cluster.Remote, error) {
+		c, ok := reg.ByURL(url)
+		if !ok {
+			return nil, fmt.Errorf("no cluster is registered at %s", url)
+		}
+		rem := cluster.NewRemote(url)
+		rem.Pin = c.TLSPin
+		pw, err := reg.AdminPassword(c.Name)
+		if err != nil {
+			return nil, err
+		}
+		if err := rem.Login(ctx, pw); err != nil {
+			return nil, err
+		}
+		return rem, nil
+	}
+}
+
+// wireCloud builds the AWS adapter when the process was given what it needs, and
+// returns a clear error when it was not. The template is read here rather than
+// passed as a path, because the adapter wants the document.
+func wireCloud(ctx context.Context, cfg config, d serverDeps,
+	signer func(context.Context, string) (*cluster.Remote, error)) (provider.Provider, error) {
+	if d.newProvider != nil {
+		return d.newProvider(ctx, cfg)
+	}
+	body, err := os.ReadFile(cmp.Or(cfg.templatePath, "deploy/aws/dawnbx.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("read the cluster template (%v); pass --template", err)
+	}
+	return awsprov.New(ctx, awsprov.Options{
+		Region:     cfg.region,
+		ReleaseURL: cfg.releaseURL,
+		Template:   string(body),
+		KeyName:    cfg.keyName,
+		SSHCIDR:    cfg.sshCIDR,
+		Join:       joinThrough(signer),
+		Release:    releaseThrough(signer),
+	})
+}
+
+// joinThrough and releaseThrough are the worker hooks, kept as named functions
+// because they are the whole of the claim that worker operations go through the
+// cluster's own API rather than the cloud — and that is worth a test on its own,
+// since the rest of the adapter cannot be reached without AWS.
+func joinThrough(signer func(context.Context, string) (*cluster.Remote, error)) awsprov.JoinFunc {
+	return func(ctx context.Context, url string) (string, error) {
+		rem, err := signer(ctx, url)
+		if err != nil {
+			return "", err
+		}
+		return rem.JoinCommand(ctx)
+	}
+}
+
+func releaseThrough(signer func(context.Context, string) (*cluster.Remote, error)) awsprov.ReleaseFunc {
+	return func(ctx context.Context, url, node string) error {
+		rem, err := signer(ctx, url)
+		if err != nil {
+			return err
+		}
+		// The cluster's refusal becomes the adapter's own sentinel, so the
+		// adapter relays "busy" instead of terminating a worker still in use.
+		if err := rem.RemoveNode(ctx, node); err != nil {
+			if errors.Is(err, cluster.ErrNodeBusyFromCluster) {
+				return fmt.Errorf("%w: %s", provider.ErrNodeBusy, node)
+			}
+			return err
+		}
+		return nil
+	}
+}
+
+// generateAdminPassword mints a dashboard password for a first-run control
+// plane. The alphabet leaves out the characters that break a shell, a URL and a
+// copy-paste.
+func generateAdminPassword() (string, error) {
+	const alpha = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	for i := range b {
+		b[i] = alpha[int(b[i])%len(alpha)]
+	}
+	return string(b), nil
 }
 
 // plainServe, tlsServe and acmeServe are the three ways a site is served.

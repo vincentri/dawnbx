@@ -345,7 +345,9 @@ func TestMigrateRefusesToDowngrade(t *testing.T) {
 	if _, err := d.db.Exec(`CREATE TABLE settings (k TEXT PRIMARY KEY, v TEXT, other TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.db.Exec(`DELETE FROM schema_migrations WHERE version = 2`); err != nil {
+	// Everything from the settings migration on is unapplied, so migrate()
+	// starts there and hits the failure again.
+	if _, err := d.db.Exec(`DELETE FROM schema_migrations WHERE version >= 2`); err != nil {
 		t.Fatal(err)
 	}
 	err = d.migrate()

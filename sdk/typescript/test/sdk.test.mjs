@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { Sandbox, DawnbxError } from "../dist/index.js"
+import { Sandbox, Client, DawnbxError } from "../dist/index.js"
 
 const sb1 = {
   id: "sb-abc123",
@@ -208,5 +208,93 @@ test("env defaults and create options", async () => {
     if (prevKey === undefined) delete process.env.DAWNBX_API_KEY
     else process.env.DAWNBX_API_KEY = prevKey
     srv.close()
+  }
+})
+
+// A cluster still coming up: every optional field is absent, not empty.
+const BARE = {
+  name: "warm",
+  provider: "aws",
+  region: "us-east-1",
+  instance_type: "t4g.small",
+  disk_gib: 20,
+  status: "provisioning",
+  url: "",
+}
+
+const NODE = {
+  id: "i-0abc",
+  instance_type: "t4g.medium",
+  status: "ready",
+  sandboxes: 3,
+  detail: "kubelet healthy",
+}
+
+const clusterServer = async (handler) => {
+  const seen = []
+  const srv = createServer(async (req, res) => {
+    let body = ""
+    for await (const c of req) body += c
+    seen.push(`${req.method} ${req.url} ${body}`)
+    const json = (s, v) => {
+      res.writeHead(s, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(v))
+    }
+    await handler(req, res, json)
+  })
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  return {
+    seen,
+    client: new Client({
+      url: `http://127.0.0.1:${srv.address().port}`,
+      apiKey: "k",
+    }),
+    close: () => srv.close(),
+  }
+}
+
+test("kill rethrows anything that is not an already-gone sandbox", async () => {
+  const { client, close } = await clusterServer(async (req, res, json) => {
+    if (req.method === "DELETE")
+      return json(410, { code: "expired", message: "sandbox expired" })
+    json(200, sb1)
+  })
+  try {
+    const sb = await Sandbox.get("sb-abc123", {
+      url: client.url,
+      apiKey: "k",
+    })
+    // The server answers 410, not the 404 that disposal tolerates.
+    await assert.rejects(sb.kill(), (e) => {
+      assert.ok(e instanceof DawnbxError)
+      assert.equal(e.code, "expired")
+      return true
+    })
+  } finally {
+    close()
+  }
+})
+
+test("a Client with no API key raises unauthorized before any request", async () => {
+  const { seen, client, close } = await clusterServer(async (req, res, json) =>
+    json(200, { clusters: [] }),
+  )
+  const prevKey = process.env.DAWNBX_API_KEY
+  delete process.env.DAWNBX_API_KEY
+  try {
+    assert.throws(
+      () => new Client({ url: client.url }),
+      (e) => {
+        assert.ok(e instanceof DawnbxError)
+        assert.equal(e.code, "unauthorized")
+        assert.match(e.hint, /DAWNBX_API_KEY/)
+        return true
+      },
+    )
+    assert.deepEqual(seen, [])
+  } finally {
+    if (prevKey === undefined) delete process.env.DAWNBX_API_KEY
+    else process.env.DAWNBX_API_KEY = prevKey
+    close()
   }
 })

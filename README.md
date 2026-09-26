@@ -150,8 +150,10 @@ curl -s -H "Authorization: Bearer $DAWNBX_API_KEY" -d '{}' $DAWNBX_URL/v1/sandbo
 ## API
 
 All routes are under `/v1` and need `Authorization: Bearer <key>`. Key, user,
-org and password routes need a dashboard session instead. Errors are
-JSON: `{"code", "message", "hint"}`.
+org and password routes need a dashboard session instead. The cluster routes
+need a dashboard session too — an API key can never manage infrastructure —
+and all but the capability probe and the provider list need an administrator's.
+Errors are JSON: `{"code", "message", "hint"}`.
 
 | Route | |
 |---|---|
@@ -172,6 +174,22 @@ JSON: `{"code", "message", "hint"}`.
 | `POST /v1/users/{name}/password` | admin: `{"password"}` |
 | `POST /v1/login`, `/logout` | dashboard session cookie (needs header `X-Dawnbx: 1`) |
 | `GET /v1/version` | no auth |
+| `GET /v1/nodes` | admin: the boxes in this cluster, their role and sandbox counts |
+| `GET /v1/nodes/join` | admin: the command that adds a worker (audited) |
+| `DELETE /v1/nodes/{name}` | admin: remove a worker; `409` while it holds sandboxes |
+| `GET /v1/control-plane` | session: control plane or cluster, and which providers this mode can use |
+| `GET /v1/providers` | session: which providers this control plane can use, and which are listed but not yet available |
+| `GET /v1/providers/{p}/regions`, `/instance-types?region=` | admin: what a provider offers here, and at what price. With no `region` the catalogue is priced for the provider's first advertised region, so it is indicative; `POST /v1/providers/{p}/estimate` is priced for the region you name, and its `quote_id` is what the create demands |
+| `POST /v1/providers/{p}/estimate` | admin: price a configuration; creates nothing, and its `quote_id` is what the create demands |
+| `GET` / `POST /v1/clusters` | admin: list, and start provisioning given a `quote_id` from the estimate |
+| `GET` / `DELETE /v1/clusters/{name}` | admin: one cluster, and delete it; `409` while workers are attached |
+| `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's key and password, no SSH needed; `409` until it is ready |
+| `POST /v1/clusters/{name}/rotate` | admin, audited: mint a new pair and retire the old key |
+| `GET` / `POST /v1/clusters/{name}/nodes` | admin: list workers, add one |
+| `DELETE /v1/clusters/{name}/nodes/{node}` | admin: remove a worker; `409` while it holds sandboxes |
+
+`docs/content/docs/guide/api.mdx` is the long form; this table is a copy of it
+and nothing keeps the two equal, so change both.
 
 ## Develop
 

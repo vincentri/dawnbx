@@ -223,7 +223,7 @@ func TestMetaRoundTrip(t *testing.T) {
 	grace := exp.Add(10 * time.Minute)
 	m := Meta{ID: "sb-fields1", Image: "alpine", Parent: "sb-parent1", Created: exp, ExpiresAt: &exp,
 		Status: "running", Reason: "over_disk_limit", Network: "none", CPU: "500m", Memory: "512Mi",
-		GraceUntil: &grace, ProjectID: 4242, Org: "acme", KeyID: "key-1", Node: "worker-1"}
+		GraceUntil: &grace, Org: "acme", KeyID: "key-1", Node: "worker-1"}
 	if err := s.Create(m); err != nil {
 		t.Fatal(err)
 	}

@@ -543,3 +543,36 @@ describe("Account", () => {
     expect(qc.getQueryData(["me"])).toEqual(ME);
   });
 });
+
+// --- control-plane mode -------------------------------------------------------
+
+// A control plane has no cluster, so the Nodes tab has nothing to report. It
+// used to be offered anyway, poll a route that answers 503, and render an empty
+// grid with no error — which reads as "no workers" rather than "there is no
+// cluster here".
+describe("Settings on a control plane", () => {
+  const withProbe = (controlPlane: boolean) => {
+    const calls = installFetch({
+      "GET /v1/me": { json: ADMIN },
+      "GET /v1/control-plane": {
+        json: { control_plane: controlPlane, providers: ["aws"], version: "v1" },
+      },
+      "GET /v1/keys": { json: { keys: [] } },
+    });
+    return { calls, ...renderApp({ entry: "/settings", me: ADMIN }) };
+  };
+
+  it("does not offer the cluster's own worker tab", async () => {
+    const { calls } = withProbe(true);
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "Nodes" })).not.toBeInTheDocument(),
+    );
+    // And it never asks, so nothing polls a route that cannot answer.
+    expect(countTo(calls, "GET", "/v1/nodes")).toBe(0);
+  });
+
+  it("offers it on a cluster, where it is the point of the tab", async () => {
+    withProbe(false);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Nodes" })).toBeInTheDocument());
+  });
+});
