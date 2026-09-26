@@ -1,0 +1,24 @@
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import { Provider } from '@/components/provider';
+import './global.css';
+
+const inter = Inter({
+  subsets: ['latin'],
+});
+
+export const metadata: Metadata = {
+  metadataBase: new URL(process.env.SITE_URL ?? 'http://localhost:3000'),
+  title: { default: 'dawnbx', template: '%s | dawnbx' },
+  description: 'Self-hosted sandboxes for AI agents on one Linux box.',
+};
+
+export default function Layout({ children }: LayoutProps<'/'>) {
+  return (
+    <html lang="en" className={inter.className} suppressHydrationWarning>
+      <body className="flex flex-col min-h-screen">
+        <Provider>{children}</Provider>
+      </body>
+    </html>
+  );
+}

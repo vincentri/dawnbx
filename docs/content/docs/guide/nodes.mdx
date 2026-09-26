@@ -1,0 +1,45 @@
+---
+title: Worker nodes
+description: Spread sandboxes over more machines.
+---
+
+A single server holds a lot of sandboxes, but not all the sandboxes you will
+ever want. When one box is full, add another.
+
+Node traffic goes over **WireGuard**, so each kernel needs the `wireguard`
+module. Any recent Ubuntu or Debian has it.
+
+```sh
+sudo ./install.sh --allow-join 10.0.0.0/16   # on the server: which network may reach k3s (port 6443)
+sudo ./install.sh --join https://10.0.0.5:6443 K10...   # on the worker: the command from Settings > Nodes
+```
+
+The join command is under **Settings > Nodes** (admins only; viewing it is
+logged). The token in it lets a machine join the cluster, so treat it like a
+password. Boxes also need **UDP 51820** open to each other.
+
+Use the same `--data-dir` on workers as on the server. The default is fine.
+
+## Things that bite
+
+- A sandbox's files live on the node that runs it. Its forks go on the same
+  node. If the node dies, its sandboxes stay unavailable until it comes back.
+- Each node's disk is watched on its own. See
+  [disk pressure](/docs/guide/sandboxes#disk-pressure) for what happens at 15%
+  and 10% free.
+- Remove a worker from **Settings > Nodes** once it holds no sandboxes, then
+  run `k3s-agent-uninstall.sh` on it. Re-joining a box with the same hostname
+  needs that removal first.
+
+## On AWS
+
+Launch workers into the stack's `SecurityGroup` output so WireGuard and k3s
+traffic actually reaches them, then run the join command on each.
+
+## Checking on it
+
+```sh
+dawnbx doctor
+```
+
+Run it on the server as root and the host checks (journal, disk quota) run too.

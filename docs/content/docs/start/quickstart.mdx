@@ -1,0 +1,73 @@
+---
+title: Quickstart
+description: Create a sandbox, run a command, clean up.
+---
+
+## The CLI
+
+```sh
+go install ./cmd/dawnbx     # CLI into $(go env GOPATH)/bin; reads ~/.dawnbx/env
+
+id=$(dawnbx create) && dawnbx exec $id "python -c 'print(6*7)'" && dawnbx kill $id
+```
+
+`dawnbx create` prints only the sandbox ID, so it composes with `$(...)`.
+`dawnbx exec` joins its arguments like `ssh` does, so pipes and quotes work.
+
+If something is wrong, `dawnbx doctor` checks the connection, the key, and the
+host, printing how to fix each failure. It exits non-zero if any check failed.
+
+## Python
+
+```python
+from dawnbx import Sandbox  # sdk/python
+
+with Sandbox.create() as sb:
+    print(sb.exec("python -c 'print(6*7)'").stdout)
+```
+
+## TypeScript
+
+```ts
+import { Sandbox } from "dawnbx"; // sdk/typescript, Node 18+
+
+const sb = await Sandbox.create();
+try {
+  console.log((await sb.exec("python -c 'print(6*7)'")).stdout);
+} finally {
+  await sb.kill();
+}
+```
+
+## curl
+
+```sh
+source ~/.dawnbx/env
+curl -s -H "Authorization: Bearer $DAWNBX_API_KEY" -d '{}' $DAWNBX_URL/v1/sandboxes
+```
+
+## Installing the SDKs
+
+The SDKs are not on PyPI or npm yet, so install them from the checkout:
+
+```sh
+pip install ./sdk/python                              # Python
+(cd sdk/typescript && npm install && npm run build)   # TypeScript
+```
+
+Then, in your project:
+
+```sh
+npm install <path-to>/sdk/typescript
+```
+
+Both read `DAWNBX_URL` and `DAWNBX_API_KEY` from the environment
+(`source ~/.dawnbx/env`), or take them as arguments: `url` / `api_key` for
+Python, `url` / `apiKey` for TypeScript.
+
+## What's next
+
+- [How sandboxes work](/docs/guide/sandboxes) — TTLs, forks, disk pressure.
+- [CLI reference](/docs/guide/cli) — every command and flag.
+- [HTTP API](/docs/guide/api) — the routes the SDKs wrap.
+- [Auth and orgs](/docs/guide/auth) — keys, users, permissions, audit log.

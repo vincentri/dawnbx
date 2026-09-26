@@ -1,0 +1,60 @@
+---
+title: Introduction
+description: Self-hosted sandboxes for AI agents on one Linux box.
+---
+
+dawnbx gives you **throwaway Linux sandboxes for AI agents** on hardware you
+control. Each sandbox is a gVisor container on k3s with its own `/workspace`.
+Agents run commands in it, read and write files in it, and
+[fork](/docs/guide/sandboxes#forking) it when they want to try something risky.
+
+Everything is one Linux box: a Go API server, a web dashboard, a CLI, and
+Python and TypeScript SDKs. There is no control plane in someone else's cloud.
+
+## What you get
+
+- **Isolated sandboxes.** gVisor intercepts the syscalls, so a runaway agent
+  hits a sandbox boundary instead of your host kernel.
+- **A real filesystem.** `/workspace` persists for the life of the sandbox and
+  is what [forks](/docs/guide/sandboxes#fork) copy.
+- **Three ways in.** An HTTP API, a `dawnbx` CLI, and Python/TypeScript SDKs.
+  The dashboard adds a web terminal and file upload.
+- **A TTL.** Sandboxes expire on their own, or stay until killed. Nothing is
+  left running because an agent forgot about it.
+
+<Cards>
+  <Card title="Install" href="/docs/start/installation" />
+  <Card title="Quickstart" href="/docs/start/quickstart" />
+  <Card title="How sandboxes work" href="/docs/guide/sandboxes" />
+  <Card title="CLI reference" href="/docs/guide/cli" />
+  <Card title="HTTP API" href="/docs/guide/api" />
+  <Card title="Auth and orgs" href="/docs/guide/auth" />
+</Cards>
+
+## How it fits together
+
+```
+   CLI / SDK / curl          dashboard (web terminal, file upload)
+            |                            |
+            +-----------> HTTP API <----+
+                             |
+                        SQLite or Postgres
+                             |
+                          k3s + gVisor
+                             |
+                    sandboxes on one or more nodes
+```
+
+The API server is the only thing that talks to k3s. Add
+[worker nodes](/docs/guide/nodes) to spread sandboxes over more machines; they
+join the cluster over WireGuard and the API server places sandboxes on whichever
+node has room.
+
+## Requirements
+
+A Linux server (amd64 or arm64) is all you need for a single-node install. Add
+another box only when one no longer holds the load.
+
+## License
+
+Apache-2.0.

@@ -1,0 +1,97 @@
+---
+title: CLI reference
+description: Every dawnbx command and flag.
+---
+
+```sh
+go install ./cmd/dawnbx
+```
+
+The CLI reads `DAWNBX_URL` and `DAWNBX_API_KEY` from the environment, and falls
+back to `~/.dawnbx/env`, then to `http://127.0.0.1:8080`. Under `sudo` it uses
+the home directory of the user who ran the installer.
+
+## Commands
+
+### `dawnbx ls`
+
+Alias `list`. Lists sandboxes in your org with their ID, state, node and
+lifetime left.
+
+```sh
+dawnbx ls
+```
+
+### `dawnbx create`
+
+Prints the new sandbox's ID on stdout, and nothing else, so it composes with
+`$(...)`. Warnings go to stderr.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--image` | `python:3.12-slim` | Container image. |
+| `--network` | server default | `internet` or `none`. |
+| `--ttl` | server default | Lifetime like `30m`, or `forever` to keep it until killed. |
+
+```sh
+id=$(dawnbx create --image python:3.12-slim --network none --ttl 30m)
+```
+
+### `dawnbx exec <id> <cmd...>`
+
+Runs a command in the sandbox. Arguments are joined like `ssh` does, so
+`dawnbx exec sb-x 'ls | wc -l'` runs in `sh -c`.
+
+stdout goes to stdout, stderr to stderr, and the exit code is the command's
+exit code.
+
+```sh
+dawnbx exec $id "python -c 'print(6*7)'"
+```
+
+### `dawnbx fork <id> [n]`
+
+Copies `/workspace` into *n* new sandboxes (default 1) and prints their IDs,
+one per line.
+
+```sh
+dawnbx fork $id 4
+```
+
+### `dawnbx kill <id>...`
+
+Alias `rm`. Deletes one or more sandboxes. Each ID is attempted independently:
+a failure prints to stderr and the exit code is 1, but the rest still run.
+
+```sh
+dawnbx kill $id
+```
+
+### `dawnbx doctor`
+
+Prints one line per check and exits 1 if any failed. API checks run anywhere;
+host checks (journal, disk quota) only when run on the server as root.
+
+```sh
+dawnbx doctor
+```
+
+This is the first thing to run when something misbehaves.
+
+### `dawnbx version`
+
+Prints the client and server versions.
+
+```sh
+dawnbx version
+```
+
+### `dawnbx help`
+
+Alias `-h`, `--help`. Prints usage.
+
+## Files
+
+The CLI does not have file subcommands. Use the
+[files API](/docs/guide/api#sandboxes) or the dashboard's
+file upload.

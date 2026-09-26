@@ -1,0 +1,65 @@
+---
+title: Auth and orgs
+description: API keys, dashboard sessions, orgs, users, and the audit log.
+---
+
+dawnbx has two independent ways in, because the agents and the humans have
+different needs.
+
+## API keys
+
+For the SDKs, the CLI and curl. Make and revoke them in the dashboard under
+**Settings**, or with the [keys API](/docs/guide/api#identity).
+
+- A revoked key stops working within 30 seconds.
+- Keys **cannot** manage keys or users, so a leaked key cannot mint more.
+- A key belongs to an org and sees only that org's sandboxes, keys and audit
+  log.
+- A key's TTL can be set, e.g. `{"ttl": "720h"}`. The key value is returned
+  exactly once, at creation — there is no way to read it back.
+
+```sh
+curl -H "Authorization: Bearer $DAWNBX_API_KEY" $DAWNBX_URL/v1/me
+# {"org":"default","key_id":"key-...","admin":false}
+```
+
+## Dashboard sign-in
+
+A username and password. The session is an HttpOnly cookie. After 5 wrong
+passwords, that username is locked out **from that IP** for 15 minutes.
+
+Passwords must be 10 to 72 characters. Changing a password signs that user out
+everywhere, including the session doing the change.
+
+## Orgs and users
+
+Every key and every user belongs to an org, and sees only that org's
+sandboxes, keys and audit log. Admins see every org, and manage orgs and users
+under **Settings** (role `member` or `admin`).
+
+## Audit log
+
+Creates, kills, forks, logins, and key, user and org changes are all recorded.
+
+```sh
+curl -H "Authorization: Bearer $DAWNBX_API_KEY" $DAWNBX_URL/v1/audit
+```
+
+It returns the last 200 events of your org; admins get all orgs. Reading the
+node join token is logged too.
+
+## Storage
+
+All of the above lives in SQLite at `/var/lib/dawnbx/server/dawnbx.db`.
+
+To run several API nodes against one database:
+
+```sh
+dawnbx-server --database-url postgres://...
+```
+
+Everything else is per-node state, so a single API node is the normal case.
+
+## Next
+
+- [Worker nodes](/docs/guide/nodes)

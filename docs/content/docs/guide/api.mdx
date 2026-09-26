@@ -1,0 +1,56 @@
+---
+title: HTTP API
+description: Every route dawnbx exposes.
+---
+
+All routes are under `/v1` and need `Authorization: Bearer <key>`, except where
+noted. Key, user, org and password routes need a dashboard session instead.
+
+Errors are JSON:
+
+```json
+{ "code": "disk_low", "message": "data volume 12% free; new sandboxes need 15%", "hint": "kill unused sandboxes (dawnbx ls) or grow the data volume" }
+```
+
+`code` is stable and safe to branch on. `message` and `hint` are for humans.
+
+## Sandboxes
+
+| Route | |
+|---|---|
+| `POST /v1/sandboxes` | create: `{"image", "ttl", "network": "internet"\|"none", "cpu", "memory"}`; `"ttl": null` keeps it until killed |
+| `GET /v1/sandboxes`, `GET /v1/sandboxes/{id}` | list, get |
+| `DELETE /v1/sandboxes/{id}` | kill |
+| `POST /v1/sandboxes/{id}/exec` | `{"cmd", "timeout", "background", "env"}` → `{"exit_code", "stdout", "stderr"}` |
+| `GET` / `PUT /v1/sandboxes/{id}/files?path=` | read / write a file under `/workspace` |
+| `POST /v1/sandboxes/{id}/fork` | copy `/workspace` into new sandboxes |
+| `POST /v1/sandboxes/{id}/extend`, `/start` | change TTL, restart a stopped sandbox |
+| `GET /v1/sandboxes/{id}/terminal` | WebSocket TTY (used by the dashboard) |
+
+## Identity
+
+| Route | |
+|---|---|
+| `GET /v1/me` | who the key or session is: `{"org", "key_id", "user", "admin"}` |
+| `GET` / `POST /v1/keys`, `DELETE /v1/keys/{id}` | list, create `{"name", "ttl": "720h", "org"}` (the key is returned once; `org` is admin-only), revoke |
+| `GET /v1/audit` | last 200 events of your org (admins: all) |
+| `POST /v1/me/password` | `{"old", "new"}`: 10 to 72 chars; ends your sessions |
+| `GET` / `POST /v1/orgs` | admin: list, create `{"id", "name"}` |
+| `GET` / `POST /v1/users`, `DELETE /v1/users/{name}` | admin: list, create `{"username", "password", "org", "role"}`, delete |
+| `POST /v1/users/{name}/password` | admin: `{"password"}` |
+| `POST /v1/login`, `/logout` | dashboard session cookie (needs header `X-Dawnbx: 1`) |
+| `GET /v1/version` | no auth |
+
+## OpenAPI
+
+The machine-readable schema lives at `/openapi.yaml` on the server, and in the
+source tree at `internal/api/openapi.yaml`. The dashboard's TypeScript client is
+generated from it, so it is the same contract everything else uses.
+
+```sh
+cd web && npm run gen
+```
+
+## Next
+
+- [Auth and orgs](/docs/guide/auth)

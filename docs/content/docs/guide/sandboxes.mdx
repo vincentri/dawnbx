@@ -1,0 +1,85 @@
+---
+title: Sandboxes
+description: What a sandbox is, how long it lives, forking, and disk pressure.
+---
+
+A sandbox is a gVisor container scheduled onto a k3s node, with its own
+`/workspace` directory. gVisor intercepts the syscalls the container makes, so
+agent code that goes wrong hits the sandbox boundary instead of the host
+kernel.
+
+## Fields
+
+| Field | Meaning |
+|---|---|
+| `image` | Container image. Defaults to `python:3.12-slim`. |
+| `ttl` | Lifetime like `30m`. `null` keeps it until killed. |
+| `network` | `internet` or `none`. |
+| `cpu` | CPU request/limit. |
+| `memory` | Memory request/limit. |
+| `node` | Which k3s node holds the workspace. |
+
+## Lifetime
+
+Every sandbox has a TTL unless you set `ttl` to `null`. When it runs out, the
+sandbox is deleted. A sandbox that is killed leaves nothing behind but its
+audit-log entry.
+
+You can change a TTL at any time:
+
+```sh
+curl -X POST -H "Authorization: Bearer $DAWNBX_API_KEY" \
+  -d '{"ttl":"2h"}' $DAWNBX_URL/v1/sandboxes/sb-xxxx/extend
+```
+
+A stopped sandbox can be brought back with `POST /v1/sandboxes/{id}/start`, as
+long as its node still has room.
+
+## Forking
+
+`POST /v1/sandboxes/{id}/fork` copies the source sandbox's `/workspace` into one
+or more new sandboxes. This is the cheap way to fan a prepared environment out
+to parallel agents: build and install once in the parent, fork *n* times, and
+let each agent break its own copy.
+
+```sh
+dawnbx fork sb-xxxx 4    # four copies, four IDs on stdout
+```
+
+Forks always land on the same node as their source, because the files do.
+
+## Files
+
+Read and write files under `/workspace`:
+
+```sh
+curl -H "Authorization: Bearer $DAWNBX_API_KEY" \
+  "$DAWNBX_URL/v1/sandboxes/sb-xxxx/files?path=/workspace/main.py"
+```
+
+The dashboard adds a file upload UI and a web terminal on top of this.
+
+## Disk pressure
+
+Each node's data disk is watched, and dawnbx thins out before it fills up.
+
+| Free space | What happens |
+|---|---|
+| below 15% | New sandboxes skip that node. Forks of sandboxes on it fail with `disk_low`. |
+| below 10% | Sandboxes with a TTL are deleted, biggest first. Then keep-forever ones are stopped. |
+| no node has room | Create fails with `no_room`. |
+
+When a create returns a `warnings` array, the sandbox was created but something
+is worth knowing — the CLI prints those to stderr.
+
+## Placement
+
+A sandbox's files live on the node that runs it, and its forks go to the same
+node. If that node dies, its sandboxes stay unavailable until it comes back —
+they are not rescheduled. Spread load deliberately with
+[worker nodes](/docs/guide/nodes), and keep the boxes on one logical data disk.
+
+## Next
+
+- [CLI reference](/docs/guide/cli)
+- [HTTP API](/docs/guide/api)

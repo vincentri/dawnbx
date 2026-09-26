@@ -1,0 +1,94 @@
+---
+title: Install
+description: Get dawnbx onto a Linux server, AWS, or a local VM.
+---
+
+One installer sets up everything: k3s, the API server, the dashboard, and
+TLS. Run it on a clean Linux box.
+
+## On a Linux server
+
+```sh
+sudo ./install.sh --domain sb.example.com   # Let's Encrypt; DNS must point here, ports 80+443 open
+sudo ./install.sh                           # no domain: HTTPS with a self-signed cert
+sudo ./install.sh --local                   # laptop/VM: HTTP on 127.0.0.1:8080 only
+```
+
+When it finishes, the installer prints `DAWNBX_URL`, `DAWNBX_API_KEY`, and the
+dashboard login (user `admin` plus a generated password). It also saves the URL
+and key to `~/.dawnbx/env`, which is what the CLI and SDKs read.
+
+Run `./install.sh --help` for the full flag list.
+
+### Choosing the admin password
+
+To pick it yourself:
+
+```sh
+sudo DAWNBX_ADMIN_PASSWORD=... ./install.sh
+```
+
+Lost it? Put a new one in `/var/lib/dawnbx/server/admin.env`:
+
+```
+DAWNBX_ADMIN_PASSWORD=...
+```
+
+Read as-is, no quoting, then `systemctl restart dawnbx`. A password changed in
+the dashboard survives restarts until that line changes.
+
+### Lost the API key
+
+Make a new one in the dashboard under **Settings**, or re-run the installer:
+
+```sh
+sudo ./install.sh --new-key
+```
+
+The old key stops working.
+
+### Headless installs
+
+Run it without a terminal (cloud-init, CI) and it prints the *paths* of the key
+and password files, never the secrets themselves. Read them over SSH.
+
+## On AWS
+
+`deploy/aws/dawnbx.yaml` is a CloudFormation stack: one arm64 EC2 instance
+(t4g.medium by default) with an Elastic IP and HTTPS on `<ip>.sslip.io`, or on
+your domain.
+
+Create it in the console (**Create stack > Upload a template**) and fill in:
+
+- the key pair,
+- your IP for SSH,
+- `ReleaseUrl`: the base URL of a [release](https://github.com), since there is
+  no public release yet — you host one yourself for now.
+
+The stack finishes when the installer does, about 5 minutes. The `SshCommand`
+output then prints the API key and admin password.
+
+- `CpuCredits` defaults to `standard`: the price stays fixed, but CPU slows down
+  once burst credits run out. `unlimited` stays fast and bills the extra.
+- If creation fails, re-create it with rollback disabled ("Preserve
+  successfully provisioned resources"). Then SSH in and read
+  `/var/log/cloud-init-output.log`.
+- Workers: launch them into the stack's `SecurityGroup` output, then run the
+  [join command](/docs/guide/nodes).
+
+## On a Mac
+
+[Lima](https://lima-vm.io) runs it in a Linux VM:
+
+```sh
+brew install lima
+hack/dev-vm.sh                      # ~10 min the first time; re-run to upgrade
+hack/dev-vm.sh dawnbx --new-key    # print a fresh key (old one stops working)
+```
+
+The script copies the VM's `~/.dawnbx/env` to the Mac, so the CLI and SDKs work
+from the host against `http://127.0.0.1:8080`.
+
+## Next
+
+Create your first sandbox in the [quickstart](/docs/start/quickstart).
