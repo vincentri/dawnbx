@@ -32,9 +32,11 @@ func setup(t *testing.T) (*Manager, *fake.Clientset) {
 	}
 	kube := fake.NewClientset()
 	m := New(st, kube, nil)
-	t.Cleanup(m.refill.Wait) // before TempDir removal and the next test's globals
+	// Cleanups run last-in-first-out, so the globals must be restored only
+	// after the background pool refill that reads them has finished.
 	freePct, diskUsage, copyTree := FreePct, DiskUsage, CopyTree
 	t.Cleanup(func() { FreePct, DiskUsage, CopyTree = freePct, diskUsage, copyTree })
+	t.Cleanup(m.refill.Wait) // before TempDir removal and the next test's globals
 	FreePct = func(string) (float64, error) { return 50, nil }
 	DiskUsage = func(string) int64 { return 0 }
 	return m, kube

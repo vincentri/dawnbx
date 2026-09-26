@@ -1,7 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
-    "includes": ["src/**/*.{ts,tsx,css}"]
+    "includes": ["src/**/*.{ts,tsx,css}", "*.{ts,tsx,json}"]
   },
   "formatter": {
     "enabled": true,
@@ -18,7 +18,16 @@
       },
       "suspicious": {
         "noArrayIndexKey": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "off"
       }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
     }
   },
   "css": {

@@ -395,7 +395,7 @@ function Files({ id }: { id: string }) {
         api.POST("/v1/sandboxes/{id}/exec", { ...sid(id), body: { cmd: `ls -1Ap -- ${q(cwd)}` } }),
       ),
   });
-  useEffect(() => setFile(undefined), []);
+  useEffect(() => setFile(undefined), [cwd]);
   const join = (name: string) => (cwd === "." ? name : `${cwd}/${name}`);
   const cat = useMutation({
     mutationFn: async (path: string) => {

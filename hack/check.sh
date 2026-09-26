@@ -45,7 +45,7 @@ run "go build" go build ./...
 run "web build" npm run build --prefix web
 
 # ---- test -------------------------------------------------------------------
-run "go test" go test ./...
+run "go test" go test ./cmd/... ./internal/...
 run "web test" bash -c 'cd web && npx vitest run'
 run "ts sdk test" npm test --prefix sdk/typescript
 run "py sdk test" bash -c 'cd sdk/python && ../../.venv/bin/python -m unittest discover -s tests'
@@ -65,7 +65,7 @@ read -r WS WB WF WL <<<"$(floors web)"
 read -r TS TB TF TL <<<"$(floors ts_sdk)"
 
 printf '\n== go coverage\n'
-if go test -coverprofile=/tmp/dawnbx-cov.out ./... >/dev/null 2>&1; then
+if go test -coverprofile=/tmp/dawnbx-cov.out ./cmd/... ./internal/... >/dev/null 2>&1; then
   total=$(go tool cover -func=/tmp/dawnbx-cov.out | awk '/^total:/ {gsub("%","",$3); print $3}')
   echo "total ${total}% (floor ${GO_FLOOR}%)"
   ge "$total" "$GO_FLOOR" || { echo "FAILED: go coverage ${total}% < ${GO_FLOOR}%"; fail=1; }

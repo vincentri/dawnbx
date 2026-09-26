@@ -1,21 +1,24 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
 
-// Coverage is measured over src/lib only, which is the dashboard's own logic.
-// The shadcn components under src/components/ui and the page components are
-// vendored or thin wrappers: testing them would test Radix, and 95% of another
-// library's source is not a quality signal about this repo. The thresholds are
-// read from hack/coverage-floor.txt by hack/check.sh, which passes them in, so
-// this file does not carry a second copy of the numbers.
+// Node env is the default so `src/lib` tests stay fast; component tests opt
+// into jsdom with a `// @vitest-environment jsdom` docblock.
 export default defineConfig({
-  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  plugins: [react()],
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
   test: {
+    // RTL registers its own afterEach(cleanup) when globals are on.
+    globals: true,
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/test-setup.ts"],
+    restoreMocks: true,
     coverage: {
       provider: "v8",
-      include: ["src/lib/**/*.ts"],
-      exclude: ["src/lib/schema.d.ts", "**/*.test.ts"],
+      include: ["src/lib/**/*.ts", "src/pages/**/*.tsx"],
+      exclude: ["src/lib/schema.d.ts"],
+      reporter: ["text", "json-summary"],
     },
   },
 });
