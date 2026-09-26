@@ -518,13 +518,24 @@ it. Appended here so they are fixed in the same pass rather than carried into an
       take a `Client`, and there is no factory that hands one out — so with `Client` package-private
       they were uncallable from outside the package. The export is now documented with that reason
       at its definition, and `Sandbox` stays the way to *use* a cluster (defect, real).
-- [ ] T117 Enforce the per-sandbox disk cap, or state honestly that it is not enforced.
-      `hack/verify.sh`'s `quota: 80MB write into 50MB cap fails` fails, and the cause is larger
-      than the check: `store.Meta.ProjectID` is declared (`internal/store/store.go:60`) and read
-      nowhere in production, and every `setquota`/`repquota` call in the repository is inside
-      `hack/verify.sh` itself. Nothing in the product ever assigns a project id or sets a quota, so
-      the cap `AGENTS.md` and the docs promise is not applied. Diagnose first — assign a project id
-      per sandbox, set the quota, and make the pod write into a directory carrying it, or amend the
-      isolation constraint and the docs to say what actually happens. Note the installer already
-      documents a fallback, "a 30 s du check" (`install.sh:242-243`), and this feature changed
-      nothing in that path (defect, pre-existing).
+- [X] T117 Correct what the constitution and the live tier claimed about the disk cap, and delete
+      the field naming a mechanism nothing builds (defect, pre-existing). **The finding was partly
+      wrong, and the correction matters more than the fix.** The cap *is* enforced: `DiskLimit` is
+      5 GB (`internal/sandbox/sandbox.go:35`) and the reconciler measures usage every 30 s and
+      stops the sandbox with `over_disk_limit` (`internal/sandbox/reconcile.go`). So a sandbox can
+      overshoot briefly, and where the data volume was formatted with ext4 project quotas the
+      kernel refuses the write instead. The CLI's own warning already said exactly this
+      (`cmd/dawnbx/main.go:371-373`); the constitution said "a project-quota volume" and did not.
+      It now states the cap, the 30 s enforcement and the overshoot, so a reader is not told a
+      guarantee the product does not give.
+
+      The live tier had been asserting something else entirely: it set up a **50 MB** project quota
+      of its own with `chattr`/`setquota` and expected an **80 MB** write to fail — a mechanism at
+      a size the product has never had, two orders of magnitude below its cap. That check had been
+      failing unnoticed because the tier is opt-in. It is removed, with the reason recorded where a
+      reader looks, and the mount check that proves prjquota is present stays. The stop path needs
+      5 GB of writes to exercise live; it is covered by the unit tests, which run in the default
+      tier.
+
+      `store.Meta.ProjectID` named the unbuilt mechanism, is read nowhere, and is deleted rather
+      than left to imply a design that does not exist (defect, pre-existing).

@@ -93,9 +93,12 @@ only after it was nearly deleted as dead weight.
   IMDSv2 with hop limit 1 on AWS today. k3s (6443), kubelet (10250), and
   WireGuard (51820) are reachable only between cluster nodes, never from the
   public internet. Public 6443 is forbidden.
-- **Isolation.** Each sandbox gets gVisor, a project-quota volume, and a
-  NetworkPolicy that blocks the node's instance metadata endpoint. A sandbox is
-  removed with its files; a node cannot be removed while it holds sandboxes.
+- **Isolation.** Each sandbox gets gVisor, a NetworkPolicy that blocks the
+  node's instance metadata endpoint, and a 5 GB disk cap. The cap is enforced by
+  a 30 s measurement, so a sandbox MAY overshoot briefly before it is stopped;
+  where the data volume was formatted with ext4 project quotas the kernel
+  refuses the write instead. A sandbox is removed with its files; a node cannot
+  be removed while it holds sandboxes.
 - **Cost.** Launching a host costs money, on every cloud. The operator MUST see
   the price before a cluster is created, and no paid resource is created without
   instruction.
@@ -161,4 +164,4 @@ assumed.
 and the gate output MUST say so instead of approving. Complexity that violates
 Principle V MUST be justified in writing at the time it is introduced.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26
+**Version**: 1.1.1 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26
