@@ -43,7 +43,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       # A release is the one thing in this repository that leaves the machine,
       # so it is cut from a tree that has already passed, not from whatever was
