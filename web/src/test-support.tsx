@@ -13,6 +13,7 @@ import { type RenderResult, render } from "@testing-library/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { type Principal, setSignedOut } from "@/lib/api";
+import { Clusters, clusterSearch } from "@/pages/clusters";
 import { Sandboxes } from "@/pages/sandboxes";
 import { Settings } from "@/pages/settings";
 import { Shell, signOut } from "@/pages/shell";
@@ -59,6 +60,12 @@ export function renderApp(
       component: Sandboxes,
       validateSearch: (s: Record<string, unknown>): { id?: string } =>
         typeof s.id === "string" ? { id: s.id } : {},
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/clusters",
+      component: Clusters,
+      validateSearch: clusterSearch,
     }),
     createRoute({
       getParentRoute: () => rootRoute,

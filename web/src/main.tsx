@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { setSignedOut } from "@/lib/api";
+import { Clusters, clusterSearch } from "@/pages/clusters";
 import { Sandboxes } from "@/pages/sandboxes";
 import { Settings } from "@/pages/settings";
 import { Shell, signOut } from "@/pages/shell";
@@ -26,6 +27,12 @@ const routeTree = root.addChildren([
     component: Sandboxes,
     validateSearch: (s: Record<string, unknown>): { id?: string } =>
       typeof s.id === "string" ? { id: s.id } : {},
+  }),
+  createRoute({
+    getParentRoute: () => root,
+    path: "/clusters",
+    component: Clusters,
+    validateSearch: clusterSearch,
   }),
   createRoute({
     getParentRoute: () => root,

@@ -19,6 +19,9 @@
 #   --join URL TOKEN     join a server as a worker (copy the command from Settings > Nodes,
 #                        or TOKEN is /var/lib/rancher/k3s/server/node-token on the server)
 #   --report URL         PUT the result as CloudFormation WaitCondition JSON (EC2 user-data)
+#   --bootstrap-parameter NAME
+#                        read the admin password from SSM SecureString NAME; server only,
+#                        and the password never reaches a log or a command line
 # Env: DAWNBX_VERSION, DAWNBX_DOMAIN, DAWNBX_RELEASE_URL, GVISOR_RELEASE (default latest),
 #      DAWNBX_ADMIN_PASSWORD (dashboard login for user "admin"; generated if unset)
 set -euo pipefail
@@ -29,7 +32,7 @@ GVISOR_RELEASE=${GVISOR_RELEASE:-latest}
 DEFAULT_IMAGE=docker.io/library/python:3.12-slim
 MIN_FREE_GB=10
 
-LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" ALLOW_JOIN="" JOIN_URL="" JOIN_TOKEN="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN="" RELEASE_URL=${DAWNBX_RELEASE_URL:-}
+LOCAL=0 YES=0 ADOPT=0 NEWKEY=0 REPORT="" ALLOW_JOIN="" JOIN_URL="" JOIN_TOKEN="" DATA="" DEV="" DOMAIN=${DAWNBX_DOMAIN:-} SERVER_BIN="" CLI_BIN="" RELEASE_URL=${DAWNBX_RELEASE_URL:-} BOOTSTRAP_PARAM=${DAWNBX_BOOTSTRAP_PARAMETER:-}
 while [ $# -gt 0 ]; do
   case $1 in
     --local) LOCAL=1 ;;
@@ -45,7 +48,8 @@ while [ $# -gt 0 ]; do
     --report) REPORT=$2; shift ;;
     --allow-join) ALLOW_JOIN=$2; shift ;;
     --join) JOIN_URL=$2 JOIN_TOKEN=${3:-}; shift 2 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --bootstrap-parameter) BOOTSTRAP_PARAM=$2; shift ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -131,6 +135,16 @@ fi
 case $ALLOW_JOIN in ""|*.*.*.*/*) ;; *) fail "bad --allow-join $ALLOW_JOIN" "expected an IPv4 CIDR" "pass something like 10.0.0.0/16" ;; esac
 case $ALLOW_JOIN in *[!0-9./]*) fail "bad --allow-join $ALLOW_JOIN" "expected an IPv4 CIDR" "pass something like 10.0.0.0/16" ;; esac
 
+if [ -n "$BOOTSTRAP_PARAM" ]; then
+  # A worker has no dashboard, so it can use neither the password nor the role
+  # that reads it: taking the flag here would only put a CLI and a credential
+  # path on a box that needs neither.
+  [ -z "$JOIN_URL" ] || fail "--bootstrap-parameter is a server flag" "a worker has no dashboard to set the admin password on" "drop it, or drop --join"
+  case $BOOTSTRAP_PARAM in
+    *[!a-zA-Z0-9_./-]*) fail "bad --bootstrap-parameter $BOOTSTRAP_PARAM" "an SSM parameter name is letters, digits, dot, dash, underscore and slash" "pass the name, e.g. /dawnbx/admin" ;;
+  esac
+fi
+
 case $DATA in /*) ;; *) fail "--data-dir must be absolute" "got $DATA" "pass a full path like /var/lib/dawnbx" ;; esac
 
 if [ "$UPGRADE" = 0 ]; then
@@ -177,8 +191,12 @@ log "preflight ok ($(uname -m), data dir $DATA, $([ "$UPGRADE" = 1 ] && echo upg
 if command -v apt-get >/dev/null; then
   log "installing packages"
   export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+  # awscli is here only to read the bootstrap parameter out of Parameter Store,
+  # so a run without --bootstrap-parameter installs exactly what it always did.
+  PKGS=(nftables quota curl openssl bzip2)
+  if [ -n "$BOOTSTRAP_PARAM" ]; then PKGS+=(awscli); fi
   apt-get -qq update
-  apt-get -qq install -y nftables quota curl openssl bzip2 >/dev/null
+  apt-get -qq install -y "${PKGS[@]}" >/dev/null
   # Stock cloud kernels ship quota_v2 in linux-modules-extra; without it an
   # ext4 volume with the quota feature fails to mount (ESRCH).
   if ! modinfo quota_v2 >/dev/null 2>&1; then
@@ -226,6 +244,19 @@ if ! findmnt -no OPTIONS --target "$DATA" | grep -q prjquota; then
 fi
 
 NODE_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
+if [ -n "$BOOTSTRAP_PARAM" ]; then
+  # The password is assigned to a variable, never passed to another command, so
+  # it appears in no argument list (ps) and in no log line; and the CLI's stderr
+  # is dropped because an SSM error echoes back request context. The branch below
+  # writes it to $SRV/admin.env, which is where the server reads it from.
+  aws_bin=$(command -v aws) ||
+    fail "no aws CLI to read Parameter Store with" "awscli is not installed and apt-get is unavailable" "install awscli and re-run, or pass the password in DAWNBX_ADMIN_PASSWORD"
+  DAWNBX_ADMIN_PASSWORD=$("$aws_bin" ssm get-parameter --name "$BOOTSTRAP_PARAM" --with-decryption --query Parameter.Value --output text 2>/dev/null) || DAWNBX_ADMIN_PASSWORD=""
+  [ -n "$DAWNBX_ADMIN_PASSWORD" ] ||
+    fail "could not read SSM parameter $BOOTSTRAP_PARAM" "the instance role may not carry the parameter, the name may be wrong, or the value is empty" "check the parameter and the stack's IAM role, then re-run"
+  export DAWNBX_ADMIN_PASSWORD
+fi
+
 if [ -z "$JOIN_URL" ]; then
 # ---------------------------------------------------------------- server identity
 # Lives on the data volume so a rebuilt machine keeps the same API key and TLS

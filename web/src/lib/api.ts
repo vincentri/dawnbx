@@ -25,11 +25,16 @@ export async function must<T>(
     throw new Error("signed out (session expired); sign in again");
   if (!response.ok) {
     const e = error as components["schemas"]["Error"] | undefined;
-    throw new Error(
+    // The envelope's code rides along on the error: a page has to tell
+    // "the price moved" (quote_stale) from "the cluster is not ready"
+    // (cluster_unavailable), and the message alone does not say which.
+    const err = new Error(
       e?.message
         ? e.message + (e.hint ? ` (${e.hint})` : "")
         : `${response.status} ${response.statusText}`,
-    );
+    ) as Error & { code?: string };
+    err.code = e?.code;
+    throw err;
   }
   return data as T;
 }

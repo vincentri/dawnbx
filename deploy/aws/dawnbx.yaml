@@ -3,9 +3,14 @@ Description: >-
   dawnbx on one EC2 instance (k3s + gVisor). HTTPS on <elastic-ip>.sslip.io or your
   domain. Secrets stay on the box; the SshCommand output prints them.
 
-# Runs in the region's default VPC. Creating the stack takes ~5 min; if it fails,
-# re-create with "Preserve successfully provisioned resources" (disable rollback)
-# and read /var/log/cloud-init-output.log on the instance.
+# Runs in the region's default VPC unless VpcCidr says otherwise.
+#
+# Creating the stack takes ~5 min and CloudFormation waits on a WaitCondition the
+# install reports to, so an install failure arrives as a status and a reason
+# rather than as a rollback that would delete the box before the reason could be
+# read. Nothing is re-created by hand: the adapter reads the reason, settles the
+# teardown itself and tells the operator. For a hand-made stack, the reason is on
+# /var/log/cloud-init-output.log on the instance.
 
 Parameters:
   KeyName:
@@ -47,6 +52,25 @@ Parameters:
       Base URL of a release (install.sh, checksums.txt, dawnbx-server-linux-arm64,
       dawnbx-linux-arm64), e.g. https://github.com/OWNER/dawnbx/releases/download/v0.1.0.
     AllowedPattern: ^https://.+[^/]$
+  BootstrapParameter:
+    Type: String
+    Default: ""
+    Description: >-
+      Name of the SSM SecureString the host reads its administrator password from
+      (e.g. /dawnbx/admin). Only the name passes through this template: the secret
+      itself never becomes a stack parameter or a stack output, so it is not left
+      in DescribeStacks for everyone who can call it. Empty means the installer
+      generates the password and the instance gets no IAM role at all.
+  VpcCidr:
+    Type: String
+    Default: ""
+    AllowedPattern: ^$|^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$
+    Description: >-
+      CIDR allowed to reach the apiserver on 6443, e.g. 10.0.0.0/16. Empty uses
+      the default VPC's 172.31.0.0/16. Never set 0.0.0.0/0: the apiserver holds
+      the sandbox secrets. It is a parameter because CloudFormation cannot read
+      the instance's own VPC CIDR into a security group rule — the instance does
+      not exist yet when the rule is created.
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref Domain, ""]]
@@ -54,6 +78,11 @@ Conditions:
     - !Equals [!Ref InstanceType, t4g.medium]
     - !Equals [!Ref InstanceType, t4g.large]
     - !Equals [!Ref InstanceType, t4g.xlarge]
+  HasBootstrap: !Not [!Equals [!Ref BootstrapParameter, ""]]
+  # The default VPC's CIDR is where a stack created without VpcCidr runs (see
+  # the header). The value is chosen where the rule is written, because a
+  # condition answers a question and cannot carry a string.
+  NoVpcCidr: !Equals [!Ref VpcCidr, ""]
 
 Resources:
   Ip:
@@ -80,6 +109,29 @@ Resources:
   SgWireGuard:
     Type: AWS::EC2::SecurityGroupIngress
     Properties: {GroupId: !GetAtt Sg.GroupId, SourceSecurityGroupId: !GetAtt Sg.GroupId, IpProtocol: udp, FromPort: 51820, ToPort: 51820}
+  # A worker is launched into this group later, so it has no group of its own to
+  # be reached through; 6443 is opened to the VPC's CIDR instead. The apiserver
+  # holds the sandbox secrets, so this is never 0.0.0.0/0.
+  SgK3sVpc:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: !GetAtt Sg.GroupId, CidrIp: !If [NoVpcCidr, "172.31.0.0/16", !Ref VpcCidr], IpProtocol: tcp, FromPort: 6443, ToPort: 6443}
+
+  # An instance role that exists for one reason: to read the one SecureString
+  # named by BootstrapParameter. Created only when that name is set, so a stack
+  # installed without a bootstrap password keeps its no-role posture and stays
+  # unreadable from the instance.
+  BootstrapRole:
+    Type: AWS::IAM::Role
+    Condition: HasBootstrap
+    Properties:
+      AssumeRolePolicyDocument: {Version: "2012-10-17", Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: sts:AssumeRole}]}
+      Policies:
+        - PolicyName: read-bootstrap-parameter
+          PolicyDocument: {Version: "2012-10-17", Statement: [{Effect: Allow, Action: [ssm:GetParameter, ssm:GetParameters], Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${BootstrapParameter}"}]}
+  BootstrapProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: HasBootstrap
+    Properties: {Roles: [!Ref BootstrapRole]}
 
   Ready:
     Type: AWS::CloudFormation::WaitConditionHandle
@@ -92,7 +144,9 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
-        # IMDSv2 only, hop limit 1: pods can't reach instance metadata. No IAM role either.
+        # IMDSv2 only, hop limit 1: pods can't reach instance metadata. The
+        # instance profile is the bootstrap reader, nothing wider: its policy
+        # reads one SecureString and no other parameter.
         MetadataOptions: {HttpTokens: required, HttpPutResponseHopLimit: 1, HttpEndpoint: enabled}
         CreditSpecification: !If [Burstable, {CpuCredits: !Ref CpuCredits}, !Ref AWS::NoValue]
 
@@ -102,6 +156,7 @@ Resources:
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
+      IamInstanceProfile: !If [HasBootstrap, !Ref BootstrapProfile, !Ref AWS::NoValue]
       SecurityGroupIds: [!GetAtt Sg.GroupId]
       LaunchTemplate: {LaunchTemplateId: !Ref Lt, Version: !GetAtt Lt.LatestVersionNumber}
       BlockDeviceMappings:
@@ -122,9 +177,16 @@ Resources:
             for _ in $(seq 60); do [ "$(md public-ipv4)" = '${Ip}' ] && break; sleep 5; done
             # Workers join from inside the VPC (the security group limits it further).
             cidr=$(md "network/interfaces/macs/$(md mac)/vpc-ipv4-cidr-block")
+            # The administrator password reaches this host through the instance
+            # role, not through the template: BootstrapParameter is the SSM
+            # parameter NAME, so the secret never appears in DescribeStacks, in
+            # this user-data, or on any command line. install.sh owns the read,
+            # because that is the one place that knows how to install the CLI it
+            # needs and how to hand the value to the existing admin.env path.
+            # A second reader here would be a second thing to keep correct.
             # install.sh downloads the binaries and checks them against checksums.txt.
             bash install.sh --yes --domain '${Dom}' --allow-join "$cidr" --report '${Ready}' \
-              --release-url '${ReleaseUrl}'
+              --release-url '${ReleaseUrl}' --bootstrap-parameter '${BootstrapParameter}'
           - Dom: !If [HasDomain, !Ref Domain, !Sub "${Ip}.sslip.io"]
   IpAssoc:
     Type: AWS::EC2::EIPAssociation
@@ -146,3 +208,8 @@ Outputs:
   SecurityGroup:
     Value: !GetAtt Sg.GroupId
     Description: Launch workers into this group, then run the join command from Settings > Nodes on them.
+  LaunchTemplateId:
+    Value: !GetAtt Lt.LaunchTemplateId
+    Description: >-
+      The same id as the launch template this stack created (Lt), which the
+      workers inherit so their MetadataOptions keep pods away from IMDS.

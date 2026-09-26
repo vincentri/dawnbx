@@ -310,3 +310,47 @@ func TestRouteNotFoundIsExplicit(t *testing.T) {
 		t.Error("terminal route served without an upgrade")
 	}
 }
+
+// TestClusterRoutesInTheAuthMatrix: the cluster surface joins the same table
+// as everything else. It is the surface that spends money and destroys cloud
+// resources, so the three identities are checked on every one of its routes:
+// nothing at all is unauthorized, a live API key — the installer's own — is
+// refused because keys cannot reach the dashboard's half of the API, and only
+// an administrator's own session gets past.
+func TestClusterRoutesInTheAuthMatrix(t *testing.T) {
+	c := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	admin := c.admin
+
+	for _, r := range []struct{ method, path, body string }{
+		{"GET", "/v1/control-plane", ""},
+		{"GET", "/v1/providers", ""},
+		{"GET", "/v1/providers/aws/regions", ""},
+		{"GET", "/v1/providers/aws/instance-types", ""},
+		{"POST", "/v1/providers/aws/estimate", `{"region":"us-east-1","instance_type":"t4g.medium","disk_gib":30}`},
+		{"GET", "/v1/clusters", ""},
+		{"POST", "/v1/clusters", `{"name":"n","region":"us-east-1","instance_type":"t4g.medium","disk_gib":30,"quote_id":"q"}`},
+		{"GET", "/v1/clusters/n", ""},
+		{"DELETE", "/v1/clusters/n", ""},
+		{"GET", "/v1/clusters/n/credentials", ""},
+		{"POST", "/v1/clusters/n/rotate", ""},
+		{"GET", "/v1/clusters/n/nodes", ""},
+		{"POST", "/v1/clusters/n/nodes", `{"instance_type":"t4g.medium","disk_gib":30}`},
+		{"DELETE", "/v1/clusters/n/nodes/i-1", ""},
+	} {
+		w := c.do(r.method, r.path, r.body)
+		if w.Code != 401 || envelope(t, w)["code"] != "unauthorized" {
+			t.Errorf("%s %s unauthenticated: %d %s", r.method, r.path, w.Code, w.Body)
+		}
+		w = c.do(r.method, r.path, r.body, "Authorization", "Bearer dawnbx_wrong")
+		if w.Code != 401 {
+			t.Errorf("%s %s wrong key: %d %s", r.method, r.path, w.Code, w.Body)
+		}
+		w = c.do(r.method, r.path, r.body, "Authorization", "Bearer dawnbx_good")
+		if w.Code != 403 {
+			t.Errorf("%s %s installer key: %d %s", r.method, r.path, w.Code, w.Body)
+		}
+		if w := c.do(r.method, r.path, r.body, admin...); w.Code == 401 {
+			t.Errorf("%s %s admin session: %d %s", r.method, r.path, w.Code, w.Body)
+		}
+	}
+}

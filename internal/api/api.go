@@ -25,17 +25,43 @@ var Version = "dev"
 var ui embed.FS
 
 type Server struct {
-	M     *sandbox.Manager
-	Auth  *auth.DB
-	limit limiter
+	M    *sandbox.Manager
+	Auth *auth.DB
+	// Control is the control plane's cluster-management dependency set. It is
+	// nil in cluster mode, where the sandbox API is served instead.
+	Control *Control
+	limit   limiter
 }
 
-func (s *Server) Handler() http.Handler {
+// ControlPlaneHandler serves the control plane: the identity surface, the
+// dashboard, and the provider-neutral cluster routes. It never serves the
+// sandbox API, because a control plane has no sandbox runtime — the cluster
+// routes that used to answer it say cluster_unavailable instead.
+//
+// It works with a nil Control. A control plane that started with no provider
+// wired in still signs people in and still answers the routes that need no
+// cloud, because a server that cannot start is a server nobody can fix the
+// credentials from.
+func (s *Server) ControlPlaneHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"version": Version, "api": "v1"})
-	})
-	h := func(pattern string, fn func(w http.ResponseWriter, r *http.Request) (any, error)) {
+	mux.HandleFunc("GET /v1/version", s.version)
+	h := s.router(mux)
+	s.sessions(mux)
+	s.manage(h)
+	s.clusters(h)
+	s.noCluster(h)
+	s.dashboard(mux)
+	return mux
+}
+
+func (s *Server) version(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]string{"version": Version, "api": "v1"})
+}
+
+// router wraps fn in the three things every /v1 route shares: authentication,
+// the shared error envelope, and 200 for any success.
+func (s *Server) router(mux *http.ServeMux) route {
+	return func(pattern string, fn func(w http.ResponseWriter, r *http.Request) (any, error)) {
 		mux.HandleFunc(pattern, s.auth(func(w http.ResponseWriter, r *http.Request) {
 			v, err := fn(w, r)
 			if err != nil {
@@ -47,12 +73,92 @@ func (s *Server) Handler() http.Handler {
 			}
 		}))
 	}
+}
+
+// sessions is the dashboard's own credential: sign in, sign out. It is not
+// behind s.auth, because it is what produces the identity s.auth checks.
+func (s *Server) sessions(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Dawnbx") != "1" { // stops cross-site login forms (login CSRF)
+			writeErr(w, &sandbox.Error{Status: 403, Code: "forbidden", Message: "login needs the X-Dawnbx: 1 header"})
+			return
+		}
+		var req struct{ Username, Password string }
+		if _, err := decode(r, &req); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if err := s.limit.check(req.Username, r); err != nil {
+			writeErr(w, err)
+			return
+		}
+		tok, p, err := s.Auth.Login(req.Username, req.Password)
+		s.limit.record(req.Username, r, err)
+		if errors.Is(err, auth.ErrUnauthorized) {
+			writeErr(w, &sandbox.Error{Status: 401, Code: "unauthorized", Message: "wrong username or password",
+				Hint: "5 misses lock it for 15 min; an admin can set a new password (admin itself: edit admin.env, restart dawnbx)"})
+			return
+		}
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: tok, Path: "/", MaxAge: int(auth.SessionTTL.Seconds()),
+			HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode})
+		s.Auth.Audit(p.Org, p.Actor(), "login", "")
+		writeJSON(w, 200, p)
+	})
+	mux.HandleFunc("POST /v1/logout", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(cookieName); err == nil {
+			s.Auth.Logout(c.Value)
+		}
+		http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode})
+		w.WriteHeader(204)
+	})
+}
+
+// dashboard is the embedded UI and the catch-all. A path that is not an API
+// route answers with the envelope rather than Go's plain text, so a client
+// never has to parse two error formats.
+func (s *Server) dashboard(mux *http.ServeMux) {
+	files := http.FileServerFS(ui)
+	page := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/ui/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // names carry a content hash
+		} else if _, err := fs.Stat(ui, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+			r.URL.Path = "/ui/" // client-side routes like /ui/settings
+		}
+		files.ServeHTTP(w, r)
+	}
+	mux.HandleFunc("GET /{$}", page)
+	mux.HandleFunc("GET /ui/", page)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeErr(w, &sandbox.Error{Status: 404, Code: "not_found", Message: r.Method + " " + r.URL.Path + " is not an API route",
+			Hint: "routes live under /v1; the SDK version may not match this server (GET /v1/version)"})
+	})
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/version", s.version)
+	h := s.router(mux)
 	h("GET /v1/status", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		st, err := s.M.Status()
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"version": Version, "free_pct": st.FreePct, "warm": st.Warm, "pool_size": st.PoolSize}, nil
+	})
+	// The same probe a control plane answers with true. A client that has to
+	// treat a 404 as "not a control plane" will eventually forget to.
+	h("GET /v1/control-plane", func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := signedIn(r); err != nil {
+			return nil, err
+		}
+		return map[string]any{"control_plane": false, "providers": []string{}, "version": Version}, nil
 	})
 	h("POST /v1/sandboxes", func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var req sandbox.CreateReq
@@ -150,65 +256,9 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/sandboxes/{id}/terminal", s.auth(s.terminal))
 
-	// Dashboard sign-in: username/password -> HttpOnly session cookie.
-	mux.HandleFunc("POST /v1/login", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Dawnbx") != "1" { // stops cross-site login forms (login CSRF)
-			writeErr(w, &sandbox.Error{Status: 403, Code: "forbidden", Message: "login needs the X-Dawnbx: 1 header"})
-			return
-		}
-		var req struct{ Username, Password string }
-		if _, err := decode(r, &req); err != nil {
-			writeErr(w, err)
-			return
-		}
-		if err := s.limit.check(req.Username, r); err != nil {
-			writeErr(w, err)
-			return
-		}
-		tok, p, err := s.Auth.Login(req.Username, req.Password)
-		s.limit.record(req.Username, r, err)
-		if errors.Is(err, auth.ErrUnauthorized) {
-			writeErr(w, &sandbox.Error{Status: 401, Code: "unauthorized", Message: "wrong username or password",
-				Hint: "5 misses lock it for 15 min; an admin can set a new password (admin itself: edit admin.env, restart dawnbx)"})
-			return
-		}
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: tok, Path: "/", MaxAge: int(auth.SessionTTL.Seconds()),
-			HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode})
-		s.Auth.Audit(p.Org, p.Actor(), "login", "")
-		writeJSON(w, 200, p)
-	})
-	mux.HandleFunc("POST /v1/logout", func(w http.ResponseWriter, r *http.Request) {
-		if c, err := r.Cookie(cookieName); err == nil {
-			s.Auth.Logout(c.Value)
-		}
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode})
-		w.WriteHeader(204)
-	})
+	s.sessions(mux)
 	s.manage(h)
-
-	// Dashboard: static files only; it calls /v1 with its session cookie.
-	files := http.FileServerFS(ui)
-	page := func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if strings.HasPrefix(r.URL.Path, "/ui/assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // names carry a content hash
-		} else if _, err := fs.Stat(ui, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
-			r.URL.Path = "/ui/" // client-side routes like /ui/settings
-		}
-		files.ServeHTTP(w, r)
-	}
-	mux.HandleFunc("GET /{$}", page)
-	mux.HandleFunc("GET /ui/", page)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeErr(w, &sandbox.Error{Status: 404, Code: "not_found", Message: r.Method + " " + r.URL.Path + " is not an API route",
-			Hint: "routes live under /v1; the SDK version may not match this server (GET /v1/version)"})
-	})
+	s.dashboard(mux)
 	return mux
 }
 
@@ -321,6 +371,17 @@ func writeErr(w http.ResponseWriter, err error) {
 	if !errors.As(err, &e) {
 		log.Printf("internal error: %v", err)
 		e = &sandbox.Error{Status: 500, Code: "internal", Message: err.Error(), Hint: "check `journalctl -u dawnbx` on the server"}
+	}
+	if e.Status == 0 {
+		// A constructor that forgot its status must never reach WriteHeader:
+		// a zero there is a panic in net/http, and a 500 says "the server is
+		// at fault" which is the truth about a code with no status attached.
+		// The envelope shape is unchanged, and the caller's error is not
+		// mutated underneath it.
+		log.Printf("error with no status: %v", e)
+		c := *e
+		c.Status = 500
+		e = &c
 	}
 	writeJSON(w, e.Status, e)
 }

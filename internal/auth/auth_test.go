@@ -19,19 +19,25 @@ import (
 func open(t *testing.T) *DB {
 	url := os.Getenv("DAWNBX_TEST_DATABASE_URL")
 	if url == "" {
-		url = filepath.Join(t.TempDir(), "dawnbx.db")
-	} else {
-		db, err := sql.Open("pgx", url) // raw: Open would migrate before the drop
-		if err != nil {
+		return openURL(t, filepath.Join(t.TempDir(), "dawnbx.db"))
+	}
+	raw, err := sql.Open("pgx", url) // raw: Open would migrate before the drop
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tb := range []string{"cluster_ops", "cluster_nodes", "cluster_credentials", "clusters",
+		"audit_log", "sessions", "api_keys", "users", "orgs", "settings", "schema_migrations"} {
+		if _, err := raw.Exec(`DROP TABLE IF EXISTS ` + tb); err != nil {
 			t.Fatal(err)
 		}
-		for _, tb := range []string{"audit_log", "sessions", "api_keys", "users", "orgs", "settings", "schema_migrations"} {
-			if _, err := db.Exec(`DROP TABLE IF EXISTS ` + tb); err != nil {
-				t.Fatal(err)
-			}
-		}
-		db.Close()
 	}
+	raw.Close()
+	return openURL(t, url)
+}
+
+// openURL opens url and closes it at the end of the test. Handing it the same
+// url twice is how the migration test proves a second Open is a no-op.
+func openURL(t *testing.T, url string) *DB {
 	d, err := Open(url)
 	if err != nil {
 		t.Fatal(err)
@@ -232,5 +238,238 @@ func TestIsDuplicatePostgres(t *testing.T) {
 	}
 	if isDuplicate(&pgconn.PgError{Code: "23503"}) { // foreign_key_violation
 		t.Error("foreign key read as a duplicate")
+	}
+}
+
+func newCluster(name string, at time.Time) Cluster {
+	return Cluster{Name: name, Provider: "aws", Region: "us-east-1", InstanceType: "t4g.medium",
+		DiskGiB: 60, Status: "provisioning", Phase: "validating", QuoteID: "q-" + name,
+		HourlyUSD: 0.0168, MonthlyUSD: 12.26, ProviderState: `{"stack":"dawnbx-` + name + `"}`,
+		Created: at, Updated: at}
+}
+
+// The four cluster tables migrate onto a fresh database, and a second Open on
+// the same file leaves the rows alone.
+func TestClusterMigrations(t *testing.T) {
+	url := filepath.Join(t.TempDir(), "dawnbx.db")
+	d := openURL(t, url)
+	now := time.Unix(1_800_000_000, 0)
+	d.Now = func() time.Time { return now }
+	if err := d.CreateCluster(newCluster("alpha", now)); err != nil {
+		t.Fatal(err)
+	}
+
+	again := openURL(t, url)
+	c, err := again.GetCluster("alpha")
+	if err != nil || c.Name != "alpha" {
+		t.Fatal(c, err)
+	}
+	if err := again.CreateCluster(newCluster("beta", now)); err != nil {
+		t.Fatal("migration on an existing database:", err)
+	}
+}
+
+func TestClusters(t *testing.T) {
+	d := open(t)
+	now := time.Unix(1_800_000_000, 0)
+	d.Now = func() time.Time { return now }
+
+	c := newCluster("alpha", now)
+	c.Domain = "alpha.example.com"
+	if err := d.CreateCluster(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateCluster(newCluster("alpha", now)); !errors.Is(err, ErrExists) {
+		t.Error("duplicate name", err)
+	}
+
+	got, err := d.GetCluster("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := c
+	want.Created, want.Updated = now.UTC(), now.UTC()
+	if *got != want {
+		t.Errorf("round trip: got %+v want %+v", *got, want)
+	}
+
+	// A record written without a timestamp takes the database's clock, so
+	// nothing ends up at the zero time.
+	d.Now = func() time.Time { return now.Add(time.Hour) }
+	if err := d.CreateCluster(newCluster("beta", time.Time{})); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = d.GetCluster("beta"); err != nil || !got.Created.Equal(now.Add(time.Hour)) {
+		t.Errorf("unstamped row: %+v %v", got, err)
+	}
+	d.Now = func() time.Time { return now }
+
+	list, err := d.ListClusters()
+	if err != nil || len(list) != 2 || list[0].Name != "beta" {
+		t.Fatalf("newest first: %+v %v", list, err)
+	}
+
+	now = now.Add(2 * time.Hour)
+	if err := d.SetClusterState("alpha", "ready", "", "install finished"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = d.GetCluster("alpha"); err != nil || got.Status != "ready" ||
+		got.Phase != "" || got.Detail != "install finished" || !got.Updated.Equal(now) {
+		t.Errorf("state: %+v %v", got, err)
+	}
+
+	now = now.Add(time.Hour)
+	if err := d.SetClusterURL("alpha", "https://alpha.example.com", "sha256/abc"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = d.GetCluster("alpha"); err != nil || got.URL != "https://alpha.example.com" ||
+		got.TLSPin != "sha256/abc" || !got.Updated.Equal(now) {
+		t.Errorf("url: %+v %v", got, err)
+	}
+
+	if err := d.DeleteCluster("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.GetCluster("alpha"); !errors.Is(err, sql.ErrNoRows) {
+		t.Error("cluster survived delete", err)
+	}
+	if err := d.DeleteCluster("alpha"); err != nil {
+		t.Error("second delete", err)
+	}
+}
+
+func TestClusterCredentials(t *testing.T) {
+	d := open(t)
+	now := time.Unix(1_800_000_000, 0)
+	d.Now = func() time.Time { return now }
+	if err := d.CreateCluster(newCluster("alpha", now)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The admin password is written before the host exists; the key arrives
+	// only once the cluster has minted one.
+	if err := d.SaveCredentials("alpha", []byte("sealed-admin"), nil); err != nil {
+		t.Fatal(err)
+	}
+	admin, api, rotated, err := d.Credentials("alpha")
+	if err != nil || string(admin) != "sealed-admin" || api != nil || rotated != nil {
+		t.Fatalf("%q %v %v %v", admin, api, rotated, err)
+	}
+
+	if err := d.SaveCredentials("alpha", []byte("sealed-admin"), []byte("sealed-key")); err != nil {
+		t.Fatal(err)
+	}
+	if admin, api, _, err = d.Credentials("alpha"); err != nil || api == nil ||
+		string(admin) != "sealed-admin" || string(api) != "sealed-key" {
+		t.Fatalf("%q %q %v", admin, api, err)
+	}
+
+	// Re-saving only the admin password must not throw the key away.
+	if err := d.SaveCredentials("alpha", []byte("sealed-admin-2"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, api, _, err = d.Credentials("alpha"); err != nil || string(api) != "sealed-key" {
+		t.Errorf("key lost on a password-only save: %q %v", api, err)
+	}
+
+	now = now.Add(time.Hour)
+	if err := d.RotateCredentials("alpha", []byte("new-admin"), []byte("new-key")); err != nil {
+		t.Fatal(err)
+	}
+	admin, api, rotated, err = d.Credentials("alpha")
+	if err != nil || string(admin) != "new-admin" || string(api) != "new-key" ||
+		rotated == nil || !rotated.Equal(now) {
+		t.Errorf("rotation: %q %q %v %v", admin, api, rotated, err)
+	}
+
+	if err := d.DeleteCluster("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := d.Credentials("alpha"); !errors.Is(err, sql.ErrNoRows) {
+		t.Error("credentials outlived the cluster", err)
+	}
+}
+
+func TestClusterNodesAndOps(t *testing.T) {
+	d := open(t)
+	now := time.Unix(1_800_000_000, 0)
+	d.Now = func() time.Time { now = now.Add(time.Second); return now }
+	if err := d.CreateCluster(newCluster("alpha", time.Unix(1_800_000_000, 0))); err != nil {
+		t.Fatal(err)
+	}
+	// The foreign key is what stops a node or an op row for a cluster that
+	// was never created.
+	if err := d.AddNode(ClusterNode{Cluster: "ghost", ID: "i-1"}); err == nil {
+		t.Error("node for a cluster that does not exist")
+	}
+	if err := d.RecordOp("ghost", "create", "validating", ""); err == nil {
+		t.Error("op for a cluster that does not exist")
+	}
+
+	for _, id := range []string{"i-1", "i-2"} {
+		if err := d.AddNode(ClusterNode{Cluster: "alpha", ID: id, InstanceType: "t4g.medium",
+			Status: "provisioning", Detail: "launching"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.AddNode(ClusterNode{Cluster: "alpha", ID: "i-1"}); !errors.Is(err, ErrExists) {
+		t.Error("duplicate node", err)
+	}
+	nodes, err := d.ListNodes("alpha")
+	if err != nil || len(nodes) != 2 || nodes[0].ID != "i-1" || nodes[0].InstanceType != "t4g.medium" {
+		t.Fatalf("nodes: %+v %v", nodes, err)
+	}
+	if nodes[0].Created.IsZero() || nodes[0].Sandboxes != 0 {
+		t.Errorf("node defaults: %+v", nodes[0])
+	}
+
+	if err := d.SetNodeStatus("alpha", "i-1", "ready", "", 3); err != nil {
+		t.Fatal(err)
+	}
+	if nodes, err = d.ListNodes("alpha"); err != nil || nodes[0].Status != "ready" || nodes[0].Sandboxes != 3 {
+		t.Errorf("node status: %+v %v", nodes, err)
+	}
+
+	for _, phase := range []string{"requesting_host", "bootstrapping", "ready"} {
+		if err := d.RecordOp("alpha", "create", phase, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.RecordOp("alpha", "add_node", "requesting_host", ""); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := d.Ops("alpha", "create", 10)
+	if err != nil || len(ops) != 3 {
+		t.Fatalf("ops: %+v %v", ops, err)
+	}
+	if ops[0].Phase != "ready" || ops[1].Phase != "bootstrapping" || ops[2].Phase != "requesting_host" {
+		t.Errorf("not newest first: %+v", ops)
+	}
+	if ops[0].Cluster != "alpha" || ops[0].ID == "" || ops[0].Created.IsZero() {
+		t.Errorf("op row: %+v", ops[0])
+	}
+	if ops, err = d.Ops("alpha", "create", 2); err != nil || len(ops) != 2 || ops[0].Phase != "ready" {
+		t.Errorf("limit: %+v %v", ops, err)
+	}
+	if ops, err = d.Ops("alpha", "", 10); err != nil || len(ops) != 4 {
+		t.Errorf("every kind: %+v %v", ops, err)
+	}
+
+	if err := d.DeleteNode("alpha", "i-2"); err != nil {
+		t.Fatal(err)
+	}
+	if nodes, err = d.ListNodes("alpha"); err != nil || len(nodes) != 1 || nodes[0].ID != "i-1" {
+		t.Errorf("after delete: %+v %v", nodes, err)
+	}
+
+	// Deleting the cluster takes its workers and its phase history with it.
+	if err := d.DeleteCluster("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if nodes, err = d.ListNodes("alpha"); err != nil || len(nodes) != 0 {
+		t.Errorf("nodes outlived the cluster: %+v %v", nodes, err)
+	}
+	if ops, err = d.Ops("alpha", "", 10); err != nil || len(ops) != 0 {
+		t.Errorf("ops outlived the cluster: %+v %v", ops, err)
 	}
 }

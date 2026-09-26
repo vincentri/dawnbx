@@ -65,7 +65,12 @@ export class DawnbxError extends Error {
   }
 }
 
-class Client {
+/**
+ * The HTTP client. Exported so the control-plane helpers below have something a
+ * caller can actually pass: they take a `Client`, so keeping this private would
+ * make them uncallable from outside the module.
+ */
+export class Client {
   readonly url: string
   private readonly key: string
 
@@ -277,4 +282,53 @@ class Files {
   async write(path: string, data: string | Uint8Array): Promise<void> {
     await this.c.req("PUT", this.path(path), data)
   }
+}
+
+/**
+ * Control plane, read-only.
+ *
+ * The cluster-management routes are administrator tooling, not the agent path.
+ * Creating, rotating or deleting spends money or destroys infrastructure, so
+ * those actions are deliberately absent here: they belong behind a human at the
+ * dashboard. These three need an administrator session, because the API refuses
+ * an API key for anything that manages infrastructure.
+ */
+export interface Cluster {
+  name: string
+  provider: string
+  region: string
+  instance_type: string
+  disk_gib: number
+  status: string
+  url: string
+  phase?: string
+  detail?: string
+  hourly_usd?: number
+  monthly_usd?: number
+  /** SHA-256 SPKI fingerprint of the cluster's certificate, to compare out of band. */
+  tls_pin?: string
+}
+
+export interface ClusterNode {
+  id: string
+  instance_type: string
+  status: string
+  sandboxes?: number
+  detail?: string
+}
+
+export async function listClusters(c: Client): Promise<Cluster[]> {
+  return (await c.req("GET", "/v1/clusters")).clusters
+}
+
+export async function getCluster(c: Client, name: string): Promise<Cluster> {
+  return c.req("GET", `/v1/clusters/${encodeURIComponent(name)}`)
+}
+
+export async function listClusterNodes(
+  c: Client,
+  name: string,
+): Promise<ClusterNode[]> {
+  return (await c.req("GET", `/v1/clusters/${encodeURIComponent(name)}/nodes`))
+    .nodes
 }

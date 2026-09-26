@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -520,5 +521,37 @@ func TestWireContracts(t *testing.T) {
 	}
 	if w := extend(`{"ttl":"1h"}`); w.Code != 200 || strings.Contains(w.Body.String(), `"expires_at":null`) {
 		t.Errorf("extend by an hour: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestWriteErrNeverEmitsAZeroStatus: writeErr is the one place a status is
+// trusted from a value someone else built. A code with no status is a
+// constructor's mistake, and it has to become a 500 here rather than a panic
+// inside net/http — a panic takes the whole server down over one bad error
+// value, which is the opposite of what the envelope is for.
+func TestWriteErrNeverEmitsAZeroStatus(t *testing.T) {
+	e := &sandbox.Error{Code: "cluster_unavailable", Message: "no status was set"}
+	w := httptest.NewRecorder()
+	writeErr(w, e)
+	if w.Code != 500 {
+		t.Errorf("status %d, want 500", w.Code)
+	}
+	if got := envelope(t, w); got["code"] != "cluster_unavailable" {
+		t.Errorf("the code must survive: %v", got["code"])
+	}
+	if e.Status != 0 {
+		t.Errorf("the caller's error was mutated: status %d", e.Status)
+	}
+	// A status that is there is left alone, and an error that is not an
+	// envelope at all is still a 500.
+	w = httptest.NewRecorder()
+	writeErr(w, &sandbox.Error{Status: 409, Code: "quote_stale", Message: "stale"})
+	if w.Code != 409 {
+		t.Errorf("a good status was rewritten: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	writeErr(w, errors.New("boom"))
+	if w.Code != 500 {
+		t.Errorf("a plain error: %d", w.Code)
 	}
 }

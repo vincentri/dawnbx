@@ -4,7 +4,19 @@ Self-hosted gVisor sandboxes for AI agents. Go control plane + CLI (`cmd/`, `int
 
 This file is the only agent rules file. Do not add a per-folder `AGENTS.md` until a section runs 15+ lines and is irrelevant to most tasks, or this file passes ~150 lines. A nested file is additive — never a copy of this one — and the more specific file wins where they conflict.
 
-**Governance:** `.specify/memory/constitution.md` is the constitution (v1.0.0, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
+**Governance:** `.specify/memory/constitution.md` is the constitution (v1.1.0, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
+
+**Cluster management is provider-neutral.** The control plane (`dawnbx-server
+--control-plane`) manages clusters; sandboxes still run only inside them. The
+provider boundary in `internal/provider` carries values and intent — `ClusterSpec`,
+`Bootstrap`, and an opaque `Handle` — never a provider's resource names. A cloud's
+SDK, orchestration model and secret store live in its adapter and nowhere else, and
+`internal/cluster` must not import an adapter. In the contract, a provider is a
+path *value* (`/v1/providers/{provider}/…`), never a path family of its own, and no
+response body may carry a stack name, security group, launch template or secret
+parameter. Two tests enforce this: `internal/provider`'s import-purity test and the
+orchestration tests' use of a fake provider. Adding a second provider means a new
+adapter, not a migration.
 
 ## 1. All development runs in a git worktree
 

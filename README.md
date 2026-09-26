@@ -150,8 +150,9 @@ curl -s -H "Authorization: Bearer $DAWNBX_API_KEY" -d '{}' $DAWNBX_URL/v1/sandbo
 ## API
 
 All routes are under `/v1` and need `Authorization: Bearer <key>`. Key, user,
-org and password routes need a dashboard session instead. Errors are
-JSON: `{"code", "message", "hint"}`.
+org and password routes need a dashboard session instead, and the cluster routes
+need an administrator's session — an API key can never manage infrastructure.
+Errors are JSON: `{"code", "message", "hint"}`.
 
 | Route | |
 |---|---|
@@ -172,6 +173,15 @@ JSON: `{"code", "message", "hint"}`.
 | `POST /v1/users/{name}/password` | admin: `{"password"}` |
 | `POST /v1/login`, `/logout` | dashboard session cookie (needs header `X-Dawnbx: 1`) |
 | `GET /v1/version` | no auth |
+| `GET /v1/nodes` | admin: the boxes in this cluster, their role and sandbox counts |
+| `GET /v1/nodes/join` | admin: the command that adds a worker (audited) |
+| `DELETE /v1/nodes/{name}` | admin: remove a worker; `409` while it holds sandboxes |
+| `GET /v1/control-plane`, `GET /v1/providers` | control plane: which mode this is, and which providers it can use |
+| `POST /v1/clusters` | admin: start provisioning, given a `quote_id` from the estimate |
+| `GET /v1/clusters/{name}/credentials` | admin, audited: the cluster's key and password, no SSH needed |
+
+`docs/content/docs/guide/api.mdx` is the long form; this table is a copy of it
+and nothing keeps the two equal, so change both.
 
 ## Develop
 

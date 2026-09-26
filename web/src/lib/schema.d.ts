@@ -1097,6 +1097,550 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/control-plane": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Capability probe. Tells the dashboard which navigation to render; a cluster returns control_plane false. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ControlPlane"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/providers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Providers this control plane can provision with. Phase one is AWS only. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              providers: components["schemas"]["Provider"][];
+            };
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/providers/{provider}/regions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        provider: components["parameters"]["provider"];
+      };
+      cookie?: never;
+    };
+    /** @description Regions the named provider can provision in with the control plane's configured credential source. A provider that is not available in phase one is 400 provider_unavailable, never an empty list. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          provider: components["parameters"]["provider"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              regions: string[];
+            };
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/providers/{provider}/instance-types": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        provider: components["parameters"]["provider"];
+      };
+      cookie?: never;
+    };
+    /** @description Host sizes the named provider offers, with the current price for the control plane's configured region. The list comes from the provider adapter, never from a table in this contract. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          provider: components["parameters"]["provider"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              instance_types: components["schemas"]["InstanceTypePrice"][];
+            };
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/providers/{provider}/estimate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        provider: components["parameters"]["provider"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Estimate the fixed charges for a configuration with the named provider. Creates nothing. The returned quote_id must be presented to POST /v1/clusters, which is what makes the price review the gate on spending money. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          provider: components["parameters"]["provider"];
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            region: string;
+            instance_type: string;
+            disk_gib: number;
+            /** @default  */
+            domain?: string;
+          };
+        };
+      };
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Estimate"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Clusters this control plane manages. Never includes credentials. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              clusters: components["schemas"]["Cluster"][];
+            };
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    /** @description Start provisioning a cluster. Returns the cluster in status provisioning; the dashboard polls GET /v1/clusters/{name} for phase changes. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            name: string;
+            region: string;
+            instance_type: string;
+            disk_gib: number;
+            /** @default  */
+            domain?: string;
+            /** @description from POST /v1/providers/{provider}/estimate */
+            quote_id: string;
+          };
+        };
+      };
+      responses: {
+        /** @description the cluster, provisioning */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Cluster"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["clusterName"];
+      };
+      cookie?: never;
+    };
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Cluster"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    /** @description Delete the cluster and its resources. 409 when workers are still present. Also used by automatic cleanup after a failed provisioning operation. Returns the cluster in status deleting, because the operator is told what is happening rather than left to guess. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description the cluster, deleting */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Cluster"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters/{name}/credentials": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["clusterName"];
+      };
+      cookie?: never;
+    };
+    /** @description The cluster's API key and administrator password, in plaintext. Admin only, audited as cluster.credentials.view, and the only response in the API that returns a secret. This is the route that replaces reading them off the host over SSH. The key is minted by the cluster itself once it accepts the injected password, so this returns 409 until the cluster reaches status ready. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ClusterCredentials"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters/{name}/rotate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["clusterName"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Mint a new administrator password and API key and re-deliver the password to the provider's secret channel. The running cluster keeps both old credentials until an operator applies the new ones. Admin only, audited. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description the rotated cluster */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Cluster"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters/{name}/nodes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["clusterName"];
+      };
+      cookie?: never;
+    };
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description ok */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              nodes: components["schemas"]["ClusterNode"][];
+            };
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    /** @description Add a worker. 503 cluster_unavailable while the cluster is not ready. */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+        };
+        cookie?: never;
+      };
+      requestBody?: {
+        content: {
+          "application/json": {
+            instance_type: string;
+            disk_gib: number;
+          };
+        };
+      };
+      responses: {
+        /** @description the node, provisioning */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ClusterNode"];
+          };
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/v1/clusters/{name}/nodes/{node}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        name: components["parameters"]["clusterName"];
+        node: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** @description Remove a worker. 409 node_holds_sandboxes when it still holds sandboxes, with the count in the message. */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          name: components["parameters"]["clusterName"];
+          node: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description removed */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1211,6 +1755,83 @@ export interface components {
       kubelet: string;
       sandboxes: number;
     };
+    ControlPlane: {
+      /** @description true on a control plane */
+      control_plane: boolean;
+      providers: string[];
+      version: string;
+    };
+    Provider: {
+      /** @description aws | gcp | azure */
+      id: string;
+      /** @description false means the choice is visible but cannot provision */
+      available: boolean;
+    };
+    InstanceTypePrice: {
+      id: string;
+      hourly_usd: number;
+      monthly_usd: number;
+      /** @description the region these prices are for */
+      region: string;
+    };
+    Estimate: {
+      /** @description present this to POST /v1/clusters */
+      quote_id: string;
+      hourly_usd: number;
+      monthly_usd: number;
+      /** @description fixed charges only, one row per resource */
+      lines: {
+        /** @description compute | storage | public_ipv4 */
+        label: string;
+        hourly_usd: number;
+        monthly_usd: number;
+      }[];
+      /** @description charges deliberately not estimated, shown so the operator is not surprised */
+      excluded: string[];
+    };
+    Cluster: {
+      name: string;
+      /** @description the provider id; only aws is available in phase one */
+      provider: string;
+      region: string;
+      instance_type: string;
+      disk_gib: number;
+      domain: string;
+      /** @enum {string} */
+      status: "provisioning" | "ready" | "failed" | "deleting" | "deleted";
+      /** @description current sub-step; empty unless provisioning */
+      phase?: string;
+      /** @description non-secret diagnostic from the bootstrap */
+      detail?: string;
+      hourly_usd: number;
+      monthly_usd: number;
+      /** @description non-empty only when status is ready */
+      url?: string;
+      public_ip?: string;
+      /** @description SHA-256 SPKI pin of the cluster certificate */
+      tls_pin?: string;
+      /** Format: date-time */
+      created: string;
+      /** Format: date-time */
+      updated: string;
+    };
+    /** @description The only response in the API that returns plaintext secrets. Admin only, audited, and never included in a list. */
+    ClusterCredentials: {
+      api_key: string;
+      admin_password: string;
+    };
+    ClusterNode: {
+      /** @description Opaque worker handle from the provider, typed back into DELETE /v1/clusters/{name}/nodes/{node}. Returned to the operator because the removal URL needs it; never parsed or interpreted by the control plane. */
+      id: string;
+      instance_type: string;
+      /** @enum {string} */
+      status: "provisioning" | "ready" | "failed" | "removing" | "removed";
+      detail?: string;
+      /** @description last observed count; the cluster is the authority */
+      sandboxes: number;
+      /** Format: date-time */
+      created: string;
+    };
   };
   responses: {
     /** @description error */
@@ -1226,6 +1847,8 @@ export interface components {
   parameters: {
     id: string;
     username: string;
+    clusterName: string;
+    provider: "aws";
   };
   requestBodies: never;
   headers: never;

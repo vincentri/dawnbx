@@ -2,7 +2,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { countTo, installFetch, noSession, type Reply, releaseFetch } from "@/test-fetch";
+import { apiError, countTo, installFetch, noSession, type Reply, releaseFetch } from "@/test-fetch";
 import { ADMIN, ME, renderApp, STATUS } from "@/test-support";
 
 afterEach(releaseFetch);
@@ -24,8 +24,12 @@ const SANDBOXES: Reply = {
   },
 };
 
+const CONTROL_PLANE: Reply = { json: { control_plane: true, providers: ["aws"], version: "v1" } };
+const CLUSTER: Reply = { json: { control_plane: false, providers: ["aws"], version: "v1" } };
+
 const base = (me: Reply = { json: ME }): Record<string, Reply> => ({
   "GET /v1/me": me,
+  "GET /v1/control-plane": CLUSTER,
   "GET /v1/status": { json: STATUS },
   "GET /v1/sandboxes": SANDBOXES,
 });
@@ -193,5 +197,40 @@ describe("Shell status poll", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Shell capability probe", () => {
+  it("offers the cluster wizard and keeps the sandbox surfaces on a cluster", async () => {
+    installFetch(base());
+    renderApp({ me: ME });
+
+    expect(await screen.findByRole("link", { name: "Sandboxes" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Clusters" })).toHaveAttribute("href", "/clusters");
+  });
+
+  it("hides the sandbox surfaces and skips /v1/status on a control plane", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const calls = installFetch({ ...base(), "GET /v1/control-plane": CONTROL_PLANE });
+      renderApp({ me: ADMIN });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(screen.queryByRole("link", { name: "Sandboxes" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Clusters" })).toHaveAttribute("href", "/clusters");
+      // The brand goes where the dashboard's only subject is.
+      expect(screen.getByRole("link", { name: "dawnbx" })).toHaveAttribute("href", "/clusters");
+      // /v1/status is a cluster route; polling it here would be a 503 every 5s.
+      expect(countTo(calls, "GET", "/v1/status")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats a server that cannot answer the probe as a cluster", async () => {
+    installFetch({ ...base(), "GET /v1/control-plane": apiError("no such route", "", 404) });
+    renderApp({ me: ME });
+
+    expect(await screen.findByRole("link", { name: "Sandboxes" })).toBeInTheDocument();
   });
 });

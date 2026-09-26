@@ -310,7 +310,9 @@ func TestFlagDefaultsAndOverrides(t *testing.T) {
 	if got, err = parseFlags(newFlagSet(t), args); err != nil {
 		t.Fatal(err)
 	}
-	if want = (config{"/d", ":1", ":443", "sb.example.com", "/k", "postgres://u@h/d", 0, true}); got != want {
+	want = config{dataDir: "/d", listen: ":1", httpsListen: ":443", domain: "sb.example.com",
+		kubeconfig: "/k", dbURL: "postgres://u@h/d", pool: 0, version: true}
+	if got != want {
 		t.Errorf("parsed %+v, want %+v", got, want)
 	}
 
