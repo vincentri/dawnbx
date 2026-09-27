@@ -82,12 +82,19 @@ test.describe('a worker', () => {
     await firstOption(page).click();
     await addWorkerButton(page).click();
 
-    // The worker must actually appear, not merely be requested. A list that
-    // stays empty while the request succeeds is the "worker added" bug in its
-    // most common form, and it is invisible to an API-only test.
+    // The worker must appear, and then reach ready. Appearing is not the claim
+    // the test's name makes, and a worker that is listed forever while the
+    // control plane believes it is up is the failure this exists to catch - the
+    // node stays "provisioning" when the control plane cannot refresh it from
+    // the cluster.
     await eventually(
-      async () => (await page.getByText(/worker|node/i).count()) > 0,
+      async () => (await page.getByText(/test-node/i).count()) > 0,
       'the worker to appear in the cluster',
+      60_000,
+    );
+    await eventually(
+      async () => (await page.getByText(/ready/i).count()) > 0,
+      'the worker to report ready, which means the control plane refreshed it from the cluster',
       60_000,
     );
   });
