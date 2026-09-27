@@ -307,6 +307,11 @@ func (m *memStore) RecordOp(cluster, kind, phase, detail string) error {
 	return nil
 }
 
+// Ops matches auth.DB.Ops: newest first, empty kind is every kind, and a limit
+// of zero or less means every row. The limit rule is spelled out because this
+// double once read 0 as unlimited while the SQL behind it read it as no rows,
+// and the stall check — the only caller that asks for 0 — was green against
+// this fake and dead in production.
 func (m *memStore) Ops(cluster, kind string, limit int) ([]auth.Op, error) {
 	if err := m.errFor("Ops"); err != nil {
 		return nil, err
@@ -320,9 +325,9 @@ func (m *memStore) Ops(cluster, kind string, limit int) ([]auth.Op, error) {
 			continue
 		}
 		rows = append(rows, o)
-		if limit > 0 && len(rows) == limit {
-			break
-		}
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
 	}
 	return rows, nil
 }

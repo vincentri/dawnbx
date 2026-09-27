@@ -915,10 +915,17 @@ func (d *DB) RecordOp(cluster, kind, phase, detail string) error {
 	return err
 }
 
-// Ops returns phase history newest first; empty kind is every kind.
+// Ops returns phase history newest first; empty kind is every kind. A limit of
+// zero or less means every row.
+//
+// The limit is applied in Go rather than by a SQL LIMIT clause because SQL reads
+// LIMIT 0 as "no rows", which is the opposite of what a caller asking for the
+// whole history means. An earlier version passed the limit straight through and
+// the cluster registry asked for 0, so the stall check read an empty history in
+// production while the test double, which treated 0 as unlimited, said it worked.
 func (d *DB) Ops(cluster, kind string, limit int) ([]Op, error) {
 	rows, err := d.db.Query(`SELECT id, cluster, kind, phase, detail, created FROM cluster_ops
-		WHERE cluster = $1 AND ($2 = '' OR kind = $2) ORDER BY created DESC, id DESC LIMIT $3`, cluster, kind, limit)
+		WHERE cluster = $1 AND ($2 = '' OR kind = $2) ORDER BY created DESC, id DESC`, cluster, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -933,5 +940,11 @@ func (d *DB) Ops(cluster, kind string, limit int) ([]Op, error) {
 		o.Created = time.Unix(created, 0).UTC()
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

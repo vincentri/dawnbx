@@ -319,12 +319,18 @@ func (r *Registry) Get(name string) (*Cluster, error) {
 // note reset its own clock, so it was visible for one poll in every twenty
 // minutes. So the newest row whose phase differs from the cluster's current one
 // is the answer, and a run of detail-only rows is skipped.
+//
+// Every kind is read, not just the create. A cluster that wedges while a worker
+// is being added or credentials rotated records that movement under its own
+// kind, and reading only the create would report the create's timestamp as its
+// last progress — naming a stall that had already been fixed, or hiding a real
+// one behind an old timestamp.
 func (r *Registry) LastProgress(name string) (time.Time, error) {
 	c, err := r.db.GetCluster(name)
 	if err != nil {
 		return time.Time{}, err
 	}
-	ops, err := r.db.Ops(name, "create", 0)
+	ops, err := r.db.Ops(name, "", 0)
 	if err != nil {
 		return time.Time{}, err
 	}
