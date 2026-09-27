@@ -247,7 +247,7 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 	if err != nil {
 		return err
 	}
-	registry := cluster.NewRegistry(db, seal, auth.DefaultOrg)
+	registry := cluster.NewRegistry(db, seal)
 
 	// The worker hooks ask the *cluster* for its own join command and its own
 	// sandbox counts, never the cloud: that keeps the k3s knowledge inside the

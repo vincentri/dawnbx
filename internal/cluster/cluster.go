@@ -64,10 +64,9 @@ var domainRe = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 // Catalogue is what a provider says it can build, so validation here never
 // hard-codes a cloud's instance types. The AWS adapter reads its own template.
 type Catalogue struct {
-	Regions   []string
-	Sizes     []provider.HostSize
-	MinDisk   int
-	ValidName func(string) bool
+	Regions []string
+	Sizes   []provider.HostSize
+	MinDisk int
 }
 
 // Cluster is the record the control plane keeps. Every field is provider
@@ -106,20 +105,6 @@ type Node struct {
 	Created      time.Time `json:"created"`
 }
 
-// Op is one row of phase history. The last row for a (cluster, kind) is the
-// current phase, and the phase-change times in that history are what a stall is
-// measured against. Nothing surfaces the rows themselves yet, so there is no
-// route that returns them — the table records what happened, and the first
-// reader is the stall check.
-type Op struct {
-	ID      string    `json:"-"`
-	Cluster string    `json:"-"`
-	Kind    string    `json:"kind"`
-	Phase   string    `json:"phase"`
-	Detail  string    `json:"detail"`
-	Created time.Time `json:"created"`
-}
-
 // CreateRequest is the validated shape a create arrives as.
 type CreateRequest struct {
 	Name         string
@@ -155,17 +140,13 @@ type Store interface {
 
 // Registry is the control plane's view of its clusters.
 type Registry struct {
-	db    Store
-	seal  *Sealer
-	now   func() time.Time
-	admin string
+	db   Store
+	seal *Sealer
+	now  func() time.Time
 }
 
-// NewRegistry builds a registry over a store. admin is the org the control
-// plane's own credentials belong to; clusters are operator-level, not org-level,
-// so this is the one place the value is set.
-func NewRegistry(db Store, seal *Sealer, admin string) *Registry {
-	return &Registry{db: db, seal: seal, now: time.Now, admin: admin}
+func NewRegistry(db Store, seal *Sealer) *Registry {
+	return &Registry{db: db, seal: seal, now: time.Now}
 }
 
 // SetClock replaces the clock, for tests.

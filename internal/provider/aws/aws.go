@@ -40,7 +40,6 @@ import (
 // so one instance serves every cluster in the process.
 type AWS struct {
 	region     string
-	account    string
 	regions    []string
 	types      []string
 	releaseURL string
@@ -184,8 +183,9 @@ func New(ctx context.Context, o Options) (provider.Provider, error) {
 	if o.BaseEndpoint != "" {
 		cfg.BaseEndpoint = aws.String(o.BaseEndpoint)
 	}
-	account, err := identity(ctx, cfg)
-	if err != nil {
+	// The call is the credential probe; the account it names is not used, so it
+	// is not kept. identity() is tested directly in credentials_test.go.
+	if _, err := identity(ctx, cfg); err != nil {
 		return nil, err
 	}
 	types := o.InstanceTypes
@@ -194,7 +194,6 @@ func New(ctx context.Context, o Options) (provider.Provider, error) {
 	}
 	a := &AWS{
 		region:     o.Region,
-		account:    account,
 		regions:    regions,
 		types:      append([]string(nil), types...),
 		releaseURL: strings.TrimSuffix(o.ReleaseURL, "/"),

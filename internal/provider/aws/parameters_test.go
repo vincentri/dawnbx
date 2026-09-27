@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"dawnbx/internal/provider"
 )
 
 const secret = "correct horse battery staple"
@@ -45,32 +43,10 @@ func TestPutSecretIsASecureString(t *testing.T) {
 	}
 }
 
-// Reading a SecureString needs the decryption flag, and the value it returns is
-// the one that was written.
-func TestGetSecretDecrypts(t *testing.T) {
-	f := newFake(t, func(action string, _ []byte) (int, string) {
-		switch action {
-		case "AmazonSSM.GetParameter":
-			return 200, `{"Parameter":{"Name":"/dawnbx/bootstrap/s1","Type":"SecureString","Value":"` + secret + `","Version":1}}`
-		}
-		return 200, "{}"
-	})
-	got, err := newStore(t, f).getSecret(testContext(t), "/dawnbx/bootstrap/s1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != secret {
-		t.Errorf("read %q, want what was written", got)
-	}
-	if !strings.Contains(f.bodyOf("AmazonSSM.GetParameter"), `"WithDecryption":true`) {
-		t.Errorf("the read was not asked to decrypt: %s", f.bodyOf("AmazonSSM.GetParameter"))
-	}
-}
-
-// A name that is not there is provider.ErrNotFound, not a transport failure: every
-// caller of this is asking whether a cluster still holds its credential, and the
-// two answers lead to different pages.
-func TestMissingParameterIsNotFound(t *testing.T) {
+// A name that is not there is not a transport failure: Destroy is called twice,
+// and the second call is being asked to confirm what the first one did, so an
+// absent parameter is the state it is being asked about rather than an error.
+func TestDeletingAnAbsentParameterIsSuccess(t *testing.T) {
 	notFound := http.StatusBadRequest
 	f := newFake(t, func(string, []byte) (int, string) {
 		return notFound, `{"__type":"ParameterNotFound","message":"parameter not found"}`
@@ -78,11 +54,6 @@ func TestMissingParameterIsNotFound(t *testing.T) {
 	ps := newStore(t, f)
 	ctx := testContext(t)
 
-	if _, err := ps.getSecret(ctx, "/dawnbx/bootstrap/gone"); !errors.Is(err, provider.ErrNotFound) {
-		t.Errorf("get: %v, want ErrNotFound", err)
-	}
-	// Delete of an absent parameter is success, because Destroy is called twice
-	// and the second call is being asked to confirm what the first one did.
 	if err := ps.deleteSecret(ctx, "/dawnbx/bootstrap/gone"); err != nil {
 		t.Errorf("delete of an absent parameter: %v, want nil", err)
 	}

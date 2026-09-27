@@ -32,7 +32,7 @@ func realRegistry(t *testing.T) (*Registry, *auth.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := NewRegistry(d, s, "default")
+	r := NewRegistry(d, s)
 	clock := func() time.Time { return time.Unix(1750000000, 0) }
 	d.Now = clock
 	r.SetClock(clock)

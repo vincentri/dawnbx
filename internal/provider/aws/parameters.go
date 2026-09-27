@@ -9,8 +9,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
-
-	"dawnbx/internal/provider"
 )
 
 // The bootstrap credential never travels in a stack parameter, a tag, a user
@@ -46,27 +44,6 @@ func (p parameters) putSecret(ctx context.Context, name, value string) error {
 		return fmt.Errorf("write parameter %s: %w", name, scrub(err, value))
 	}
 	return nil
-}
-
-// getSecret reads and decrypts a SecureString. A name that does not exist is
-// provider.ErrNotFound rather than a transport error, because every caller of
-// this is asking whether a cluster still holds its credential.
-func (p parameters) getSecret(ctx context.Context, name string) (string, error) {
-	out, err := p.c.GetParameter(ctx, &ssm.GetParameterInput{
-		Name:           aws.String(name),
-		WithDecryption: aws.Bool(true),
-	})
-	if err != nil {
-		var missing *ssmtypes.ParameterNotFound
-		if errors.As(err, &missing) || absentMessage(err) {
-			return "", fmt.Errorf("%w: parameter %s", provider.ErrNotFound, name)
-		}
-		return "", fmt.Errorf("read parameter %s: %w", name, err)
-	}
-	if out.Parameter == nil || out.Parameter.Value == nil {
-		return "", fmt.Errorf("%w: parameter %s has no value", provider.ErrNotFound, name)
-	}
-	return *out.Parameter.Value, nil
 }
 
 // deleteSecret removes a parameter and treats an absent one as success. Destroy

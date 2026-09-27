@@ -341,7 +341,7 @@ func testRegistry(t *testing.T) (*Registry, *memStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := NewRegistry(m, s, "default")
+	r := NewRegistry(m, s)
 	r.SetClock(func() time.Time { return time.Unix(1750000000, 0) })
 	return r, m
 }

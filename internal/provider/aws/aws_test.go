@@ -134,13 +134,12 @@ func gone(stack string) (int, string) {
 		`<RequestId>req-1</RequestId></ErrorResponse>`
 }
 
-// newAWS builds the adapter against f, with the clock and the sleep replaced so a
-// teardown wait costs nothing.
-func newAWS(t *testing.T, f *fake, mutate func(*Options)) *AWS {
+// newAWSOptions is the harness's adapter configuration, pointed at f's server.
+// Separate from newAWS so a test can drive New itself and see the error.
+func newAWSOptions(t *testing.T, f *fake) Options {
 	t.Helper()
 	testEnv(t)
-
-	o := Options{
+	return Options{
 		Region:       "eu-west-1",
 		ReleaseURL:   "https://releases.example.com/v1.0.0",
 		Template:     "AWSTemplateFormatVersion: \"2010-09-09\"\n",
@@ -151,6 +150,13 @@ func newAWS(t *testing.T, f *fake, mutate func(*Options)) *AWS {
 		Now:          advancingClock(),
 		Poll:         func(context.Context, time.Duration) error { return nil },
 	}
+}
+
+// newAWS builds the adapter against f, with the clock and the sleep replaced so a
+// teardown wait costs nothing.
+func newAWS(t *testing.T, f *fake, mutate func(*Options)) *AWS {
+	t.Helper()
+	o := newAWSOptions(t, f)
 	if mutate != nil {
 		mutate(&o)
 	}
@@ -326,18 +332,26 @@ func TestNewRefusesUnusableConfiguration(t *testing.T) {
 	}
 }
 
-// New asks STS who it is before it hands back a provider. A failure has to be
-// provider.ErrUnavailable — the answer every route above understands — and the
-// message must not carry the credential that failed.
+// New asks STS who it is before it hands back a provider, so a credential that
+// cannot answer is refused at startup rather than at the first create. The
+// refusal has to be provider.ErrUnavailable — the answer every route above
+// understands — and it must not carry the credential that failed.
+//
+// newRudeFake, not newFake: newFake answers GetCallerIdentity itself, so the
+// 403 written here never reached STS and this test passed without ever seeing
+// the failure it names.
 func TestNewProvesCredentialsAtStartup(t *testing.T) {
-	f := newFake(t, func(string, []byte) (int, string) {
+	f := newRudeFake(t, func(string, []byte) (int, string) {
 		return http.StatusForbidden, `<ErrorResponse><Error><Code>AccessDenied</Code>` +
 			`<Message>User is not authorized to perform sts:GetCallerIdentity</Message></Error>` +
 			`<RequestId>req-1</RequestId></ErrorResponse>`
 	})
-	a := newAWS(t, f, nil)
-	if a.account != testAccount {
-		t.Errorf("account = %q, want %q", a.account, testAccount)
+	_, err := New(context.Background(), newAWSOptions(t, f))
+	if !errors.Is(err, provider.ErrUnavailable) {
+		t.Fatalf("a credential that cannot answer STS: got %v, want ErrUnavailable", err)
+	}
+	if strings.Contains(err.Error(), testAccount) {
+		t.Errorf("the refusal carries the account it was checking: %v", err)
 	}
 	f.called("GetCallerIdentity")
 }

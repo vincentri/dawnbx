@@ -39,9 +39,6 @@ func NewSealer(key []byte) (*Sealer, error) {
 	return &Sealer{aead: aead}, nil
 }
 
-// ErrNoKey means no control-plane key was configured and none could be found.
-var ErrNoKey = errors.New("no control-plane key")
-
 // keyLen is the one length a control-plane key is, whichever form it arrives
 // in: raw bytes, or hex that decodes to them.
 const keyLen = 32

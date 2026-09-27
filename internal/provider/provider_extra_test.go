@@ -2,45 +2,45 @@ package provider
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
 
-// TestIDsIsSortedAndIndependent: IDs copies before sorting, so a caller cannot
-// reorder the registry's own registration order by sorting the result. That
-// matters because List uses registration order for a stable UI, and the two must
-// not be able to disagree.
-func TestIDsIsSortedAndIndependent(t *testing.T) {
+// TestListKeepsRegistrationOrder: the dashboard's picker is stable because the
+// listing is, so the order providers were registered in is the order they are
+// shown in. A caller must not be able to disturb it either.
+func TestListKeepsRegistrationOrder(t *testing.T) {
 	r := NewRegistry()
 	r.Register(newFake("aws"))
 	r.Register(newFake("gcp"))
 	r.Register(newFake("azure"))
 
-	got := r.IDs()
-	want := "aws,azure,gcp"
-	if join(got) != want {
-		t.Fatalf("IDs() = %v, want %s", got, want)
+	got := ids(r.List())
+	if strings.Join(got, ",") != "aws,gcp,azure" {
+		t.Errorf("List() = %v, want registration order", got)
 	}
-	// Registration order is what List uses, and it is the reverse of sorted here.
-	if l := r.List(); join([]string{l[0].ID, l[1].ID, l[2].ID}) != "aws,gcp,azure" {
-		t.Errorf("List() lost registration order: %s", join([]string{l[0].ID, l[1].ID, l[2].ID}))
-	}
-	// Sorting the returned slice must not disturb the registry.
+	// The returned slice is the caller's, so writing to it must not reach the
+	// registry's own copy.
 	for i := range got {
 		got[i] = "zzz"
 	}
-	if again := r.IDs(); join(again) != want {
-		t.Errorf("IDs() aliased the registry's own slice: %v", again)
+	if again := ids(r.List()); strings.Join(again, ",") != "aws,gcp,azure" {
+		t.Errorf("List() aliased the registry's own slice: %v", again)
+	}
+	if l := NewRegistry().List(); len(l) != 0 {
+		t.Errorf("an empty registry listed %v", l)
 	}
 }
 
-func TestIDsOnAnEmptyRegistry(t *testing.T) {
-	if got := NewRegistry().IDs(); len(got) != 0 {
-		t.Errorf("an empty registry listed %v", got)
+// ids projects a listing to the ids a test compares, so a test about order does
+// not build the same string by hand at every assertion.
+func ids(l []Listed) []string {
+	out := make([]string, len(l))
+	for i, v := range l {
+		out[i] = v.ID
 	}
-	if got := NewRegistry().List(); len(got) != 0 {
-		t.Errorf("an empty registry listed %v", got)
-	}
+	return out
 }
 
 // TestGetRejectsAnUnlistedProvider: an unknown id is refused rather than handing
@@ -50,17 +50,6 @@ func TestGetRejectsAnUnlistedProvider(t *testing.T) {
 	if _, err := r.Get("aws"); err == nil {
 		t.Fatal("an unlisted provider was handed out")
 	}
-}
-
-func join(s []string) string {
-	out := ""
-	for i, v := range s {
-		if i > 0 {
-			out += ","
-		}
-		out += v
-	}
-	return out
 }
 
 // TestDeclareIsListedAndRefused: a provider this build knows about but cannot
@@ -180,18 +169,6 @@ func TestRegisteringWhatWasDeclaredUpgradesIt(t *testing.T) {
 	}
 	if p, err := r.Get("gcp"); err != nil || p.ID() != "gcp" {
 		t.Errorf("an upgraded provider is still refused: %v", err)
-	}
-}
-
-// TestIDsCoversDeclaredProviders: the sorted helper must see every known
-// provider, not only the usable ones, or a test asserting on the roster is
-// quietly checking less than it reads as checking.
-func TestIDsCoversDeclaredProviders(t *testing.T) {
-	r := NewRegistry()
-	r.Declare("gcp")
-	r.Register(newFake("aws"))
-	if got := join(r.IDs()); got != "aws,gcp" {
-		t.Errorf("IDs() = %q, want aws,gcp", got)
 	}
 }
 

@@ -229,7 +229,7 @@ func TestSignerRefusesAnUnknownURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := cluster.NewRegistry(controlPlaneStore(t), seal, "default")
+	reg := cluster.NewRegistry(controlPlaneStore(t), seal)
 	sign := signerFor(reg)
 	if _, err := sign(context.Background(), "https://not-ours.example"); err == nil {
 		t.Error("a client was built for a URL no cluster is registered at")
@@ -501,7 +501,7 @@ func TestControlPlaneWiresTheJoinHookWhenAClusterAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := cluster.NewRegistry(db, seal, "default")
+	reg := cluster.NewRegistry(db, seal)
 	if err := seedReadyCluster(t, reg, live.URL, pin, "inject3d-password"); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestWorkerHooksGoThroughTheClustersOwnAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := cluster.NewRegistry(db, seal, "default")
+	reg := cluster.NewRegistry(db, seal)
 	if err := seedReadyCluster(t, reg, live.URL, pin, "inject3d-password"); err != nil {
 		t.Fatal(err)
 	}

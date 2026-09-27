@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 )
 
@@ -326,17 +325,5 @@ func (r *Registry) List() []Listed {
 	defer r.mu.RUnlock()
 	out := make([]Listed, len(r.order))
 	copy(out, r.order)
-	return out
-}
-
-// IDs returns the known provider ids, sorted. Handy in tests.
-func (r *Registry) IDs() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(r.order))
-	for _, l := range r.order {
-		out = append(out, l.ID)
-	}
-	sort.Strings(out)
 	return out
 }

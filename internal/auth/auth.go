@@ -811,9 +811,6 @@ func (d *DB) SetClusterURL(name, url, pin string) error {
 	return err
 }
 
-// SetProviderState replaces the provider's opaque handle. The DB never looks
-// inside it: it is one string column, so nothing here has to know what a
-// provider calls its resources, and a second provider needs no migration.
 // SetPin records the certificate pin on its own. The pin is needed on every poll
 // while a cluster boots, long before it is ready to be handed to an operator.
 func (d *DB) SetPin(name, pin string) error {
@@ -822,6 +819,9 @@ func (d *DB) SetPin(name, pin string) error {
 	return err
 }
 
+// SetProviderState replaces the provider's opaque handle. The DB never looks
+// inside it: it is one string column, so nothing here has to know what a
+// provider calls its resources, and a second provider needs no migration.
 func (d *DB) SetProviderState(name, state string) error {
 	_, err := d.db.Exec(`UPDATE clusters SET provider_state = $2, updated = $3 WHERE name = $1`,
 		name, state, d.Now().Unix())

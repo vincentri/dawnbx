@@ -211,25 +211,6 @@ test("env defaults and create options", async () => {
   }
 })
 
-// A cluster still coming up: every optional field is absent, not empty.
-const BARE = {
-  name: "warm",
-  provider: "aws",
-  region: "us-east-1",
-  instance_type: "t4g.small",
-  disk_gib: 20,
-  status: "provisioning",
-  url: "",
-}
-
-const NODE = {
-  id: "i-0abc",
-  instance_type: "t4g.medium",
-  status: "ready",
-  sandboxes: 3,
-  detail: "kubelet healthy",
-}
-
 const clusterServer = async (handler) => {
   const seen = []
   const srv = createServer(async (req, res) => {

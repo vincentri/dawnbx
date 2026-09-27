@@ -129,7 +129,7 @@ func testControl(t *testing.T, prov *fakeProv) *controlPlane {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := cluster.NewRegistry(db, seal, "default")
+	reg := cluster.NewRegistry(db, seal)
 	// No sandbox.Manager: a control plane has no runtime, and giving it one
 	// would register the runtime's own worker routes over the 503s.
 	srv := &Server{Auth: db}

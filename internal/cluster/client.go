@@ -33,7 +33,6 @@ type Remote struct {
 	// Pin is the sha256 of the leaf's SPKI, hex, no separators. Empty before the
 	// first Pin call; after that every request must match it.
 	Pin string
-	Now func() time.Time
 
 	cookie string
 }
@@ -44,7 +43,7 @@ const remoteTimeout = 20 * time.Second
 
 // NewRemote builds a client for url with no pin yet. Call Pin before Login.
 func NewRemote(url string) *Remote {
-	return &Remote{BaseURL: strings.TrimRight(url, "/"), Now: time.Now}
+	return &Remote{BaseURL: strings.TrimRight(url, "/")}
 }
 
 // PinFromLeaf returns the SPKI sha256 of a DER certificate, hex, no separators.
