@@ -104,6 +104,7 @@ A fresh worktree needs `npm ci --prefix web`, `npm ci --prefix sdk/typescript`, 
 - `cd sdk/python && python3 -m unittest discover -s tests` — Python SDK
 - `npm run types:check --prefix docs` — docs site
 - `npm run build --prefix web` — **required for any `web/` change**, see §3
+- `python3 hack/check-api-docs.py` — the two `/v1` route tables and `openapi.yaml` are all hand-maintained and this is what keeps them equal. It checks the *set* of routes, not the prose: a route in one table and not the other, a route documented that the contract never declared, and a contract route in neither table all fail. It found the terminal route being served and documented but never declared — so it never reached the generated web types.
 - `python3 hack/check-harness-cites.py` — runs on every commit via `.githooks/pre-commit`; fails when a line in this file cites a file that is gone. Enable it once per clone with `git config core.hooksPath .githooks`. If it blocks you, the cite is stale or the sentence should go — do not widen the check to make it pass.
 
 **Two gaps in that gate, each of which has already hidden a real bug.** It runs
@@ -121,9 +122,9 @@ Live tier, only for sandbox / k8s / quota work: `hack/dev-vm.sh` builds and inst
 
 ## 3. The one cross-area contract
 
-`internal/api/openapi.yaml` is hand-written and is the only shared contract. `web/` types are generated from it (`npm run gen --prefix web` → committed `web/src/lib/schema.d.ts`); both SDKs and the docs site mirror it by hand. Nothing in CI checks that they agree.
+`internal/api/openapi.yaml` is hand-written and is the only shared contract. `web/` types are generated from it (`npm run gen --prefix web` → committed `web/src/lib/schema.d.ts`); both SDKs and the docs site mirror it by hand. `hack/check-api-docs.py` checks the *routes* in `README.md` and `docs/content/docs/guide/api.mdx` against it — the SDKs are still mirrored by hand and nothing checks those.
 
-Adding or changing a route therefore means, in one change: edit `openapi.yaml`, regenerate the web types, update `sdk/python/src/dawnbx/__init__.py` **and** `sdk/typescript/src/index.ts`, update `docs/content/docs/guide/api.mdx`.
+Adding or changing a route therefore means, in one change: edit `openapi.yaml`, regenerate the web types, update `sdk/python/src/dawnbx/__init__.py` **and** `sdk/typescript/src/index.ts`, update `docs/content/docs/guide/api.mdx` and the table in `README.md`. The gate will name whichever one you forgot.
 
 Same for the UI: Vite writes its build straight into `internal/api/ui` with `emptyOutDir`, that directory is committed, and `internal/api/api.go` embeds it with `//go:embed ui`. Skip `npm run build --prefix web` and the binary serves the old dashboard. Releases do the same via a `.goreleaser.yaml` pre-hook, so a release built without Node installed is not a thing.
 
