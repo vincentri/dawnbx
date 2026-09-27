@@ -364,10 +364,41 @@ here so they are not mistaken for resolved.
    the existing `newProvider` seam** — R-001 concludes the seam exists; the
    build tag is the safe way to keep a test provider out of a shipped binary,
    and the final form is settled at implementation.
+6. **What happens to an existing control plane's SQLite data** — decided, and
+   deliberately not in this feature.
+
+   The control plane now runs on PostgreSQL, and the Compose stack builds a
+   fresh database on every run. That is fine for a new deployment and says
+   nothing about an existing one, which holds session rows, API key hashes, audit
+   history, and cluster records sealed with AES-256-GCM under a key in its own
+   data directory.
+
+   **Decision: this feature does not convert existing data.** The reasons, in
+   order of weight:
+
+   - The sealed cluster credentials are encrypted with a key that lives in the
+     data directory. Moving rows to another database without moving the key
+     produces records that cannot be decrypted, which is worse than not moving
+     them: a control plane that starts and cannot read its clusters.
+   - A conversion is a one-way operation on the only copy of an operator's audit
+     history. It belongs in its own feature with its own spec, its own review,
+     and a real test against a copy of real data — not folded into a test-tier
+     feature because it happened to be adjacent.
+   - Nothing has been deployed on the new default yet, so there is no migration
+     to have missed. Building one now is building for a problem nobody has.
+
+   **Before deploying this to any instance that already has a SQLite database,
+   the conversion must be specified and run against a copy of that data.** Until
+   then the supported path is: take a copy of the data directory, start the new
+   control plane against a fresh PostgreSQL, and recreate the clusters. The audit
+   history is the one thing that cannot be recreated, which is the reason to
+   treat this as a real decision rather than a runbook line.
+
 4. ~~**How `migrate()` becomes engine-aware**~~ — **settled by execution, and
    the premise was wrong twice over.** `migrate()` needs no change, and neither
    does the auth write path. The real open item is operational, not structural:
    whether CI points `DAWNBX_TEST_DATABASE_URL` at a real PostgreSQL service so
    the suite that already supports both engines actually runs on both.
-5. **What happens to an existing control plane's SQLite data** — deferred by
-   R-008, and it must be decided before any deployment that has one.
+5. **What happens to an existing control plane's SQLite data** — decided in
+   item 6 above: not in this feature, and it must be specified and run against a
+   copy of real data before deploying to any instance that has one.

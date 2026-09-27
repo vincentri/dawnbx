@@ -189,7 +189,7 @@ requirement this feature creates.
 - [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
 - [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
 - [ ] T052 **Release gate**: run the real-account lifecycle via `hack/verify.sh` against a control plane on PostgreSQL and record the result in `specs/002-control-plane-ui-e2e/quickstart.md`. The suite cannot stand in for this (Principle VI, R-008). This is a release blocker, not a follow-up
-- [ ] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)
+- [X] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)
 
 ---
 
