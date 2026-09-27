@@ -135,16 +135,23 @@ if [ "${SKIP_E2E:-0}" != 1 ] && command -v docker >/dev/null && docker compose v
   run "auth suite on postgres" bash -c '
     set -euo pipefail
     cd "'"$(pwd)"'"
+    # A database of its own. The e2e control plane runs against the compose
+    # postgres, and this step drops every table before each test, so sharing one
+    # had the two deleting each other schema mid-run.
     docker compose -f e2e/docker-compose.yml up -d postgres >/dev/null
     for _ in $(seq 1 60); do
       [ "$(docker inspect --format "{{.State.Health.Status}}" dawnbx-e2e-postgres-1 2>/dev/null)" = healthy ] && break
       sleep 1
     done
-    DAWNBX_TEST_DATABASE_URL="postgres://postgres:e2e@127.0.0.1:55433/dawnbx?sslmode=disable" \
+    # auth_check, not dawnbx: the e2e stack owns that one.
+    docker compose -f e2e/docker-compose.yml exec -T postgres \
+      psql -U postgres -d postgres -q -c "DROP DATABASE IF EXISTS auth_check" \
+      -c "CREATE DATABASE auth_check" >/dev/null
+    DAWNBX_TEST_DATABASE_URL="postgres://postgres:e2e@127.0.0.1:55433/auth_check?sslmode=disable" \
       go test ./internal/auth/ -count=1
   '
 else
-  printf 'warn  auth-on-postgres needs docker; skipping (SKIP_E2E=1 to be explicit)\n'
+  printf 'warn  auth-on-postgres needs docker; set SKIP_E2E=1 to skip it explicitly\n'
 fi
 run "web test" bash -c 'cd web && npx vitest run'
 run "ts sdk test" npm test --prefix sdk/typescript

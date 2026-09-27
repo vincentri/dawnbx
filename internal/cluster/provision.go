@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"dawnbx/internal/auth"
@@ -308,12 +307,22 @@ var ErrHasNodes = errors.New("cluster still has workers")
 // ErrQuoteStale means the presented quote no longer matches the configuration.
 var ErrQuoteStale = errors.New("the estimate is out of date")
 
-// Watch polls every cluster that is still in flight, until ctx ends. One
-// goroutine, so a slow provider delays its own cluster and nothing else.
+// Watch polls every cluster that is still in flight, until ctx ends.
+//
+// The loop is one goroutine stepping clusters in turn, so it is sequential: while
+// a provider call is outstanding, no other cluster is polled. What keeps that
+// bounded is the per-cluster StepTimeout — a wedged provider is abandoned when
+// its own deadline passes and the loop carries on with the rest. That is the
+// property TestAWedgedClusterIsAbandonedAtItsOwnTimeout pins.
+//
+// The comments here used to say a slow provider "delays its own cluster and
+// nothing else", and a mutex sat right beside them, serialising work that was
+// already serial. The claim described a parallel loop the code did not have; the
+// mutex did not make it true, it only added a lock the other steps also needed.
+// The comment is now what the code does.
 func (p *Provisioner) Watch(ctx context.Context) {
 	t := time.NewTicker(p.PollEvery)
 	defer t.Stop()
-	var mu sync.Mutex
 	for {
 		select {
 		case <-ctx.Done():
@@ -330,14 +339,10 @@ func (p *Provisioner) Watch(ctx context.Context) {
 				continue
 			}
 			c := c
-			// One slow provider delays its own cluster and nothing else, and a
-			// wedged one cannot stall the loop for good.
 			step, cancel := context.WithTimeout(ctx, p.StepTimeout)
-			mu.Lock()
 			if err := p.Run(step, c.Name); err != nil {
 				p.logf("cluster %s: %v", c.Name, err)
 			}
-			mu.Unlock()
 			cancel()
 		}
 	}
