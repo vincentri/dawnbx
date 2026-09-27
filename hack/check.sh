@@ -86,6 +86,22 @@ run "installer pins its dependencies" bash -c '
     esac
     printf "  %-16s %s\n" "$v" "$val"
   done
+  # The gVisor pin has to still exist, for the arch install.sh downloads and for
+  # the other one, and its checksum sidecar has to be there too - the installer
+  # verifies against it and a missing sidecar fails the install, not the pin. A
+  # HEAD each keeps a pin from rotting into a 404 that only a cluster would find.
+  gv=$(sed -n "s/^GVISOR_RELEASE=\${GVISOR_RELEASE:-\(.*\)}/\1/p" install.sh | head -1)
+  for arch in aarch64 x86_64; do
+    base="https://storage.googleapis.com/gvisor/releases/release/$gv/$arch/gvisor.tar.bz2"
+    for f in "" ".sha512"; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" -I "$base$f") || code=000
+      [ "$code" = 200 ] || {
+        echo "gvisor $gv/$arch gvisor.tar.bz2$f -> HTTP $code; the pin no longer resolves" >&2
+        exit 1
+      }
+    done
+    printf "  %-16s %s (%s + sha512)\n" gvisor "$gv" "$arch"
+  done
 '
 
 # ---- build ------------------------------------------------------------------

@@ -151,8 +151,22 @@ sdk/typescript/src/index.ts       # + read-only cluster helpers
 docs/content/docs/guide/api.mdx   # + ## Clusters route table
 README.md                         # + route table rows (the hand-duplicated copy)
 deploy/aws/dawnbx.yaml            # + BootstrapParameter, IAM role/profile, LaunchTemplateId output
-install.sh                        # + --bootstrap-parameter; awscli only when it is used
+install.sh                        # + --bootstrap-parameter; the parameter is read with a
+                                  #   stdlib SigV4 signer, not the aws CLI - see below
 ```
+
+**Why the installer does not use the aws CLI.** This plan originally decided the installer would
+install `awscli` and call it to read the bootstrap parameter. That was wrong, and only a real
+machine could show it: **Ubuntu 24.04 has no `awscli` package at all**, in main or in universe, so
+`apt-get install awscli` failed with "no installation candidate" and took down the whole install
+on its first package step — on the very image the template defaults to. The parameter is now read
+by signing one `GetParameter` request with SigV4 using the instance role, in about fifty lines
+of Python that is entirely standard library. The CLI is still used on any distro that ships one.
+
+The lesson is worth more than the fix: the fake EC2 and SSM clients in the unit tests were written
+to agree with the code, so a package that does not exist on the target image was invisible until
+an account provisioned a real cluster. An `apt-get install` line has no unit test; only running it
+can say whether the package is there.
 
 **Structure Decision**: the repository is a single Go module with feature packages under
 `internal/`, so this feature follows the existing shape rather than introducing a new layout. The
