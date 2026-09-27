@@ -259,7 +259,8 @@ func (a *AWS) HostSizes(ctx context.Context, region string) ([]provider.HostSize
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, provider.HostSize{ID: t, HourlyUSD: round(rate), MonthlyUSD: round(rate * hoursPerMonth)})
+		hourly := round(rate)
+		out = append(out, provider.HostSize{ID: t, HourlyUSD: hourly, MonthlyUSD: monthlyFromHourly(hourly)})
 	}
 	return out, nil
 }

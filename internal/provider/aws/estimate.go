@@ -63,6 +63,15 @@ func (a *AWS) Estimate(ctx context.Context, spec provider.ClusterSpec) (*provide
 	return est, nil
 }
 
+// The two conversions between an hourly rate and a monthly amount, each with
+// one owner. They used to be written inline at two call sites in opposite
+// directions, and nothing checked that they agreed: a desync would give the
+// catalogue and the estimate different quote ids for one configuration, so every
+// create would be refused as quote_stale for ever with nothing saying why.
+func monthlyFromHourly(hourly float64) float64 { return round(hourly * hoursPerMonth) }
+
+func hourlyFromMonthly(monthly float64) float64 { return round(monthly / hoursPerMonth) }
+
 // charge is one line, built from a monthly amount. The hourly figure is derived
 // rather than quoted, so a per-hour rate and a per-GB-month rate end up in the
 // same shape and the two columns can never disagree about the same resource.
@@ -71,7 +80,7 @@ func charge(label string, monthly, count float64) provider.ChargeLine {
 	return provider.ChargeLine{
 		Label:   label,
 		Monthly: m,
-		Hourly:  round(m / hoursPerMonth),
+		Hourly:  hourlyFromMonthly(m),
 	}
 }
 
