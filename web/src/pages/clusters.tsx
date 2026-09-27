@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Confirm } from "@/components/confirm";
+import { Fail, textOf } from "@/components/fail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -82,7 +83,6 @@ const providerPath = (id: string) => ({ params: { path: { provider: id } } });
 // must() keeps the envelope's code on the thrown error; the codes below are
 // the ones that change what the operator can do next.
 const codeOf = (e: unknown) => (e as { code?: string } | null)?.code;
-const textOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const usd = (n: number) => `$${n.toFixed(4)}`;
 const month = (n: number) => `$${n.toFixed(2)}`;
@@ -922,10 +922,4 @@ function CopyValue({ value, small }: { value: string; small?: boolean }) {
       </Button>
     </div>
   );
-}
-
-// Every page error is shown where it happened, not only toasted: a silent
-// empty table on a provisioning screen reads as "nothing is wrong".
-function Fail({ e }: { e: unknown }) {
-  return <p className="text-sm text-destructive">{textOf(e)}</p>;
 }

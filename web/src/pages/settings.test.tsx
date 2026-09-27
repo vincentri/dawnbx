@@ -576,3 +576,46 @@ describe("Settings on a control plane", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "Nodes" })).toBeInTheDocument());
   });
 });
+
+describe("A settings request that fails", () => {
+  // Every Settings table rendered `data ?? []`, so a failed GET painted the
+  // empty state. "No keys yet." is a claim about the server; a 500 is not
+  // that, and the operator is the one who has to tell the difference. The
+  // clusters page already showed its failures, and the empty state has to
+  // yield to the error rather than sit beside it.
+  const message = "the control plane cannot read its own database";
+  const failure = apiError(message, "", 500);
+
+  /**
+   * Opens a tab whose one GET fails. `empty` is the copy that tab used to show
+   * instead; only the keys and audit tabs have one, the others rendered a bare
+   * grid that read as "none" without saying so.
+   */
+  const failedTab = async (route: string, tabName: string, empty?: string) => {
+    installFetch(base({ [route]: failure }));
+    renderApp({ entry: `/settings?tab=${tabName}`, me: ADMIN });
+    await screen.findByRole("tab", { selected: true });
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    if (empty) expect(screen.queryByText(empty)).not.toBeInTheDocument();
+  };
+
+  it("says the keys could not be read rather than claiming there are none", async () => {
+    await failedTab("GET /v1/keys", "keys", "No keys yet.");
+  });
+
+  it("says the same for the audit log", async () => {
+    await failedTab("GET /v1/audit", "audit", "Nothing yet.");
+  });
+
+  it("says the same for users", async () => {
+    await failedTab("GET /v1/users", "users");
+  });
+
+  it("says the same for orgs", async () => {
+    await failedTab("GET /v1/orgs", "orgs");
+  });
+
+  it("says the same for nodes", async () => {
+    await failedTab("GET /v1/nodes", "nodes");
+  });
+});

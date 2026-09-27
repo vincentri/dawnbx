@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Confirm } from "@/components/confirm";
+import { Fail } from "@/components/fail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -132,7 +133,12 @@ function CopyValue({ value, small }: { value: string; small?: boolean }) {
   );
 }
 
-function Grid(props: { head: string[]; rows: React.ReactNode[][]; empty?: string }) {
+function Grid(props: {
+  head: string[];
+  rows: React.ReactNode[][];
+  empty?: string;
+  error?: unknown;
+}) {
   return (
     <Table>
       <TableHeader>
@@ -150,7 +156,11 @@ function Grid(props: { head: string[]; rows: React.ReactNode[][]; empty?: string
             ))}
           </TableRow>
         ))}
-        {!props.rows.length && props.empty && (
+        {/* The empty state is a claim about the server. A failed request is not
+            that claim, so it never shows alongside the error above it: "no API
+            keys" beside "the database could not be read" is two answers to one
+            question, and the wrong one is the one an operator acts on. */}
+        {!props.rows.length && !props.error && props.empty && (
           <TableRow>
             <TableCell colSpan={props.head.length} className="text-center text-muted-foreground">
               {props.empty}
@@ -256,7 +266,9 @@ function Keys({ me }: { me: Principal }) {
           <CopyValue value={token} />
         </div>
       )}
+      {keys.error && <Fail e={keys.error} />}
       <Grid
+        error={keys.error}
         head={["ID", "Name", "Org", "Created", "Last used", "Expires", ""]}
         empty="No keys yet."
         rows={[...(keys.data ?? [])].reverse().map((k) => [
@@ -298,7 +310,9 @@ function Audit() {
   });
   return (
     <Section title="Audit log" desc="Latest 200 events.">
+      {ev.error && <Fail e={ev.error} />}
       <Grid
+        error={ev.error}
         head={["When", "Org", "Actor", "Action", "Target"]}
         empty="Nothing yet."
         rows={(ev.data ?? []).map((e) => [
@@ -386,7 +400,9 @@ function Users({ me }: { me: Principal }) {
           Add user
         </Button>
       </form>
+      {users.error && <Fail e={users.error} />}
       <Grid
+        error={users.error}
         head={["Username", "Org", "Role", "Created", ""]}
         rows={(users.data ?? []).map((u) => [
           u.username,
@@ -518,7 +534,9 @@ function Orgs() {
           Add org
         </Button>
       </form>
+      {orgs.error && <Fail e={orgs.error} />}
       <Grid
+        error={orgs.error}
         head={["ID", "Name", "Created"]}
         rows={(orgs.data ?? []).map((o) => [
           <span key="id" className="font-mono">
@@ -567,7 +585,9 @@ function Nodes() {
           No workers yet; everything runs on this server.
         </p>
       )}
+      {nodes.error && <Fail e={nodes.error} />}
       <Grid
+        error={nodes.error}
         head={["Name", "Role", "Status", "IP", "Sandboxes", "Kubelet", ""]}
         rows={(nodes.data ?? []).map((n) => [
           n.name,
