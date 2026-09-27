@@ -463,6 +463,45 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/v1/sandboxes/{id}/terminal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["id"];
+      };
+      cookie?: never;
+    };
+    /** @description Opens a WebSocket to a TTY in the sandbox. Not a JSON response: binary frames in both directions, and the close reason carries any error. The session is authenticated by the API key or the dashboard cookie, and the key may also arrive as a `bearer.<key>` subprotocol, which is how a browser can carry one. */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: components["parameters"]["id"];
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description switching protocols */
+        101: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        default: components["responses"]["Error"];
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/v1/login": {
     parameters: {
       query?: never;

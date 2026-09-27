@@ -60,8 +60,13 @@ run "ruff format" ruff format --check sdk/python
 # below. CI runs this same script, so it is one step and not two.
 run "openapi contract" bash -c '
   out=$(mktemp -d)/schema.d.ts
-  cd web && ./node_modules/.bin/openapi-typescript ../internal/api/openapi.yaml -o "$out"
-'
+  cd web && ./node_modules/.bin/openapi-typescript ../internal/api/openapi.yaml -o "$out"'
+
+# The two route tables and the contract are all hand-maintained, and nothing
+# kept them equal: they had already drifted, and the contract never declared the
+# terminal route the server serves. This catches that rather than trusting a
+# review to notice.
+run "api route tables" python3 hack/check-api-docs.py
 
 # ---- installer pins ---------------------------------------------------------
 # A cluster that is not reproducible is not one an operator can reason about,

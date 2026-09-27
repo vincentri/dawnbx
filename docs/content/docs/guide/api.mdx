@@ -29,6 +29,7 @@ Errors are JSON:
 | `POST /v1/sandboxes/{id}/fork` | copy `/workspace` into new sandboxes |
 | `POST /v1/sandboxes/{id}/extend`, `/start` | change TTL, restart a stopped sandbox |
 | `GET /v1/sandboxes/{id}/terminal` | WebSocket TTY (used by the dashboard) |
+| `GET /v1/status` | this server's health: `{"version", "free_pct", "warm", "pool_size"}`. A control plane answers `503 cluster_unavailable`, because it has no runtime of its own |
 
 ## Identity
 

@@ -133,6 +133,20 @@ paths:
         "204": { description: written }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/sandboxes/{id}/terminal:
+    parameters:
+      - { $ref: "#/components/parameters/id" }
+    get:
+      description: >
+        Opens a WebSocket to a TTY in the sandbox. Not a JSON response: binary
+        frames in both directions, and the close reason carries any error. The
+        session is authenticated by the API key or the dashboard cookie, and the
+        key may also arrive as a `bearer.<key>` subprotocol, which is how a
+        browser can carry one.
+      responses:
+        "101": { description: switching protocols }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/login:
     post:
       security: []
