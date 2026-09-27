@@ -112,9 +112,10 @@ the detector — a registry read that took no lock passed every test in the suit
 while racing every write to it. And a test double is not evidence about a
 query: `memStore.Ops` read a limit of 0 as unlimited where the SQL behind it
 read it as no rows, so the stall check was green against the fake and dead in
-production. A double's edge-case semantics must match the store it stands in
-for, and a test asserts through the code under test rather than through the
-double — reaching into the double is what let the two disagree unnoticed.
+production. What mattered was not that a test read through the double — the
+phase history has no production reader, so reading it through the store is the
+only way to observe it — but that nothing compared the double's edge cases with
+the query they stand in for.
 
 Live tier, only for sandbox / k8s / quota work: `hack/dev-vm.sh` builds and installs into the Lima VM, `hack/verify.sh` runs inside it as root against k3s, gVisor, and a real sandbox pod. Neither is a lint gate.
 

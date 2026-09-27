@@ -7,7 +7,6 @@
 package cluster
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -481,22 +480,6 @@ func fromAuth(c *auth.Cluster) *Cluster {
 func fromAuthNode(n *auth.ClusterNode) Node {
 	return Node{Cluster: n.Cluster, ID: n.ID, InstanceType: n.InstanceType, Status: n.Status,
 		Detail: n.Detail, Sandboxes: n.Sandboxes, Created: n.Created}
-}
-
-// randomPassword mints the one credential that is injected into a new cluster.
-// The alphabet is the same shape install.sh uses (base64 with the awkward
-// characters stripped), so a password minted here is one the existing installer
-// path and the dashboard handle without surprises.
-func randomPassword() (string, error) {
-	const alpha = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	for i := range b {
-		b[i] = alpha[int(b[i])%len(alpha)]
-	}
-	return string(b), nil
 }
 
 func contains(list []string, want string) bool {

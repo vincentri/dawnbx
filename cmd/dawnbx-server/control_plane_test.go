@@ -276,7 +276,7 @@ func TestWireCloudReportsAMissingTemplate(t *testing.T) {
 func TestGenerateAdminPasswordIsUsable(t *testing.T) {
 	seen := map[string]bool{}
 	for range 50 {
-		pw, err := generateAdminPassword()
+		pw, err := auth.MintPassword(20)
 		if err != nil {
 			t.Fatal(err)
 		}

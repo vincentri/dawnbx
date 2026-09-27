@@ -174,6 +174,31 @@ func randID(n int) string {
 	return string(b)
 }
 
+// MintPassword returns n characters of random text for an administrator
+// password: a cluster's first one, a rotation's replacement, and the control
+// plane's own dashboard login all come from here, so a change to the alphabet
+// or the length moves all of them at once.
+//
+// The alphabet leaves out the characters that break a shell, a URL and a
+// copy-paste, which is why a password minted here is one the installer path
+// and the dashboard handle without surprises. It is the same shape
+// install.sh produces, not the same function: that one is hex from openssl and
+// runs before this binary exists.
+func MintPassword(n int) (string, error) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, n)
+	// crypto/rand failing is not recoverable and must not be swallowed: the
+	// caller would hand out a predictable password.
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("mint password: %w", err)
+	}
+	out := make([]byte, len(b))
+	for i, c := range b {
+		out[i] = alphabet[int(c)%len(alphabet)]
+	}
+	return string(out), nil
+}
+
 func hash(tok string) string {
 	s := sha256.Sum256([]byte(tok))
 	return hex.EncodeToString(s[:])

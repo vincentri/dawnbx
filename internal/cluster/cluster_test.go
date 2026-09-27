@@ -462,10 +462,9 @@ func TestPhaseRecordsHistoryAndStateTogether(t *testing.T) {
 	if err != nil || c.Phase != PhaseReady {
 		t.Errorf("state and history disagree: %+v %v", c, err)
 	}
-	// A limit is honoured.
-	if got, _ := r.db.(*memStore).Ops("probe1", "create", 2); len(got) != 2 {
-		t.Errorf("limit ignored: %d rows", len(got))
-	}
+	// The limit is not checked here: it belongs to the store, and
+	// TestOpsLimitAgreesWithItsOwnSQL checks it against real SQL. Asserting it
+	// against memStore only proves memStore honours its own argument.
 }
 
 func TestHandleRoundTripsOpaqueState(t *testing.T) {

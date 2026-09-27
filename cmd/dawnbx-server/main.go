@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -230,7 +229,7 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 	env := adminEnv(envFile)
 	pw := cmp.Or(cfg.adminPassword, os.Getenv("DAWNBX_ADMIN_PASSWORD"), env["DAWNBX_ADMIN_PASSWORD"])
 	if pw == "" {
-		pw, err = generateAdminPassword()
+		pw, err = auth.MintPassword(20)
 		if err != nil {
 			return err
 		}
@@ -401,21 +400,6 @@ func releaseThrough(signer func(context.Context, string) (*cluster.Remote, error
 		}
 		return nil
 	}
-}
-
-// generateAdminPassword mints a dashboard password for a first-run control
-// plane. The alphabet leaves out the characters that break a shell, a URL and a
-// copy-paste.
-func generateAdminPassword() (string, error) {
-	const alpha = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, 20)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	for i := range b {
-		b[i] = alpha[int(b[i])%len(alpha)]
-	}
-	return string(b), nil
 }
 
 // plainServe, tlsServe and acmeServe are the three ways a site is served.

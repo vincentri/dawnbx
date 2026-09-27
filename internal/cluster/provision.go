@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"dawnbx/internal/auth"
 	"dawnbx/internal/provider"
 )
 
@@ -81,7 +82,7 @@ func (p *Provisioner) Begin(ctx context.Context, req CreateRequest, cat Catalogu
 	// The one credential that is injected. It is minted here, sealed at rest, and
 	// handed to the provider as an opaque Bootstrap; the provider's delivery
 	// mechanism is its own business.
-	pw, err := randomPassword()
+	pw, err := auth.MintPassword(24)
 	if err != nil {
 		return nil, err
 	}

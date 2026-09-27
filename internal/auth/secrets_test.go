@@ -384,3 +384,32 @@ func TestRedactKeepsPasswordsOutOfLogs(t *testing.T) {
 		t.Errorf("Open error should name the redacted url: %v", err)
 	}
 }
+
+// MintPassword is the one generator behind every administrator password the
+// product hands out, so its two properties are worth pinning: the length asked
+// for is the length returned, and nothing outside the alphabet ever appears.
+func TestMintPasswordLengthAndAlphabet(t *testing.T) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	seen := map[rune]bool{}
+	for _, n := range []int{20, 24} {
+		pw, err := MintPassword(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pw) != n {
+			t.Errorf("MintPassword(%d) returned %d characters", n, len(pw))
+		}
+		for _, c := range pw {
+			if !strings.ContainsRune(alphabet, c) {
+				t.Errorf("character %q is outside the alphabet an installer and a copy-paste handle", c)
+			}
+			seen[c] = true
+		}
+	}
+	// Two mints are not the same password.
+	a, _ := MintPassword(24)
+	b, _ := MintPassword(24)
+	if a == b {
+		t.Error("two mints returned the same password")
+	}
+}

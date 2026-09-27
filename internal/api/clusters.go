@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"dawnbx/internal/auth"
 	"dawnbx/internal/cluster"
 	"dawnbx/internal/provider"
 	"dawnbx/internal/sandbox"
@@ -606,7 +606,7 @@ func (s *Server) clusters(h route) {
 		if !c.available() {
 			return nil, clusterUnavailable("no provider is available to deliver a rotated credential")
 		}
-		pw, err := mintPassword()
+		pw, err := auth.MintPassword(24)
 		if err != nil {
 			return nil, err
 		}
@@ -893,22 +893,4 @@ func knownKeys(keys map[string]bool, allowed ...string) error {
 		}
 	}
 	return nil
-}
-
-// mintPassword mints the administrator password a rotation injects. It repeats
-// the alphabet internal/cluster uses rather than sharing the function, which is
-// unexported: a second alphabet would mean a password the existing installer
-// path and the dashboard handle differently.
-func mintPassword() (string, error) {
-	const alpha = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failing is not recoverable and must not be swallowed.
-		return "", fmt.Errorf("mint password: %w", err)
-	}
-	out := make([]byte, len(b))
-	for i, c := range b {
-		out[i] = alpha[int(c)%len(alpha)]
-	}
-	return string(out), nil
 }
