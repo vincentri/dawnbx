@@ -17,9 +17,10 @@ joins the existing gate and replaces no existing check.
 control plane connects to it exactly as it would to any external PostgreSQL —
 the same `--database-url` path an operator uses. This is a deliberate change of
 the control plane's backing store away from SQLite, and it brings with it work
-this feature must own: the PostgreSQL path has never successfully executed in
-this repository (see R-008), so making it the control plane's store is a
-migration with real risk, not a configuration change.
+this feature must own: probing found a real defect in the auth write path on
+PostgreSQL before any of this was built (R-008), so the control plane cannot
+create its own administrator on a fresh PostgreSQL database. That is the first
+thing it does, and it is fixed here.
 
 The suite proves the operator-facing interface and its orchestration. It is
 explicitly **not** evidence that a cloud accepts what is sent, and FR-015
@@ -122,7 +123,7 @@ observed intermediate phase rather than every phase.
 | IV. A Behaviour Change Ships With a Test | The change *is* a test tier; it asserts observable behaviour through rendered UI, not implementation shape | **PASS** — FR-003, FR-009 |
 | V. No Speculative Infrastructure | Two new dependencies (Playwright, a PostgreSQL container). Both have a stated consumer. The real-account run is deferred, not bundled | **PASS**, justified below |
 | VI. Only Real Infrastructure Proves Provisioning | The suite is a substitute and is scoped so it never stands in for a real run | **PASS** — FR-015 and Out of Scope; Principle VI's own wording permits a substitute as long as it is not represented as the real thing |
-| VI. (new exposure) | The control plane now runs on an engine that has never successfully executed here. A green suite is the *first* evidence the engine works at all, so it cannot also be the evidence that provisioning works | **PASS with a stated limit** — see R-008 and the Complexity note. A live control-plane run on PostgreSQL is required before release, and the plan says so |
+| VI. (new exposure) | The control plane now runs on an engine its test suite never exercised. Probing found a real foreign-key defect in the auth write path there, so the engine is not a known-good assumption | **PASS with a stated limit** — R-008 and the Complexity note. The defect is fixed by T006; a live control-plane run on PostgreSQL is required before release |
 
 **Complexity Tracking**
 
@@ -130,7 +131,7 @@ observed intermediate phase rather than every phase.
 |---|---|---|
 | New dependency: `@playwright/test` (Principle V) | No browser-driving or video-recording tool exists in the repo; hand-rolling a browser driver is not credible | The suite requires a real browser (FR-003) and a video per test (FR-005). Neither is satisfiable with what is installed. The dependency is scoped to the suite and adds nothing to the shipped product. |
 | **The control plane's database moves to PostgreSQL** (Principle V: a product change inside a test-tier feature) | The operator requires PostgreSQL for the control-plane UI. The server already speaks it through `--database-url`, so the cost is the migration, not the driver | Keeping SQLite would satisfy the letter of this spec — the suite would still pass — while shipping a control plane on an engine the operator has rejected. Principle V forbids a second store where one was chosen. The change is admitted deliberately, and its cost is paid in full below. |
-| Test coverage of an engine that has never run (Principle VI) | The suite is the first thing that will ever execute PostgreSQL successfully | Accepting this means the suite's green run is doing double duty: proving the UI works *and* proving the engine works. That is a weaker signal for the second claim, and the plan does not pretend otherwise — a live control-plane run on PostgreSQL is a release requirement, not a follow-up. |
+| **Product bug fix inside a test-tier feature** (Principle V) | Probing found `EnsureAdmin` failing on PostgreSQL with `users_org_id_fkey` (R-008). The control plane cannot create its own administrator on a fresh PostgreSQL database, so the feature cannot be built without fixing it | Deferring it would mean shipping a suite whose first sign-in test fails, or weakening that test to tolerate the failure. Fixing it here is smaller than shipping a control plane that cannot start, and the fix is covered by a test that fails before and passes after (Principle IV). |
 
 **Compliance judgement (not mechanical, per the constitution's own wording):**
 the gate cannot verify that the suite drives the interface rather than the API.
@@ -206,9 +207,10 @@ a build tag that selects the test provider.
 hack/check.sh                # add the e2e step alongside existing ones (FR-007)
 .github/workflows/ci.yml     # run the suite in Compose; no browser install (FR-007, FR-026)
 cmd/dawnbx-server/main.go    # expose the test provider under a build tag only
-internal/auth/auth.go        # engine-aware migration (R-008) — SQLite pragmas have
-                             # no PostgreSQL equivalent and migrate() has never run
-                             # against PostgreSQL
+internal/auth/auth.go        # guarantee the default org exists before any user
+                             # insert; SQLite tolerates the gap, PostgreSQL rejects
+                             # it with users_org_id_fkey (R-008)
+internal/auth/auth_postgres_test.go  # the failing reproduction, T005
 deploy/                      # the compose file's home if kept out of e2e/
 e2e/docker-compose.yml       # postgres + server + driver
 e2e/Dockerfile               # server + Playwright image

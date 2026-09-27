@@ -51,18 +51,26 @@ touched here.
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Make the control plane start on PostgreSQL inside a container, with
-a test provider selectable only in a test build. No user story can run until
-this is complete.
+**Purpose**: Fix the auth write path's foreign-key defect, make the control
+plane start on PostgreSQL inside a container, and make a test provider
+selectable only in a test build. No user story can run until this is complete.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
 ### PostgreSQL as the control plane's database
 
-- [ ] T005 [P] Write a failing test in `internal/auth/auth_postgres_test.go` that opens a PostgreSQL connection, runs the migration, and round-trips a user, a session, an audit row, and a cluster record through `pgx`
-- [ ] T006 Make `migrate()` in `internal/auth/auth.go` engine-aware: SQLite keeps its `journal_mode(WAL)`, `busy_timeout(5000)`, `foreign_keys(1)` pragmas and `SetMaxOpenConns(1)`; PostgreSQL gets statements valid on it. The current shared migration has never run on PostgreSQL
-- [ ] T007 Run `go test ./internal/auth/ -run Postgres` and confirm T005 now passes — this is the first successful execution of the PostgreSQL path in this repository (R-008)
-- [ ] T008 [P] Add a Compose-independent check in `internal/auth/auth_postgres_test.go` that skips with a clear message when no `DAWNBX_TEST_POSTGRES_URL` is set, so a developer without a database is not blocked
+**A defect was found by probe before these tasks were written** (R-008): on a
+virgin PostgreSQL database, `EnsureAdmin` fails with
+`users_org_id_fkey (SQLSTATE 23503)`, because `CreateUser` inserts a user
+referencing the `default` org that only migration 1 creates. SQLite does not
+enforce the constraint on that path, so the gap is invisible there. `migrate()`
+itself is sound — it completes on PostgreSQL and creates all eleven tables — so
+these tasks target the auth write path, not the migration.
+
+- [ ] T005 [P] Write a failing test in `internal/auth/auth_postgres_test.go` that opens a virgin PostgreSQL database, calls `EnsureAdmin`, and asserts it succeeds. This is the reproduction already observed by probe; it must fail before T006 and pass after
+- [ ] T006 Guarantee the `default` org exists before any user insert in `internal/auth/auth.go`. Seed it idempotently at startup or in the migration's own transaction, so the guarantee is explicit in both engines rather than incidental to migration 1 having committed
+- [ ] T007 Run `go test ./internal/auth/ -run Postgres` and confirm T005 passes against a virgin database, then re-run against the same database to confirm the seed is idempotent and a second startup does not fail
+- [ ] T008 [P] Add a Compose-independent check in `internal/auth/auth_postgres_test.go` that skips with a clear message when no `DAWNBX_TEST_POSTGRES_URL` is set, so a developer without a database is not blocked. Do not weaken the test to tolerate the foreign-key failure — that is the bug
 
 ### Test provider, selectable only in a test build
 
