@@ -6,6 +6,11 @@
 .omp/
 .DS_Store
 
+# Per-task git worktrees, which live inside this checkout (AGENTS.md section 1).
+# A worktree is a full second checkout with its own node_modules, so it must never
+# be tracked, and a task that ends deletes its own directory anyway.
+.worktree/
+
 # Spec Kit per-machine bookkeeping. The constitution, templates, scripts and
 # workflows under .specify/ are tracked; these three churn on every refresh and
 # say which AI integration this checkout happens to use.
