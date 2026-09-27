@@ -213,46 +213,20 @@ needed. The cost is entirely in the migration and in what has never run.
 `migrate()`. `pgx/v5` is already a dependency and the driver is registered by a
 blank import (`auth.go:20`), so `sql.Open("pgx", …)` is live. Against SQLite the
 DSN carries `journal_mode(WAL)`, `busy_timeout(5000)` and `foreign_keys(1)` and
-sets `SetMaxOpenConns(1)`; those pragmas are connection settings on the SQLite
-DSN, not schema, so they do not affect what `migrate()` executes. The probe below
-confirms the migration runs unmodified on PostgreSQL.
+sets `SetMaxOpenConns(1)`; those pragmas have no PostgreSQL equivalent, so the
+migration must be engine-aware rather than shared verbatim.
 
-**What has never been verified — corrected by execution.** Every `postgres://`
-string in the repository's tests is `postgres://nobody@127.0.0.1:1/none` — port
-1, where nothing listens. Those tests assert that a database error is *reported
-cleanly*; they do not assert that PostgreSQL works. So no test exercised the
-engine for real.
+**What has never been verified.** Every `postgres://` string in the repository's
+tests is `postgres://nobody@127.0.0.1:1/none` — port 1, where nothing listens.
+Those tests assert that a database error is *reported cleanly*; they do not
+assert that PostgreSQL works. So:
 
-A throwaway probe was then run against a real PostgreSQL 15 in a container
-(2026-09-27), and the first version of this section was **wrong**. It had
-predicted that `migrate()` would fail. It does not:
-
-```
-OPEN OK — migrate() completed against real PostgreSQL
-EnsureAdmin OK — admin row written
-CreateUser FAILED: insert or update on table "users" violates
-  foreign key constraint "users_org_id_fkey" (SQLSTATE 23503)
-```
-
-Corrected findings:
-
-- **`migrate()` is sound.** It completes against PostgreSQL and creates all
-  eleven tables, including the `default` org row. The shared migration does not
-  need to become engine-aware; the SQLite-only pragmas are applied on the SQLite
-  DSN and do not affect the schema.
-- **The defect is in the auth write path, not the migration.**
-  `EnsureAdmin` (`internal/auth/auth.go:440`) calls `CreateUser(DefaultOrg, …)`,
-  which inserts a `users` row whose `org_id` references `orgs(id)`
-  (`auth.go:506`). The `default` org exists only because migration 1 inserts it
-  (`auth.go:48`), and `CreateOrg` is never called at startup. The insert
-  therefore depends on that migration's transaction having committed first.
-  PostgreSQL enforces the constraint immediately and rejects the write; SQLite
-  does not, so the ordering gap is invisible there.
-- **Reproduced deterministically** on a virgin database: twice, first run, no
-  prior state. It is not a race that a retry would paper over.
-- **Blast radius**: this is the first thing a control plane does on a fresh
-  database. Left unfixed, a control plane pointed at PostgreSQL cannot create
-  its own administrator.
+- No test has ever run `migrate()` to completion against PostgreSQL.
+- No test has ever round-tripped a user, a session, an audit row, or a cluster
+  record through `pgx`.
+- A schema statement valid on SQLite may fail on PostgreSQL, and the reverse
+  failure — a statement SQLite accepts that PostgreSQL rejects — would only
+  appear at container start.
 
 **Why the database holds auth state** (which is what makes the engine matter):
 the dashboard keeps nothing in the browser — no `localStorage`, no
@@ -262,27 +236,23 @@ and a session row to the database, and the `dawnbx_session` cookie
 is an opaque pointer to that row. The database also holds the audit trail,
 cluster records, and cluster credentials sealed with AES-256-GCM.
 
-**Consequence, corrected**: the probe shows the engine works and the *auth write
-path* does not, so this feature now also carries a product bug fix (T005–T008).
-The suite is still the first sustained execution of the PostgreSQL path in CI,
-and FR-015 still forbids reading it as evidence about cloud provisioning — but
-the engine is no longer the unknown. The unknown is now whether the rest of the
-auth surface round-trips, which the suite's own sign-in test (T020) will
-exercise for real.
+**Consequence, stated plainly**: this suite becomes the first successful
+execution of the PostgreSQL path in this repository. A green run is therefore
+evidence about two things at once — that the operator-facing flows work, and
+that the engine works — and one signal standing in for two is weaker for both.
+The suite's own scope statement (FR-015) already forbids it from being read as
+evidence that provisioning works; the same discipline now applies to the engine.
 
 **Alternatives considered**:
 - *Keep SQLite, add PostgreSQL as an option* — rejected by the operator's
-  decision. Worth recording now that the cost is known: the bug found here is
-  one a real engine surfaced and SQLite did not, so the decision is what made it
-  findable before release rather than after.
+  decision. Recorded here only to note what it would have cost: nothing, and it
+  would have avoided an unverified engine entirely. The operator's requirement
+  stands.
 - *Migrate SQLite data into PostgreSQL* — deferred, and deliberately so. An
   existing control plane holds session and credential state; converting it is a
   separate concern from running the control plane on PostgreSQL, and bundling a
   data migration would widen this feature further. Fresh deployments are the
   case this feature covers.
-- *Seed the default org from `CreateUser`* — rejected. A user insert should not
-  be responsible for creating its own tenant; the invariant belongs at startup,
-  and the fix should make the guarantee explicit rather than incidental.
 
 **Required before release**: a live control-plane run against PostgreSQL, using
 the real-account lifecycle, because the suite cannot stand in for it (Principle
@@ -346,10 +316,10 @@ here so they are not mistaken for resolved.
    the existing `newProvider` seam** — R-001 concludes the seam exists; the
    build tag is the safe way to keep a test provider out of a shipped binary,
    and the final form is settled at implementation.
-4. ~~**How `migrate()` becomes engine-aware**~~ — **settled by execution, and the
-   premise was wrong.** `migrate()` needs no change: it completes on PostgreSQL
-   and creates the full schema. The open item is now the narrower one in T005:
-   where the `default` org is guaranteed to exist before any user insert, in
-   both engines.
+4. **How `migrate()` becomes engine-aware** — R-008. SQLite's pragmas have no
+   PostgreSQL equivalent, and the shared migration has never run against
+   PostgreSQL. Whether this is one migration with per-engine branches or two
+   migrations is an implementation decision, but it must be settled by running
+   both engines, not by reading the SQL.
 5. **What happens to an existing control plane's SQLite data** — deferred by
    R-008, and it must be decided before any deployment that has one.
