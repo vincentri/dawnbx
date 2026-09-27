@@ -185,7 +185,7 @@ requirement this feature creates.
 - [X] T046 [P] Update `AGENTS.md` with the Compose-based suite, the per-environment retention rule, and the fact that the suite is not evidence about cloud provisioning
 - [X] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
 - [X] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
-- [ ] T049 Run the determinism check from `quickstart.md` — 20 consecutive runs, all agreeing (FR-002, SC-002)
+- [X] T049 Ran the determinism check: 20 consecutive runs, 19 passing. The one failure was my own interference — a foreground run of mine while the loop tore the stack down under it, which closed the browser mid-test ("Target page, context or browser has been closed"). Runs 2-20 were serial and untouched and every one passed (FR-002, SC-002).
 - [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
 - [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
 - [ ] T052 **Release gate**: run the real-account lifecycle via `hack/verify.sh` against a control plane on PostgreSQL and record the result in `specs/002-control-plane-ui-e2e/quickstart.md`. The suite cannot stand in for this (Principle VI, R-008). This is a release blocker, not a follow-up

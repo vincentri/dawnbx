@@ -23,7 +23,9 @@ services:
     ports:
       # Published so the host can run the auth suite against this engine, which
       # is the tier that proves it continuously rather than by hand.
-      - "${DAWNBX_E2E_PG_PORT:-55433}:5432"
+      # Loopback for the same reason, and because it is how the host-side auth
+      # tier reaches this engine.
+      - "127.0.0.1:${DAWNBX_E2E_PG_PORT:-55433}:5432"
     healthcheck:
       # The server waits on this rather than on a sleep (T015). A sleep here is
       # the classic source of "works on my machine, fails in CI".
@@ -70,7 +72,10 @@ services:
     ports:
       # Published so a developer can open the dashboard in a browser and watch a
       # run, which is the "watch it happen" path the retention rule assumes.
-      - "${DAWNBX_E2E_PORT:-18080}:8080"
+      # Loopback only. This is a control plane that mints its own
+      # administrator password, and publishing it on every interface would put
+      # that password behind anything on the network.
+      - "127.0.0.1:${DAWNBX_E2E_PORT:-18080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
