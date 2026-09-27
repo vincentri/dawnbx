@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"dawnbx/internal/cluster"
 	"dawnbx/internal/provider"
 	"dawnbx/internal/provider/e2e"
+	"dawnbx/internal/provider/e2e/fakeserver"
 )
 
 // errNoFailureReason refuses a fail outcome with nothing to display.
@@ -34,7 +36,7 @@ var errNoFailureReason = errors.New("DAWNBX_E2E_CLUSTER=fail needs DAWNBX_E2E_FA
 // provider instead of a cloud.
 func wireE2EProvider() serverDeps {
 	d := productionDeps()
-	d.newProvider = func(context.Context, config) (provider.Provider, error) {
+	d.newProvider = func(_ context.Context, cfg config) (provider.Provider, error) {
 		out := e2e.Outcome{
 			Cluster:           envOr("DAWNBX_E2E_CLUSTER", "succeed"),
 			FailureReason:     os.Getenv("DAWNBX_E2E_FAILURE_REASON"),
@@ -54,7 +56,16 @@ func wireE2EProvider() serverDeps {
 		if out.Cluster == "fail" && out.FailureReason == "" {
 			return nil, errNoFailureReason
 		}
-		return e2e.New(out), nil
+		p := e2e.New(out)
+		// A real HTTPS server so the control plane pins a real certificate and
+		// signs in over the wire. Its address is where a ready cluster points,
+		// which is what makes the node routes reachable in a test.
+		srv, err := fakeserver.Start()
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("e2e: fake cluster listening on %s", srv.URL)
+		return p.WithServer(srv), nil
 	}
 	return d
 }

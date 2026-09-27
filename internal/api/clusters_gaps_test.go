@@ -669,3 +669,27 @@ func TestRemovingAWorkerTheClusterCannotNameStillSucceeds(t *testing.T) {
 		t.Fatalf("the provider was not asked about the worker: %+v", cp.prov.removed)
 	}
 }
+
+// TestSetRemoteFactoryIsUsedByTheNodeRoutes: the node routes reach a live
+// cluster through a client the control plane builds. Without a substitutable
+// factory the only way to exercise them was a live cluster, which is why this
+// seam exists at all.
+func TestSetRemoteFactoryIsUsedByTheNodeRoutes(t *testing.T) {
+	cp := testControl(t, &fakeProv{id: "aws", regions: []string{"us-east-1"}})
+	cp.readyCluster(t, "n1")
+
+	used := false
+	cp.control.SetRemoteFactory(func(url string) *cluster.Remote {
+		used = true
+		return cluster.NewRemote(url)
+	})
+	// The cluster is not actually reachable, so the route must fail rather than
+	// answer — but it must have tried, through the injected factory.
+	w := cp.do("GET", "/v1/clusters/n1/nodes", "", cp.admin...)
+	if !used {
+		t.Error("the node route did not go through the injected remote factory")
+	}
+	if w.Code == 200 {
+		t.Errorf("an unreachable cluster answered with a node list: %d %s", w.Code, w.Body)
+	}
+}

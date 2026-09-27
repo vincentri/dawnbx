@@ -17,17 +17,20 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"dawnbx/internal/cluster"
 	"dawnbx/internal/provider"
+	"dawnbx/internal/provider/e2e/fakeserver"
 )
 
 // Outcome is the per-test instruction, set through the environment before the
 // server starts. It is the mechanism behind FR-019 and FR-020.
 type Outcome struct {
+	// AdminPassword is the password the fake cluster will accept. It must be the
+	// one the control plane mints, so the sign-in path is exercised for real.
+	AdminPassword string `json:"-"`
 	// Cluster is the terminal behaviour a cluster reaches: "succeed", "fail", or
 	// "unreachable".
 	Cluster string `json:"cluster"`
@@ -60,6 +63,9 @@ type testCluster struct {
 	// sees each phase rather than skipping it.
 	start time.Time
 	nodes []provider.NodeRef
+	// url is the fake cluster this one is served by. It is set on the first
+	// Create so the control plane has somewhere real to pin and sign in to.
+	url string
 }
 
 // Provider is a provider.Provider that never touches a cloud. It is safe for
@@ -73,9 +79,14 @@ type Provider struct {
 	// keeps this package free of the flake the suite is meant to detect.
 	step func(time.Duration)
 
+	// server is the fake cluster a ready cluster points at. One is shared by
+	// every cluster this provider hands out, because the control plane pins and
+	// signs in to it exactly as it would to a real one.
+	server *fakeserver.Server
+
 	mu       sync.Mutex
 	clusters map[string]*testCluster
-	nodes    map[string]string // node id -> testCluster name
+	nodes    map[string]string // node id -> cluster name
 	seq      int
 }
 
@@ -95,6 +106,18 @@ func New(out Outcome) *Provider {
 		nodes:    map[string]string{},
 	}
 }
+
+// WithServer attaches a fake cluster this provider will report ready clusters
+// as. Without one a ready cluster still returns a URL, but nothing answers on
+// it, so a test that only needs the terminal state does not have to stand a TLS
+// server up.
+func (p *Provider) WithServer(s *fakeserver.Server) *Provider {
+	p.server = s
+	return p
+}
+
+// Server returns the attached fake cluster, or nil.
+func (p *Provider) Server() *fakeserver.Server { return p.server }
 
 // ID names the provider the way a cloud would. It is a value the roster shows,
 // not a path segment of its own (Principle: provider neutrality).
@@ -151,7 +174,20 @@ func (p *Provider) Create(_ context.Context, spec provider.ClusterSpec, boot pro
 	if err != nil {
 		return provider.Handle{}, err
 	}
-	p.clusters[name] = &testCluster{start: p.now()}
+	// The cluster accepts the credential the control plane just provided, which
+	// is the same one it will present at Login. Anything else and the sign-in
+	// path fails for a reason that has nothing to do with the code under test.
+	if p.server != nil {
+		p.server.AdoptPassword(boot.AdminPassword)
+	}
+	c := &testCluster{start: p.now()}
+	// A ready cluster points at the fake server, so the control plane pins a real
+	// certificate and signs in over the wire. Leaving this empty is what made the
+	// first version report a URL nothing could answer.
+	if p.server != nil {
+		c.url = p.server.URL
+	}
+	p.clusters[name] = c
 	return provider.NewHandle(raw), nil
 }
 
@@ -188,7 +224,11 @@ func (p *Provider) Status(_ context.Context, h provider.Handle) (provider.Status
 		return provider.Status{State: provider.Failed, Reason: p.out.FailureReason}, nil
 	}
 	if steps >= len(phaseOrder)-1 {
-		return provider.Status{State: provider.Ready, URL: "https://" + ref.Cluster + ".test.invalid"}, nil
+		url := c.url
+		if url == "" {
+			url = "https://" + ref.Cluster + ".e2e.invalid"
+		}
+		return provider.Status{State: provider.Ready, URL: url}, nil
 	}
 	return provider.Status{State: provider.Creating, Reason: phaseOrder[steps]}, nil
 }
@@ -311,24 +351,57 @@ func itoa(n int) string { return strconv.Itoa(n) }
 // The key it returns is opaque to the control plane, which stores it sealed. It
 // must never be a value any real testCluster would accept, and it must never appear
 // in a log or a report.
-type clusterClient struct{ url string }
-
-func (c clusterClient) EstablishPin(context.Context, string) (string, error) {
-	return "sha256/" + strings.Repeat("0", 43) + "=", nil
+type clusterClient struct {
+	url string
+	// signed is the client that completed Login, kept so MintAPIKey reuses its
+	// session. One client serves the whole pin -> login -> mint sequence, exactly
+	// as the real provisioner uses it.
+	signed *cluster.Remote
 }
 
-func (c clusterClient) Login(_ context.Context, password string) error {
-	if password == "" {
-		return errors.New("no administrator password reached the testCluster")
+// remote builds a client for url, remembering the pin once one is established so
+// later calls present it.
+func (c *clusterClient) remote(url string) *cluster.Remote {
+	r := cluster.NewRemote(url)
+	if c.signed != nil {
+		r.Pin = c.signed.Pin
 	}
+	return r
+}
+
+func (c *clusterClient) EstablishPin(ctx context.Context, url string) (string, error) {
+	// Establish it from the real handshake, so the pin stored against this
+	// cluster is the one the fake server actually presents. A placeholder would
+	// be compared on every later request and the node routes would fail on a pin
+	// mismatch rather than on anything real.
+	return c.remote(url).EstablishPin(ctx, url)
+}
+
+func (c *clusterClient) Login(ctx context.Context, password string) error {
+	if password == "" {
+		return errors.New("no administrator password reached the cluster")
+	}
+	r := c.remote(c.url)
+	if err := r.Login(ctx, password); err != nil {
+		return err
+	}
+	// Keep the signed-in client: the provisioner calls MintAPIKey on this same
+	// object, and a client that had not logged in has no session to reuse.
+	c.signed = r
 	return nil
 }
 
-func (c clusterClient) MintAPIKey(_ context.Context, name string) (string, error) {
-	return "e2e-" + name + "-" + strings.Repeat("0", 16), nil
+func (c *clusterClient) MintAPIKey(ctx context.Context, name string) (string, error) {
+	if c.signed == nil {
+		return "", errors.New("not signed in to the cluster; call Login first")
+	}
+	// The real client against the fake server: this is the call whose result the
+	// control plane stores sealed as the cluster's credential, so stubbing it
+	// would leave the one path that hands a live cluster its key untested.
+	return c.signed.MintAPIKey(ctx, name)
 }
 
 // ClientFor returns the client for a ready cluster. It is exported through the
 // package rather than as a Provider method so the e2e wiring file can hand it
 // to the provisioner without internal/cluster importing this package.
-func ClientFor(url string) cluster.ClusterClient { return clusterClient{url: url} }
+func ClientFor(url string) cluster.ClusterClient { return &clusterClient{url: url} }
