@@ -53,9 +53,14 @@ services:
       DAWNBX_E2E_FAILURE_REASON: "${DAWNBX_E2E_FAILURE_REASON:-}"
       DAWNBX_E2E_PROVIDER_UNAVAILABLE: "${DAWNBX_E2E_PROVIDER_UNAVAILABLE:-0}"
       DAWNBX_E2E_HOLD_WORKERS: "${DAWNBX_E2E_HOLD_WORKERS:-0}"
-      # Under the dashboard's 5s refetch on purpose, so a phase is reliably
-      # present when the interface next polls (research.md R-003).
-      DAWNBX_E2E_ADVANCE_MS: "${DAWNBX_E2E_ADVANCE_MS:-1000}"
+      # A phase lasts 2.5s, so a cluster spends about 12s in flight and the
+      # dashboard's 5s refetch samples it three or four times. At 1s the whole
+      # lifecycle finished inside one poll interval and the interface went
+      # straight from "nothing yet" to "ready" - the operator saw no progression
+      # at all, and a test asserting on it could only pass by matching unrelated
+      # text. This is the cost R-003 predicted: the provider is fast, the
+      # interface is what samples it, and the slower of the two sets the pace.
+      DAWNBX_E2E_ADVANCE_MS: "${DAWNBX_E2E_ADVANCE_MS:-2500}"
     volumes:
       - serverdata:/data
     ports:

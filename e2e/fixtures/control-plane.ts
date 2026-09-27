@@ -50,9 +50,12 @@ export async function controlPlane(): Promise<ControlPlane> {
       await page.getByLabel(/username/i).fill(ADMIN_USER);
       await page.getByLabel(/password/i).fill(password);
       await page.getByRole('button', { name: /sign in/i }).click();
-      // Landing on the shell is the assertion. The password never appears in a
-      // locator, a message, or a trace of this call.
-      await page.waitForURL(/\/ui\/(\/clusters)?(\?.*)?$/, { timeout: 30_000 });
+      // Waiting on the shell, not on a URL. waitForURL returned the instant the
+      // page was already at /ui/, which is before the login POST has finished -
+      // a race that only showed up once the rest of the run got faster. The
+      // navigation element is the thing that only exists once the session is
+      // real, so it is the correct thing to wait for.
+      await page.getByRole('navigation').waitFor({ state: 'visible', timeout: 30_000 });
     },
   };
 }

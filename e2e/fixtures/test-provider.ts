@@ -30,7 +30,7 @@ export function envFor(outcome: TestOutcome): Record<string, string> {
   validate(outcome);
   const env: Record<string, string> = {
     DAWNBX_E2E_CLUSTER: outcome.cluster,
-    DAWNBX_E2E_ADVANCE_MS: String(outcome.advanceMs ?? 1000),
+    DAWNBX_E2E_ADVANCE_MS: String(outcome.advanceMs ?? 2500),
   };
   if (outcome.failureReason) env.DAWNBX_E2E_FAILURE_REASON = outcome.failureReason;
   env.DAWNBX_E2E_PROVIDER_UNAVAILABLE = outcome.providerAvailable === false ? '1' : '0';
@@ -48,7 +48,7 @@ export function validate(outcome: TestOutcome): void {
   if (outcome.cluster === 'fail' && !outcome.failureReason?.trim()) {
     throw new Error('a "fail" outcome needs a failureReason, or the test proves nothing');
   }
-  const advance = outcome.advanceMs ?? 1000;
+  const advance = outcome.advanceMs ?? 2500;
   if (advance <= 0) {
     throw new Error('advanceMs must be positive; a zero would make progression unobservable');
   }

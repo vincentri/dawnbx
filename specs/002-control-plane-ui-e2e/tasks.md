@@ -104,16 +104,16 @@ in the recorded video, and the cluster reached `ready`.
 > Write these first; they must fail before the fixture supports them.
 
 - [X] T020 [P] [US1] Sign-in spec in `e2e/specs/sign-in.spec.ts` — reach the signed-in shell through the real form, using the credential from the fixture (FR-021)
-- [ ] T021 [P] [US1] Price-before-create spec in `e2e/specs/cluster-request.spec.ts` — assert a price is rendered, and that no cluster is created without one (FR-008)
-- [ ] T022 [P] [US1] Progression spec in `e2e/specs/cluster-request.spec.ts` — confirm the quote, then wait for an intermediate phase and then `ready` (FR-009)
+- [X] T021 [P] [US1] Price-before-create spec in `e2e/specs/cluster-request.spec.ts` — assert a price is rendered, and that no cluster is created without one (FR-008)
+- [X] T022 [P] [US1] Progression spec in `e2e/specs/cluster-request.spec.ts` — confirm the quote, then wait for an intermediate phase and then `ready` (FR-009)
 
 ### Implementation for User Story 1
 
 - [ ] T023 [US1] Configure the success outcome in `e2e/fixtures/test-provider.ts` with `advanceAfter` around 1 second — deliberately faster than the dashboard's 5s refetch at `web/src/pages/clusters.tsx:492`, so a phase is present when the UI next polls (R-003)
-- [ ] T024 [US1] Add a stable selector for the request form, the price, the confirm control, and each phase badge in `e2e/support/selectors.ts`, matching what `web/src/pages/clusters.tsx` already renders
-- [ ] T025 [US1] Assert in `e2e/specs/cluster-request.spec.ts` that the cluster reaches `ready` and that its URL is visible
-- [ ] T026 [US1] Measure this phase's wall-clock cost and record it against NFR-001 in `specs/002-control-plane-ui-e2e/plan.md`. Only this story observes progression, at ~5s per observed phase because the dashboard's refetch — not the fixture — sets that floor (R-003)
-- [ ] T027 [US1] If T026 shows the budget cannot hold, narrow the assertion to the terminal state plus one observed intermediate phase, and note the change in `specs/002-control-plane-ui-e2e/plan.md`. Do **not** shorten `advanceAfter` below the UI's poll interval — that trades speed for flake
+- [X] T024 [US1] Add a stable selector for the request form, the price, the confirm control, and each phase badge in `e2e/support/selectors.ts`, matching what `web/src/pages/clusters.tsx` already renders
+- [X] T025 [US1] Assert in `e2e/specs/cluster-request.spec.ts` that the cluster reaches `ready` and that its URL is visible
+- [X] T026 [US1] Measure this phase's wall-clock cost and record it against NFR-001 in `specs/002-control-plane-ui-e2e/plan.md`. Only this story observes progression, at ~5s per observed phase because the dashboard's refetch — not the fixture — sets that floor (R-003)
+- [X] T027 [US1] If T026 shows the budget cannot hold, narrow the assertion to the terminal state plus one observed intermediate phase, and note the change in `specs/002-control-plane-ui-e2e/plan.md`. Do **not** shorten `advanceAfter` below the UI's poll interval — that trades speed for flake
 
 **Checkpoint**: User Story 1 passes on its own in a container with no cloud
 credentials, and the video shows the operator's session.
