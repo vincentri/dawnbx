@@ -85,7 +85,12 @@ func kubeErr(err error) error {
 }
 
 type Manager struct {
-	Store   *store.Store
+	Store *store.Store
+	// ListIDs is how the manager enumerates sandboxes. It is a field so a
+	// failure can be induced: a store that cannot be read must never read as a
+	// server with nothing on it, and that cannot be demonstrated while the only
+	// way to fail is a real filesystem.
+	ListIDs func() ([]string, error)
 	Kube    kubernetes.Interface
 	Rest    *rest.Config
 	RunExec func(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
@@ -115,6 +120,11 @@ func (m *Manager) lowDisk() []string {
 
 func New(s *store.Store, kube kubernetes.Interface, rc *rest.Config) *Manager {
 	m := &Manager{Store: s, Kube: kube, Rest: rc, Now: time.Now, locks: map[string]*sync.Mutex{}}
+	// The default reads the real store. Every manager built outside a test gets
+	// this, so a failure surfaces exactly as the store reports it.
+	if s != nil {
+		m.ListIDs = s.IDs
+	}
 	m.RunExec, m.RunTTY = m.kubeExec, m.kubeTTY
 	m.diskOf = m.workerDisk
 	return m
@@ -459,7 +469,13 @@ func (m *Manager) Get(ctx context.Context, id string) (*View, error) {
 
 // ponytail: list reads every meta.json per call; switch to an informer cache past ~1k sandboxes.
 func (m *Manager) List(ctx context.Context) ([]*View, error) {
-	ids, _ := m.Store.IDs()
+	ids, err := m.ListIDs()
+	if err != nil {
+		// A store that cannot be read is not an empty server, and this is the
+		// inventory an operator reads to decide what they have. Propagating
+		// turns a locked or corrupt data dir into an error they can act on.
+		return nil, err
+	}
 	pods, err := m.Kube.CoreV1().Pods(Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, kubeErr(err)

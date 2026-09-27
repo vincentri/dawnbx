@@ -38,7 +38,14 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 	if m.PoolSize <= 0 || !poolable(want) {
 		return want, nil, nil, false
 	}
-	ids, _ := m.Store.IDs()
+	ids, err := m.ListIDs()
+	if err != nil {
+		// claim answers "is there a warm sandbox I can take", and a store that
+		// cannot be read has none it can vouch for. Returning false is correct
+		// here; the point is that it is a decision rather than an accident.
+		log.Printf("claim: list: %v", err)
+		return want, nil, nil, false
+	}
 	for _, id := range ids {
 		if meta, err := m.Store.ReadMeta(id); err != nil || meta.Status != StatusWarm {
 			continue
@@ -92,7 +99,13 @@ func (m *Manager) FillPool(ctx context.Context) {
 }
 
 func (m *Manager) warm() int {
-	ids, _ := m.Store.IDs()
+	ids, err := m.ListIDs()
+	if err != nil {
+		// A store that cannot be read reports as zero, which is the reading an
+		// operator acts on. Logging keeps the failure visible even though the
+		// counter's shape cannot carry an error.
+		log.Printf("%s: list: %v", "warm", err)
+	}
 	n := 0
 	for _, id := range ids {
 		if meta, err := m.Store.ReadMeta(id); err == nil && meta.Status == StatusWarm {

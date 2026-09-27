@@ -83,13 +83,19 @@ func (s *Store) IDs() ([]string, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	if err != nil {
+		// A directory that cannot be read is not an empty one. Returning the
+		// partial list with a nil error is what let four call sites answer "no
+		// sandboxes" when the truth was that the store could not be read.
+		return nil, err
+	}
 	var ids []string
 	for _, e := range ents {
 		if e.IsDir() && ValidID(e.Name()) {
 			ids = append(ids, e.Name())
 		}
 	}
-	return ids, err
+	return ids, nil
 }
 
 // Create makes <id>/ws and writes the first meta.json.

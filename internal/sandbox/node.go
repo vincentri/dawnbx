@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -182,7 +183,13 @@ func (m *Manager) Nodes(ctx context.Context) ([]NodeView, error) {
 // perNode counts sandboxes by the node holding their workspace.
 func (m *Manager) perNode() map[string]int {
 	count := map[string]int{}
-	ids, _ := m.Store.IDs()
+	ids, err := m.ListIDs()
+	if err != nil {
+		// A store that cannot be read reports as zero, which is the reading an
+		// operator acts on. Logging keeps the failure visible even though the
+		// counter's shape cannot carry an error.
+		log.Printf("%s: list: %v", "perNode", err)
+	}
 	for _, id := range ids {
 		if meta, err := m.Store.ReadMeta(id); err == nil && meta.Status != StatusDeleting {
 			n := meta.Node
