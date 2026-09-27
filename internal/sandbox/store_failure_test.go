@@ -63,6 +63,19 @@ func TestCountersDoNotReportZeroForAnUnreadableStore(t *testing.T) {
 	}
 }
 
+// TestANilListIDsFailsLoudly: New wires the real store, but a Manager built
+// directly with no store has no listing at all. That must read as an error
+// rather than a panic or, worse, an empty inventory.
+func TestANilListIDsFailsLoudly(t *testing.T) {
+	m := &Manager{}
+	if _, err := m.List(context.Background()); err == nil {
+		t.Error("a manager with no listing answered as though the store were empty")
+	}
+	if n := m.warm(); n != 0 {
+		t.Errorf("warm counted %d from a manager with no listing", n)
+	}
+}
+
 // TestListStillWorksNormally: the seam must not have changed the ordinary path.
 func TestListStillWorksNormally(t *testing.T) {
 	m, kube := setup(t)

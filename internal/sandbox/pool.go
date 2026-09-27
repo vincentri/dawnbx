@@ -38,7 +38,7 @@ func (m *Manager) claim(ctx context.Context, want store.Meta) (store.Meta, *core
 	if m.PoolSize <= 0 || !poolable(want) {
 		return want, nil, nil, false
 	}
-	ids, err := m.ListIDs()
+	ids, err := m.listIDs()
 	if err != nil {
 		// claim answers "is there a warm sandbox I can take", and a store that
 		// cannot be read has none it can vouch for. Returning false is correct
@@ -99,7 +99,7 @@ func (m *Manager) FillPool(ctx context.Context) {
 }
 
 func (m *Manager) warm() int {
-	ids, err := m.ListIDs()
+	ids, err := m.listIDs()
 	if err != nil {
 		// A store that cannot be read reports as zero, which is the reading an
 		// operator acts on. Logging keeps the failure visible even though the

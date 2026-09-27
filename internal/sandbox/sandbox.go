@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"sort"
 	"strings"
@@ -120,8 +119,8 @@ func (m *Manager) lowDisk() []string {
 
 func New(s *store.Store, kube kubernetes.Interface, rc *rest.Config) *Manager {
 	m := &Manager{Store: s, Kube: kube, Rest: rc, Now: time.Now, locks: map[string]*sync.Mutex{}}
-	// The default reads the real store. Every manager built outside a test gets
-	// this, so a failure surfaces exactly as the store reports it.
+	// The default reads the real store, so a failure surfaces exactly as the
+	// store reports it.
 	if s != nil {
 		m.ListIDs = s.IDs
 	}
@@ -248,22 +247,48 @@ func (m *Manager) Create(ctx context.Context, r CreateReq) (*View, error) {
 		os.RemoveAll(m.Store.Dir(meta.ID))
 		return nil, err
 	}
-	meta = m.pin(meta, pod)
+	meta, err = m.pinAndPersist(meta, pod)
+	if err != nil {
+		// The pod exists but we do not know which node owns its workspace, so a
+		// recreate would land elsewhere and the sandbox would look empty. Report
+		// the failure rather than hand back a sandbox that cannot round-trip.
+		m.Kube.CoreV1().Pods(Namespace).Delete(context.Background(), meta.ID, metav1.DeleteOptions{})
+		os.RemoveAll(m.Store.Dir(meta.ID))
+		return nil, err
+	}
 	v := view(meta, pod)
 	v.Warnings = warn
 	return v, nil
 }
 
-// pin records the node the scheduler picked, so a recreated pod lands on the
-// same disk. Caller holds the lock.
-func (m *Manager) pin(meta store.Meta, pod *corev1.Pod) store.Meta {
-	if meta.Node == "" && pod != nil && pod.Spec.NodeName != "" {
-		meta.Node = pod.Spec.NodeName
-		if err := m.Store.WriteMeta(meta); err != nil {
-			log.Printf("%s: record node: %v", meta.ID, err)
-		}
+// listIDs enumerates sandboxes, and answers for a Manager that has no listing
+// rather than panicking. A Manager built directly rather than through New has no
+// store, and a server that cannot say what it holds is an error — never an empty
+// inventory, which is the reading an operator acts on.
+func (m *Manager) listIDs() ([]string, error) {
+	if m.ListIDs == nil {
+		return nil, errors.New("sandbox: this manager has no store")
 	}
-	return meta
+	return m.ListIDs()
+}
+
+// pinAndPersist records the node the scheduler picked, so a recreated pod lands
+// on the same disk, and persists it.
+//
+// It returns the error rather than logging it. The previous version swallowed the
+// write failure and handed back the mutated meta, so both callers carried on
+// believing the node had been recorded when it had not: the next recreate landed
+// somewhere else, the workspace read as empty, and nothing told the API caller.
+// The name says it writes, because it does. Caller holds the lock.
+func (m *Manager) pinAndPersist(meta store.Meta, pod *corev1.Pod) (store.Meta, error) {
+	if meta.Node != "" || pod == nil || pod.Spec.NodeName == "" {
+		return meta, nil
+	}
+	meta.Node = pod.Spec.NodeName
+	if err := m.Store.WriteMeta(meta); err != nil {
+		return meta, err
+	}
+	return meta, nil
 }
 
 // local reports whether meta's workspace is on this server's disk.
@@ -469,7 +494,7 @@ func (m *Manager) Get(ctx context.Context, id string) (*View, error) {
 
 // ponytail: list reads every meta.json per call; switch to an informer cache past ~1k sandboxes.
 func (m *Manager) List(ctx context.Context) ([]*View, error) {
-	ids, err := m.ListIDs()
+	ids, err := m.listIDs()
 	if err != nil {
 		// A store that cannot be read is not an empty server, and this is the
 		// inventory an operator reads to decide what they have. Propagating

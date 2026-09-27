@@ -251,7 +251,10 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 		want[meta.ID] = true
 		m.withLock(meta.ID, func(cur store.Meta) error {
 			if p := have[cur.ID]; p != nil {
-				cur = m.pin(cur, p)
+				var err error
+				if cur, err = m.pinAndPersist(cur, p); err != nil {
+					return err
+				}
 			} else if cur.Node == "" && cur.Status != StatusWarm && m.Self != "" {
 				// Made before multi-node: the workspace is on this disk.
 				cur.Node = m.Self

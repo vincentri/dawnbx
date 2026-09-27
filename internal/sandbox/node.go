@@ -183,7 +183,7 @@ func (m *Manager) Nodes(ctx context.Context) ([]NodeView, error) {
 // perNode counts sandboxes by the node holding their workspace.
 func (m *Manager) perNode() map[string]int {
 	count := map[string]int{}
-	ids, err := m.ListIDs()
+	ids, err := m.listIDs()
 	if err != nil {
 		// A store that cannot be read reports as zero, which is the reading an
 		// operator acts on. Logging keeps the failure visible even though the
