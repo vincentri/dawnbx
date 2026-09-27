@@ -386,13 +386,16 @@ prepull_image() {
 # strict umask is scoped to it. The previous version set umask 077 and then
 # restored it to a hardcoded 022, which silently widened a stricter caller's
 # umask for the rest of the install - the opposite of what a hardened image or a
-# CI runner asked for. local keeps API_KEY, ADMIN_PASSWORD and the rest out of
 # the global namespace as well.
 server_identity() {
   local old_umask
   old_umask=$(umask)
   umask 077
-  local API_KEY=""
+  # Not local: the rest of the installer reads API_KEY and ADMIN_PASSWORD
+  # after this returns - to write the plaintext copy for the installing user and
+  # to say where the secrets live. Scoping them here was a mistake the live tier
+  # caught, not a tidy-up.
+  API_KEY=""
   # The plaintext key waits in api-key.pending until it has been printed, so a
   # run that fails halfway still shows it on the next run.
   if [ -f "$SRV/api-key.pending" ]; then
@@ -409,7 +412,7 @@ server_identity() {
   # Dashboard admin login. The server reads admin.env verbatim (any characters are
   # fine) and keeps only a bcrypt hash in its DB. Changing the value here and
   # restarting dawnbx resets the password; a change made in the dashboard sticks otherwise.
-  local ADMIN_PASSWORD=""
+  ADMIN_PASSWORD=""
   if [ -n "${DAWNBX_ADMIN_PASSWORD:-}" ]; then
     ADMIN_PASSWORD=$DAWNBX_ADMIN_PASSWORD
     printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
