@@ -65,5 +65,10 @@ jobs:
       - name: gate
         run: bash hack/check.sh
 
+      # The e2e suite runs inside the gate in Docker Compose, so there is no
+      # separate browser install here: the browser is in the driver image, and a
+      # runner that downloaded one itself would be testing a different browser
+      # than the suite declares. The gate step above covers it.
+
       # The live tier needs a Lima VM and real k3s, so it is not in this job.
       # It runs on demand: CHECK_LIVE=1 bash hack/check.sh

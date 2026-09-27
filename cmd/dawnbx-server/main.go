@@ -277,7 +277,7 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 		defer stop()
 		go provisioner.Watch(ctx)
 		srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, provisioner)}
-		return listen(ctx, cfg, d, srv.ControlPlaneHandler())
+		return listen(ctx, cfg, d, wrapControl(srv.ControlPlaneHandler()))
 	}
 	srv := &api.Server{Auth: db, Control: api.NewControl(registry, prow, nil)}
 	return listen(ctx, cfg, d, srv.ControlPlaneHandler())
@@ -444,6 +444,15 @@ func main() {
 	if err := serve(context.Background(), cfg, e2eDeps()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// wrapControl applies the build's control wrapper, if it has one. A shipped
+// build has none, so the handler is returned untouched.
+func wrapControl(h http.Handler) http.Handler {
+	if w := controlWrapper(); w != nil {
+		return w(h)
+	}
+	return h
 }
 
 // adminEnv reads KEY=value lines verbatim (no shell or systemd quoting), so any

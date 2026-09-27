@@ -8,6 +8,28 @@ implementation.
 
 ---
 
+## Running the auth suite against either engine
+
+The e2e stack runs the control plane on PostgreSQL, and the auth suite already
+supports both engines through one variable. To run it by hand against either:
+
+```bash
+# PostgreSQL, which is what the control plane uses
+docker run -d --name dawnbx-pg -e POSTGRES_PASSWORD=p -e POSTGRES_DB=dawnbx \
+  -p 55432:5432 postgres:16-alpine
+until docker exec dawnbx-pg pg_isready -U postgres -d dawnbx >/dev/null 2>&1; do sleep 1; done
+DAWNBX_TEST_DATABASE_URL='postgres://postgres:p@127.0.0.1:55432/dawnbx?sslmode=disable' \
+  go test ./internal/auth/ -count=1
+
+# SQLite, which is the default with no variable set
+go test ./internal/auth/ -count=1
+
+docker rm -f dawnbx-pg
+```
+
+Both must pass. The variable is the whole mechanism — no separate Postgres code
+path exists, which is why neither run is the interesting one on its own.
+
 ## Prerequisites
 
 **Docker, and Docker Compose. That is the whole list.**

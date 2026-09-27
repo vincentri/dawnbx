@@ -57,6 +57,7 @@ func wireE2EProvider() serverDeps {
 			return nil, errNoFailureReason
 		}
 		p := e2e.New(out)
+		built = p
 		// A real HTTPS server so the control plane pins a real certificate and
 		// signs in over the wire. Its address is where a ready cluster points,
 		// which is what makes the node routes reachable in a test.
@@ -69,6 +70,14 @@ func wireE2EProvider() serverDeps {
 	}
 	return d
 }
+
+// built is the provider the process actually wired, published so the control
+// route in deps_e2e.go can reach it. It is a package variable rather than a
+// closure because the route is registered on a handler built elsewhere.
+var built *e2e.Provider
+
+// controlProvider returns the wired provider, or nil before wiring has run.
+func controlProvider() *e2e.Provider { return built }
 
 // wireE2EProvisioner points the provisioner at the test cluster client, so a
 // cluster that reports itself ready is not then asked to answer a TLS login at a

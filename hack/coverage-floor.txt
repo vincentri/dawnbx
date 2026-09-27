@@ -18,3 +18,10 @@ go=90.8 - - -
 web=94 93 90 94
 ts_sdk=95 85 95 95
 py_sdk=95 - - -
+
+# The control-plane e2e suite is deliberately outside every floor here. It is a
+# browser tier running in a container against a test provider, and counting it in
+# the dashboard's Vitest coverage or the Go total would mean counting a suite
+# that asserts on rendered text toward a number about statements. Its own claim
+# is FR-022: the run reports tests executed against tests defined, and a skipped
+# test fails the run.

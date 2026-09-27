@@ -71,9 +71,17 @@ type testCluster struct {
 // Provider is a provider.Provider that never touches a cloud. It is safe for
 // concurrent use: the orchestrator polls Status while a test drives the
 // interface.
+//
+// The outcome is settable at runtime rather than fixed at construction. That is
+// what lets one server present a succeeding cluster to the happy-path tests and
+// a failing one to the failure tests, instead of needing a separate container per
+// journey: a provider built once per process would otherwise make every failure
+// journey a separate `docker compose run`, and a suite that cannot run its
+// failures without restarting its subject is a suite that rarely runs them.
 type Provider struct {
-	out Outcome
-	now func() time.Time
+	mu0  sync.RWMutex
+	out0 Outcome
+	now  func() time.Time
 	// step advances the clock under a test's control. It is a field so a test
 	// asserts a phase progression instead of sleeping for one, which is what
 	// keeps this package free of the flake the suite is meant to detect.
@@ -99,12 +107,31 @@ func New(out Outcome) *Provider {
 		out.AdvanceAfter = time.Second
 	}
 	return &Provider{
-		out:      out,
+		out0:     out,
 		now:      time.Now,
 		step:     func(time.Duration) {},
 		clusters: map[string]*testCluster{},
 		nodes:    map[string]string{},
 	}
+}
+
+// outcome reads the current outcome under the lock.
+func (p *Provider) outcome() Outcome {
+	p.mu0.RLock()
+	defer p.mu0.RUnlock()
+	return p.out0
+}
+
+// SetOutcome changes what this provider will present from now on. A test that
+// needs a failing cluster sets it, drives the interface, and leaves the next
+// test to set its own.
+func (p *Provider) SetOutcome(out Outcome) {
+	if out.AdvanceAfter <= 0 {
+		out.AdvanceAfter = 2500 * time.Millisecond
+	}
+	p.mu0.Lock()
+	defer p.mu0.Unlock()
+	p.out0 = out
 }
 
 // WithServer attaches a fake cluster this provider will report ready clusters
@@ -125,7 +152,7 @@ func (p *Provider) ID() string { return "test" }
 
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		Available: p.out.ProviderAvailable,
+		Available: p.outcome().ProviderAvailable,
 		Delivery:  "control-plane-test-harness",
 		Regions:   []string{"test-1", "test-2"},
 	}
@@ -207,21 +234,21 @@ func (p *Provider) Status(_ context.Context, h provider.Handle) (provider.Status
 
 	// "unreachable" is distinct from "no nodes": a testCluster that cannot be
 	// reached is an error the interface must show, not an empty list (FR-010).
-	if p.out.Cluster == "unreachable" {
+	if p.outcome().Cluster == "unreachable" {
 		return provider.Status{State: provider.Failed, Reason: "testCluster is unreachable: the host stopped responding"}, nil
 	}
 
-	steps := int(p.now().Sub(c.start) / p.out.AdvanceAfter)
+	steps := int(p.now().Sub(c.start) / p.outcome().AdvanceAfter)
 	if steps > len(phaseOrder)-1 {
 		steps = len(phaseOrder) - 1
 	}
-	if p.out.Cluster == "fail" {
+	if p.outcome().Cluster == "fail" {
 		// Fail partway so the interface shows a testCluster that was progressing and
 		// then did not, which is the case an operator has to diagnose.
 		if steps < 2 {
 			return provider.Status{State: provider.Creating, Reason: phaseOrder[steps]}, nil
 		}
-		return provider.Status{State: provider.Failed, Reason: p.out.FailureReason}, nil
+		return provider.Status{State: provider.Failed, Reason: p.outcome().FailureReason}, nil
 	}
 	if steps >= len(phaseOrder)-1 {
 		url := c.url
@@ -287,7 +314,7 @@ func (p *Provider) RemoveNode(_ context.Context, h provider.Handle, node provide
 	if !ok {
 		return provider.ErrNotFound
 	}
-	if p.out.HoldWorkers {
+	if p.outcome().HoldWorkers {
 		return provider.ErrNodeBusy
 	}
 	for i, n := range c.nodes {
@@ -399,6 +426,18 @@ func (c *clusterClient) MintAPIKey(ctx context.Context, name string) (string, er
 	// control plane stores sealed as the cluster's credential, so stubbing it
 	// would leave the one path that hands a live cluster its key untested.
 	return c.signed.MintAPIKey(ctx, name)
+}
+
+// SetOutcomeFromJSON applies an outcome supplied as JSON, for a control endpoint
+// that only exists in an e2e build. It is deliberately not reachable from the
+// product's own router: a shipped binary has no route that could call it.
+func (p *Provider) SetOutcomeFromJSON(raw []byte) error {
+	var out Outcome
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	p.SetOutcome(out)
+	return nil
 }
 
 // ClientFor returns the client for a ready cluster. It is exported through the

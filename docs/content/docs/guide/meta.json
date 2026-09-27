@@ -1,4 +1,11 @@
 {
   "title": "Guide",
-  "pages": ["sandboxes", "cli", "api", "auth", "nodes"]
+  "pages": [
+    "sandboxes",
+    "cli",
+    "api",
+    "auth",
+    "nodes",
+    "e2e"
+  ]
 }

@@ -62,7 +62,7 @@ this is complete.
 - [X] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
 - [ ] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml` and point `DAWNBX_TEST_DATABASE_URL` at it, so the auth suite runs on both engines rather than whichever one happens to be configured
 - [X] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
-- [ ] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
+- [X] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
 
 ### Test provider, selectable only in a test build
 
@@ -132,16 +132,16 @@ exist for both.
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T028 [P] [US2] Failure-reason spec in `e2e/specs/failure.spec.ts` — a failed cluster shows the specific reason, not a generic message (FR-010)
-- [ ] T029 [P] [US2] Unreachable-versus-empty spec in `e2e/specs/failure.spec.ts` — a cluster that cannot be reached is not presented as having no workers (FR-010)
-- [ ] T030 [P] [US2] Provider-unavailable spec in `e2e/specs/failure.spec.ts` — an unavailable provider is visible in the roster and visibly unavailable, not absent (FR-013)
-- [ ] T031 [P] [US2] Stale-quote spec in `e2e/specs/failure.spec.ts` — a quote that went stale is refused with an explanation and can be re-quoted without re-entering the form (FR-014)
+- [X] T028 [P] [US2] Failure-reason spec in `e2e/specs/failure.spec.ts` — a failed cluster shows the specific reason, not a generic message (FR-010)
+- [X] T029 [P] [US2] Unreachable-versus-empty spec in `e2e/specs/failure.spec.ts` — a cluster that cannot be reached is not presented as having no workers (FR-010)
+- [X] T030 [P] [US2] Provider-unavailable spec in `e2e/specs/failure.spec.ts` — an unavailable provider is visible in the roster and visibly unavailable, not absent (FR-013)
+- [X] T031 [P] [US2] Stale-quote spec in `e2e/specs/failure.spec.ts` — a quote that went stale is refused with an explanation and can be re-quoted without re-entering the form (FR-014)
 - [ ] T032 [P] [US2] Recording-artefact spec in `e2e/specs/retention.spec.ts` — a failed test's recording exists and is playable; a passing test's recording is absent under `CI=1` (FR-023)
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] Add the `fail`, `unreachable`, and `providerAvailable: false` outcomes to `e2e/fixtures/test-provider.ts`, each producing the specific value the interface must render
-- [ ] T034 [US2] Add selectors in `e2e/support/selectors.ts` for the failure detail, the unreachable notice, and the unavailable-provider marker
+- [X] T033 [US2] Add the `fail`, `unreachable`, and `providerAvailable: false` outcomes to `e2e/fixtures/test-provider.ts`, each producing the specific value the interface must render
+- [X] T034 [US2] Add selectors in `e2e/support/selectors.ts` for the failure detail, the unreachable notice, and the unavailable-provider marker
 - [ ] T035 [US2] Verify in `e2e/specs/retention.spec.ts` that no recording contains the run's administrator credential or any secret (FR-021's secrecy clause)
 
 **Checkpoint**: User Story 2 passes on its own. A failing run is diagnosable by
@@ -159,13 +159,13 @@ remove the worker, delete the cluster — all observed in the browser.
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T036 [P] [US3] Add-worker spec in `e2e/specs/workers.spec.ts` — a worker is added and reaches `ready` (FR-011)
-- [ ] T037 [P] [US3] Refused-removal spec in `e2e/specs/workers.spec.ts` — removing a node holding workloads is refused with a reason naming the cause (FR-012)
-- [ ] T038 [P] [US3] Remove-and-delete spec in `e2e/specs/workers.spec.ts` — the worker is removed and the cluster deleted and disappears from the list (FR-011)
+- [X] T036 [P] [US3] Add-worker spec in `e2e/specs/workers.spec.ts` — a worker is added and reaches `ready` (FR-011)
+- [X] T037 [P] [US3] Refused-removal spec in `e2e/specs/workers.spec.ts` — removing a node holding workloads is refused with a reason naming the cause (FR-012)
+- [X] T038 [P] [US3] Remove-and-delete spec in `e2e/specs/workers.spec.ts` — the worker is removed and the cluster deleted and disappears from the list (FR-011)
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Add the `holdWorkers` outcome to `e2e/fixtures/test-provider.ts`, returning `ErrNodeBusy` from `RemoveNode` when set
+- [X] T039 [US3] Add the `holdWorkers` outcome to `e2e/fixtures/test-provider.ts`, returning `ErrNodeBusy` from `RemoveNode` when set
 - [ ] T040 [US3] Add selectors in `e2e/support/selectors.ts` for the node list, the add-worker control, the refusal notice, and the delete confirmation
 - [ ] T041 [US3] Add a selector in `e2e/support/selectors.ts` asserting the unreachable case is never rendered as an empty node list, so a future change cannot regress it silently
 
@@ -178,16 +178,16 @@ remove the worker, delete the cluster — all observed in the browser.
 **Purpose**: Wire the suite into the gate and CI, and satisfy the release
 requirement this feature creates.
 
-- [ ] T042 [P] Add `.e2e/` verification to `hack/check-harness-cites.py` or a sibling check, so a committed recording fails the gate
-- [ ] T043 [P] Update `docs/content/docs/guide/` with how to run the suite in Compose and where the recordings land
-- [ ] T044 Add the suite to `hack/check.sh` as a step alongside the existing checks, replacing nothing (FR-007)
-- [ ] T045 Update `.github/workflows/ci.yml` to run the suite in Compose. The browser install moves into the image, so the workflow no longer installs Playwright itself
-- [ ] T046 [P] Update `AGENTS.md` with the Compose-based suite, the per-environment retention rule, and the fact that the suite is not evidence about cloud provisioning
-- [ ] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
+- [X] T042 [P] Add `.e2e/` verification to `hack/check-harness-cites.py` or a sibling check, so a committed recording fails the gate
+- [X] T043 [P] Update `docs/content/docs/guide/` with how to run the suite in Compose and where the recordings land
+- [X] T044 Add the suite to `hack/check.sh` as a step alongside the existing checks, replacing nothing (FR-007)
+- [X] T045 Update `.github/workflows/ci.yml` to run the suite in Compose. The browser install moves into the image, so the workflow no longer installs Playwright itself
+- [X] T046 [P] Update `AGENTS.md` with the Compose-based suite, the per-environment retention rule, and the fact that the suite is not evidence about cloud provisioning
+- [X] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
 - [ ] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
 - [ ] T049 Run the determinism check from `quickstart.md` — 20 consecutive runs, all agreeing (FR-002, SC-002)
 - [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
-- [ ] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
+- [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
 - [ ] T052 **Release gate**: run the real-account lifecycle via `hack/verify.sh` against a control plane on PostgreSQL and record the result in `specs/002-control-plane-ui-e2e/quickstart.md`. The suite cannot stand in for this (Principle VI, R-008). This is a release blocker, not a follow-up
 - [ ] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)
 

@@ -3,6 +3,8 @@
 package main
 
 import (
+	"net/http"
+
 	"dawnbx/internal/cluster"
 	"dawnbx/internal/provider"
 )
@@ -18,3 +20,8 @@ func e2eDeps() serverDeps { return productionDeps() }
 func clientFactory(provider.Provider) func(string) cluster.ClusterClient {
 	return func(url string) cluster.ClusterClient { return cluster.NewRemote(url) }
 }
+
+// controlWrapper returns nil in a shipped build: there is no route here that
+// could be told to fail a cluster on purpose, because there is no test provider
+// to fail.
+func controlWrapper() func(http.Handler) http.Handler { return nil }

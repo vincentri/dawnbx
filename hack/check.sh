@@ -175,6 +175,23 @@ stale=$(git status --porcelain internal/api/ui)
 }
 
 run "agent rules cites" python3 hack/check-harness-cites.py
+run "no committed e2e recordings" python3 hack/check-e2e-artefacts.py
+
+# ---- control-plane UI e2e ----------------------------------------------------
+# Browser-driven, in Docker Compose, against a test provider. It proves the
+# operator-facing interface and the orchestration; it proves nothing about a
+# cloud, and the live account run stays the only thing that does.
+#
+# Opt-out is for a machine with no Docker daemon. It is a deliberate escape
+# hatch, not a default: a run that silently skipped the suite would report a
+# green gate that covered less than it claims.
+if [ "${SKIP_E2E:-0}" != 1 ]; then
+  if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+    run "control-plane e2e" docker compose -f e2e/docker-compose.yml run --rm driver
+  else
+    printf 'warn  e2e needs docker compose; skipping (SKIP_E2E=1 to be explicit)\n'
+  fi
+fi
 
 # ---- optional control-plane smoke --------------------------------------------
 if [ "${SMOKE:-0}" = 1 ]; then
