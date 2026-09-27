@@ -246,16 +246,19 @@ func TestNodesOnAnUnknownCluster(t *testing.T) {
 // TestErrorMappersNameTheCodeAClientBranchesOn: these functions are the only
 // place an internal error becomes an HTTP code, so every branch is asserted on
 // the code the wire actually carries.
+//
+// Only the translator rows are here. A row like {"a stale quote", quoteStale(),
+// "quote_stale"} proves nothing: quoteStale cannot return anything else, so it
+// passes even if the constructor is deleted from production and the row is
+// kept. The four constructors it covered - quoteStale, clusterHasNodes,
+// noCluster, providerUnavailable - are pinned end to end by the routes in
+// clusters_test.go, which drive real requests and read the body.
 func TestErrorMappersNameTheCodeAClientBranchesOn(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		got  error
 		want string
 	}{
-		{"a stale quote", quoteStale(), "quote_stale"},
-		{"a cluster with workers", clusterHasNodes("1 worker still attached"), "cluster_has_nodes"},
-		{"no cluster wired", noCluster(), "cluster_unavailable"},
-		{"an unavailable provider", providerUnavailable("gcp"), "provider_unavailable"},
 		{"an unknown cluster on delete", deleteErr("ghost", cluster.ErrNotFound), "not_found"},
 		{"a delete with workers", deleteErr("c1", cluster.ErrHasNodes), "cluster_has_nodes"},
 		{"a create with a stale quote", createErr(cluster.ErrQuoteStale), "quote_stale"},

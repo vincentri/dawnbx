@@ -4,6 +4,37 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { Sandbox, Client, DawnbxError } from "../dist/index.js"
 
+// fakeServer is the one HTTP boundary in this file: it records every call, hands
+// the handler a json() writer and the request body it accumulated, and returns
+// the call log, the SDK options for that port, and a close. It was called
+// clusterServer for a cluster-listing feature this file no longer has, and
+// three of the tests hand-rolled the same body instead of using it.
+const fakeServer = async (handler) => {
+  const seen = []
+  const srv = createServer(async (req, res) => {
+    let body = ""
+    for await (const c of req) body += c
+    seen.push(`${req.method} ${req.url} ${body}`)
+    const json = (s, v) => {
+      res.writeHead(s, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(v))
+    }
+    await handler(req, res, json, body)
+  })
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  const opts = {
+    url: `http://127.0.0.1:${srv.address().port}`,
+    apiKey: "k",
+  }
+  return {
+    seen,
+    opts,
+    url: opts.url,
+    client: new Client(opts),
+    close: () => srv.close(),
+  }
+}
+
 const sb1 = {
   id: "sb-abc123",
   image: "python:3.12-slim",
@@ -15,19 +46,15 @@ const sb1 = {
 }
 
 test("create, exec, files, errors, dispose", async () => {
-  const seen = []
   let getTries = 0
   const files = new Map()
   const pathOf = (u) => new URL(u, "http://x").searchParams.get("path")
-  const srv = createServer(async (req, res) => {
-    let body = ""
-    for await (const c of req) body += c
-    seen.push(`${req.method} ${req.url} ${body}`)
+  const {
+    opts: o,
+    seen: calls,
+    close,
+  } = await fakeServer(async (req, res, json, body) => {
     assert.equal(req.headers.authorization, "Bearer k")
-    const json = (s, v) => {
-      res.writeHead(s, { "Content-Type": "application/json" })
-      res.end(JSON.stringify(v))
-    }
     if (req.url === "/v1/sandboxes" && req.method === "POST")
       return json(200, sb1)
     if (req.url.endsWith("/exec"))
@@ -59,8 +86,6 @@ test("create, exec, files, errors, dispose", async () => {
       hint: "use ttl=null",
     })
   })
-  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
-  const o = { url: `http://127.0.0.1:${srv.address().port}`, apiKey: "k" }
   try {
     {
       await using sb = await Sandbox.create({ ...o, ttl: null })
@@ -83,16 +108,16 @@ test("create, exec, files, errors, dispose", async () => {
       const got = await Sandbox.get("sb-abc123", o) // retried through two 503s
       assert.equal(got.info.expiresAt, null)
     } // dispose -> DELETE; not_found is swallowed
-    assert.match(seen[0], /POST \/v1\/sandboxes \{"ttl":null\}/)
+    assert.match(calls[0], /POST \/v1\/sandboxes \{"ttl":null\}/)
     assert.ok(
-      seen.some((s) =>
+      calls.some((s) =>
         s.startsWith("PUT /v1/sandboxes/sb-abc123/files?path=a%2Fb.txt x"),
       ),
     )
-    assert.ok(seen.at(-1).startsWith("DELETE /v1/sandboxes/sb-abc123"))
+    assert.ok(calls.at(-1).startsWith("DELETE /v1/sandboxes/sb-abc123"))
     assert.equal(getTries, 3)
   } finally {
-    srv.close()
+    close()
   }
 })
 
@@ -100,23 +125,17 @@ const STOPPED = { ...sb1, status: "stopped" }
 const CHILD = { ...STOPPED, id: "sb-child1", parent: "sb-abc123" }
 
 test("list, fork, start and refresh", async () => {
-  const seen = []
-  const srv = createServer(async (req, res) => {
-    let body = ""
-    for await (const c of req) body += c
-    seen.push(`${req.method} ${req.url} ${body}`)
-    const json = (s, v) => {
-      res.writeHead(s, { "Content-Type": "application/json" })
-      res.end(JSON.stringify(v))
-    }
+  const {
+    opts: o,
+    seen,
+    close,
+  } = await fakeServer(async (req, res, json) => {
     if (req.url === "/v1/sandboxes" && req.method === "GET")
       return json(200, { sandboxes: [sb1, CHILD] })
     if (req.url.endsWith("/fork")) return json(200, { sandboxes: [CHILD] })
     if (req.url.endsWith("/start")) return json(200, sb1)
     json(200, STOPPED)
   })
-  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
-  const o = { url: `http://127.0.0.1:${srv.address().port}`, apiKey: "k" }
   try {
     const all = await Sandbox.list(o)
     assert.deepEqual(
@@ -148,7 +167,7 @@ test("list, fork, start and refresh", async () => {
     assert.equal(fresh.status, "stopped")
     assert.equal(sb.info.status, "stopped")
   } finally {
-    srv.close()
+    close()
   }
 })
 
@@ -167,20 +186,15 @@ test("an unreachable server raises connection_failed", async () => {
 })
 
 test("env defaults and create options", async () => {
-  const seen = []
-  const srv = createServer(async (req, res) => {
-    let body = ""
-    for await (const c of req) body += c
-    seen.push(`${req.method} ${req.url} ${body}`)
+  const { seen, url, close } = await fakeServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(
       JSON.stringify(req.url === "/v1/sandboxes" ? { sandboxes: [sb1] } : sb1),
     )
   })
-  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
   const prevUrl = process.env.DAWNBX_URL
   const prevKey = process.env.DAWNBX_API_KEY
-  process.env.DAWNBX_URL = `http://127.0.0.1:${srv.address().port}`
+  process.env.DAWNBX_URL = url
   process.env.DAWNBX_API_KEY = "env-key"
   try {
     // No url/apiKey passed: both come from the environment.
@@ -207,35 +221,12 @@ test("env defaults and create options", async () => {
     else process.env.DAWNBX_URL = prevUrl
     if (prevKey === undefined) delete process.env.DAWNBX_API_KEY
     else process.env.DAWNBX_API_KEY = prevKey
-    srv.close()
+    close()
   }
 })
 
-const clusterServer = async (handler) => {
-  const seen = []
-  const srv = createServer(async (req, res) => {
-    let body = ""
-    for await (const c of req) body += c
-    seen.push(`${req.method} ${req.url} ${body}`)
-    const json = (s, v) => {
-      res.writeHead(s, { "Content-Type": "application/json" })
-      res.end(JSON.stringify(v))
-    }
-    await handler(req, res, json)
-  })
-  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
-  return {
-    seen,
-    client: new Client({
-      url: `http://127.0.0.1:${srv.address().port}`,
-      apiKey: "k",
-    }),
-    close: () => srv.close(),
-  }
-}
-
 test("kill rethrows anything that is not an already-gone sandbox", async () => {
-  const { client, close } = await clusterServer(async (req, res, json) => {
+  const { client, close } = await fakeServer(async (req, res, json) => {
     if (req.method === "DELETE")
       return json(410, { code: "expired", message: "sandbox expired" })
     json(200, sb1)
@@ -257,7 +248,7 @@ test("kill rethrows anything that is not an already-gone sandbox", async () => {
 })
 
 test("a Client with no API key raises unauthorized before any request", async () => {
-  const { seen, client, close } = await clusterServer(async (req, res, json) =>
+  const { seen, client, close } = await fakeServer(async (req, res, json) =>
     json(200, { clusters: [] }),
   )
   const prevKey = process.env.DAWNBX_API_KEY
