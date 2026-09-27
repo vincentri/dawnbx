@@ -20,6 +20,10 @@ services:
     # host, and `down -v` must remove it.
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      # Published so the host can run the auth suite against this engine, which
+      # is the tier that proves it continuously rather than by hand.
+      - "${DAWNBX_E2E_PG_PORT:-55433}:5432"
     healthcheck:
       # The server waits on this rather than on a sleep (T015). A sleep here is
       # the classic source of "works on my machine, fails in CI".

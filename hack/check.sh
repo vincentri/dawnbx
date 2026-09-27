@@ -121,6 +121,31 @@ run "web build" npm run build --prefix web
 
 # ---- test -------------------------------------------------------------------
 run "go test" go test ./cmd/... ./internal/...
+
+# The same suite again, against PostgreSQL. The control plane runs on that engine,
+# and internal/auth already supports both through DAWNBX_TEST_DATABASE_URL - what
+# was missing was anything pointing it at a real server, so CI proved SQLite and
+# nothing else. Both engines must pass; the point is not that either is special
+# but that there is only one code path and it is exercised on each.
+#
+# It is a tier of its own rather than a second `go test` because it needs a
+# database, and a suite that silently skipped would be worse than none: the gate
+# would report green having proved one engine while claiming two.
+if [ "${SKIP_E2E:-0}" != 1 ] && command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+  run "auth suite on postgres" bash -c '
+    set -euo pipefail
+    cd "'"$(pwd)"'"
+    docker compose -f e2e/docker-compose.yml up -d postgres >/dev/null
+    for _ in $(seq 1 60); do
+      [ "$(docker inspect --format "{{.State.Health.Status}}" dawnbx-e2e-postgres-1 2>/dev/null)" = healthy ] && break
+      sleep 1
+    done
+    DAWNBX_TEST_DATABASE_URL="postgres://postgres:e2e@127.0.0.1:55433/dawnbx?sslmode=disable" \
+      go test ./internal/auth/ -count=1
+  '
+else
+  printf 'warn  auth-on-postgres needs docker; skipping (SKIP_E2E=1 to be explicit)\n'
+fi
 run "web test" bash -c 'cd web && npx vitest run'
 run "ts sdk test" npm test --prefix sdk/typescript
 run "py sdk test" bash -c 'cd sdk/python && ../../.venv/bin/python -m unittest discover -s tests'

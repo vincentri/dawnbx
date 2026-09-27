@@ -60,7 +60,7 @@ this is complete.
 ### PostgreSQL as the control plane's database
 
 - [X] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
-- [ ] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml` and point `DAWNBX_TEST_DATABASE_URL` at it, so the auth suite runs on both engines rather than whichever one happens to be configured
+- [X] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml`, publish it, and point `DAWNBX_TEST_DATABASE_URL` at it so the auth suite runs on both engines. The convention already existed; what did not was anything running it, so CI proved SQLite and nothing else. It is a gate step of its own, skipped loudly rather than silently.
 - [X] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
 - [X] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
 
@@ -109,7 +109,7 @@ in the recorded video, and the cluster reached `ready`.
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Configure the success outcome in `e2e/fixtures/test-provider.ts` with `advanceAfter` around 1 second — deliberately faster than the dashboard's 5s refetch at `web/src/pages/clusters.tsx:492`, so a phase is present when the UI next polls (R-003)
+- [X] T023 [US1] Configure the success outcome in `e2e/fixtures/test-provider.ts` so a cluster's lifecycle outlasts more than one dashboard poll. **2.5s per phase, not the 1s this task originally specified** — at 1s the whole lifecycle finished inside one 5s refetch interval, so the interface went from nothing to ready with nothing in between and an operator would never see a progression. 2.5s is sampled three or four times (research.md R-003: the provider is fast, the interface sets the pace, and the slower of the two wins).
 - [X] T024 [US1] Add a stable selector for the request form, the price, the confirm control, and each phase badge in `e2e/support/selectors.ts`, matching what `web/src/pages/clusters.tsx` already renders
 - [X] T025 [US1] Assert in `e2e/specs/cluster-request.spec.ts` that the cluster reaches `ready` and that its URL is visible
 - [X] T026 [US1] Measure this phase's wall-clock cost and record it against NFR-001 in `specs/002-control-plane-ui-e2e/plan.md`. Only this story observes progression, at ~5s per observed phase because the dashboard's refetch — not the fixture — sets that floor (R-003)
