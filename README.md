@@ -108,7 +108,7 @@ with Sandbox.create() as sb:
 ```
 
 ```ts
-import { Sandbox } from "dawnbx"; // sdk/typescript, Node 18+
+import { Sandbox } from "dawnbx"; // sdk/typescript, Node 24+
 
 const sb = await Sandbox.create();
 try {

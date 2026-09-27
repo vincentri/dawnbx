@@ -1,4 +1,4 @@
-// dawnbx TypeScript SDK. Zero dependencies; needs Node 18+ (global fetch).
+// dawnbx TypeScript SDK. Zero dependencies; needs Node 24+.
 //
 //   await using sb = await Sandbox.create();
 //   const r = await sb.exec("python -c 'print(1+1)'");
@@ -161,7 +161,10 @@ function info(v: any): SandboxInfo {
   }
 }
 
-// Symbol.asyncDispose ships in Node 22+; this lets `await using` work on 18/20 when transpiled.
+// Symbol.asyncDispose is native from Node 24, which is why that is the floor.
+// The assignment is a no-op there and costs nothing; it is here so the class
+// below still gets a symbol to hang its disposer on if this is ever bundled
+// somewhere that predates it.
 ;(Symbol as any).asyncDispose ??= Symbol.for("Symbol.asyncDispose")
 
 export class Sandbox {
