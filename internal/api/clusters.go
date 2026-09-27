@@ -874,14 +874,18 @@ func deleteErr(name string, err error) error {
 		// adds is the code a client branches on.
 		return clusterHasNodes(err.Error())
 	}
-	return unreachable(err)
+	// Anything the switch does not name is not the cloud's fault: a database
+	// that is down or a sealed credential that will not open is the control
+	// plane's, and 503 cluster_unavailable sends the operator to check cloud
+	// credentials instead. createErr has always fallen through the same way.
+	return err
 }
 
 func addNodeErr(err error) error {
 	if errors.Is(err, provider.ErrUnavailable) {
 		return providerUnavailable("")
 	}
-	return unreachable(err)
+	return err
 }
 
 // knownKeys refuses a field the route does not define, rather than ignoring it.

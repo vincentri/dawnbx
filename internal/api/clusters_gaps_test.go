@@ -276,9 +276,11 @@ func TestErrorMappersNameTheCodeAClientBranchesOn(t *testing.T) {
 	}
 }
 
-// TestErrorMappersPassAnUnmappedErrorThrough: an unrecognised failure is a 500
-// carrying its own text. Rewriting it as a 400 would send an operator looking in
-// the wrong place, so the fallthrough must not invent a code.
+// TestErrorMappersPassAnUnmappedErrorThrough: an unrecognised failure reaches
+// the client as itself, so writeErr turns it into a 500 carrying its own text
+// and the journalctl hint. Dressing it up as anything else sends an operator
+// looking in the wrong place - a 503 cluster_unavailable tells them to check
+// cloud credentials, which is not where a broken control-plane database is.
 func TestErrorMappersPassAnUnmappedErrorThrough(t *testing.T) {
 	boom := errors.New("disk gone")
 	for name, got := range map[string]error{
@@ -286,12 +288,13 @@ func TestErrorMappersPassAnUnmappedErrorThrough(t *testing.T) {
 		"delete": deleteErr("c1", boom),
 		"add":    addNodeErr(boom),
 	} {
-		if !strings.Contains(got.Error(), "disk gone") {
-			t.Errorf("%s: an unmapped error was rewritten: %v", name, got)
-		}
 		var e *sandbox.Error
-		if errors.As(got, &e) && e.Code == "invalid_request" {
-			t.Errorf("%s: an unmapped error was dressed as a client mistake: %v", name, got)
+		if errors.As(got, &e) {
+			t.Errorf("%s: an unmapped error became %d %s: %v", name, e.Status, e.Code, got)
+			continue
+		}
+		if !errors.Is(got, boom) {
+			t.Errorf("%s: an unmapped error was rewritten rather than passed on: %v", name, got)
 		}
 	}
 }
