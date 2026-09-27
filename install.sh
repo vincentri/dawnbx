@@ -350,54 +350,70 @@ if [ -n "$BOOTSTRAP_PARAM" ]; then
   export DAWNBX_ADMIN_PASSWORD
 fi
 
+# Everything that mints or writes a credential lives in server_identity, so the
+# strict umask is scoped to it. The previous version set umask 077 and then
+# restored it to a hardcoded 022, which silently widened a stricter caller's
+# umask for the rest of the install - the opposite of what a hardened image or a
+# CI runner asked for. local keeps API_KEY, ADMIN_PASSWORD and the rest out of
+# the global namespace as well.
+server_identity() {
+  local old_umask
+  old_umask=$(umask)
+  umask 077
+  local API_KEY=""
+  # The plaintext key waits in api-key.pending until it has been printed, so a
+  # run that fails halfway still shows it on the next run.
+  if [ -f "$SRV/api-key.pending" ]; then
+    API_KEY=$(cat "$SRV/api-key.pending")
+  elif [ -f "$SRV/api-keys.json" ] && [ "$NEWKEY" = 0 ]; then
+    log "restored server identity from $SRV"
+  else
+    API_KEY="dawnbx_$(openssl rand -hex 24)"
+    printf '{"v":1,"keys":[{"sha256":"%s","created":"%s"}]}\n' \
+      "$(printf %s "$API_KEY" | sha256sum | cut -d' ' -f1)" "$(date -u +%FT%TZ)" >"$SRV/api-keys.json"
+    printf %s "$API_KEY" >"$SRV/api-key.pending"
+  fi
+
+  # Dashboard admin login. The server reads admin.env verbatim (any characters are
+  # fine) and keeps only a bcrypt hash in its DB. Changing the value here and
+  # restarting dawnbx resets the password; a change made in the dashboard sticks otherwise.
+  local ADMIN_PASSWORD=""
+  if [ -n "${DAWNBX_ADMIN_PASSWORD:-}" ]; then
+    ADMIN_PASSWORD=$DAWNBX_ADMIN_PASSWORD
+    printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
+  elif [ -f "$SRV/admin.pending" ]; then
+    ADMIN_PASSWORD=$(cat "$SRV/admin.pending")
+  elif [ ! -f "$SRV/admin.env" ]; then
+    ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=')
+    printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
+    printf %s "$ADMIN_PASSWORD" >"$SRV/admin.pending"
+  fi
+
+  if [ "$LOCAL" = 0 ]; then
+    mkdir -p "$SRV/tls"
+    if [ ! -f "$SRV/tls/cert.pem" ]; then
+      san="IP:$NODE_IP,DNS:$NODE_IP.sslip.io"
+      [ -n "$DOMAIN" ] && san="$san,DNS:$DOMAIN"
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+        -subj /CN=dawnbx -addext "subjectAltName=$san" \
+        -keyout "$SRV/tls/key.pem" -out "$SRV/tls/cert.pem" 2>/dev/null
+    fi
+  fi
+  umask "$old_umask"
+}
+
+# A worker that joins an existing server must not mint an identity of its own,
+# which is what the JOIN_URL guard below is for; the function is defined outside
+# it so it always exists, and called inside it.
+
 if [ -z "$JOIN_URL" ]; then
 # ---------------------------------------------------------------- server identity
 # Lives on the data volume so a rebuilt machine keeps the same API key and TLS
 # cert. Never mounted into sandboxes (they only get sb/<id>/ws).
 SRV=$DATA/server
 install -d -m 700 "$SRV"
-umask 077
-API_KEY=""
-# The plaintext key waits in api-key.pending until it has been printed, so a
-# run that fails halfway still shows it on the next run.
-if [ -f "$SRV/api-key.pending" ]; then
-  API_KEY=$(cat "$SRV/api-key.pending")
-elif [ -f "$SRV/api-keys.json" ] && [ "$NEWKEY" = 0 ]; then
-  log "restored server identity from $SRV"
-else
-  API_KEY="dawnbx_$(openssl rand -hex 24)"
-  printf '{"v":1,"keys":[{"sha256":"%s","created":"%s"}]}\n' \
-    "$(printf %s "$API_KEY" | sha256sum | cut -d' ' -f1)" "$(date -u +%FT%TZ)" >"$SRV/api-keys.json"
-  printf %s "$API_KEY" >"$SRV/api-key.pending"
+server_identity
 fi
-
-# Dashboard admin login. The server reads admin.env verbatim (any characters are
-# fine) and keeps only a bcrypt hash in its DB. Changing the value here and
-# restarting dawnbx resets the password; a change made in the dashboard sticks otherwise.
-ADMIN_PASSWORD=""
-if [ -n "${DAWNBX_ADMIN_PASSWORD:-}" ]; then
-  ADMIN_PASSWORD=$DAWNBX_ADMIN_PASSWORD
-  printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
-elif [ -f "$SRV/admin.pending" ]; then
-  ADMIN_PASSWORD=$(cat "$SRV/admin.pending")
-elif [ ! -f "$SRV/admin.env" ]; then
-  ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=')
-  printf 'DAWNBX_ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >"$SRV/admin.env"
-  printf %s "$ADMIN_PASSWORD" >"$SRV/admin.pending"
-fi
-
-if [ "$LOCAL" = 0 ]; then
-  mkdir -p "$SRV/tls"
-  if [ ! -f "$SRV/tls/cert.pem" ]; then
-    san="IP:$NODE_IP,DNS:$NODE_IP.sslip.io"
-    [ -n "$DOMAIN" ] && san="$san,DNS:$DOMAIN"
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
-      -subj /CN=dawnbx -addext "subjectAltName=$san" \
-      -keyout "$SRV/tls/key.pem" -out "$SRV/tls/cert.pem" 2>/dev/null
-  fi
-fi
-fi # server identity
-umask 022
 
 mkdir -p /etc/dawnbx
 printf '{"version":"%s","installed":"%s","data_dir":"%s","local":%s,"domain":"%s","allow_join":"%s","join":"%s"}\n' \
