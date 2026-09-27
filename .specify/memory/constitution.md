@@ -1,3 +1,29 @@
+<!--
+Sync Impact Report — 2026-09-27
+
+Version change: 1.2.0 → 1.3.0 (MINOR)
+
+Modified principles:
+- II. Isolated Work, Explicit Remote Access — title unchanged. Body expanded:
+  worktrees are created under `.worktree/` inside the primary checkout, and
+  deletion of the worktree and branch after merge is now mandatory. The stated
+  path `../dawnbx-<task>` no longer matched practice and had come to contradict
+  AGENTS.md, which Principle II's own workflow section requires to be corrected
+  in the same change as this file.
+
+Added sections:
+- VI. Only Real Infrastructure Proves Provisioning — new principle. Records that
+  the gate executes nothing, that no cloud emulator may stand in for a real
+  account, and that cutting a release requires the real-account lifecycle.
+- Development Workflow — two steps added: delete the worktree and branch after
+  merge; run the lifecycle in Principle VI before cutting a release.
+
+Removed sections: none
+
+Deferred:
+- none
+-->
+
 # dawnbx Constitution
 
 ## Core Principles
@@ -19,20 +45,29 @@ a React effect whose dependency array a linter autofix silently emptied, stale
 dashboard bundles, test files leaking utilities into the shipped stylesheet, and
 a missing argument to an API method. None were visible by reading the code.
 
+The gate is necessary and not sufficient. Principle VI is the other half.
+
 ### II. Isolated Work, Explicit Remote Access
 
-Every development task runs in its own git worktree, branched from `main`. Work
-MUST NOT be edited, built, tested, or committed in the primary checkout, and
-MUST NOT be committed directly to `main`. A hotfix straight to `main` is the
+Every development task runs in its own git worktree, branched from `main` and
+created under `.worktree/` inside the primary checkout, which is gitignored.
+Work MUST NOT be edited, built, tested, or committed in the primary checkout,
+and MUST NOT be committed directly to `main`. A hotfix straight to `main` is the
 only exception and MUST say why in the commit body.
+
+A task's worktree and its branch MUST both be deleted once the work is merged.
+Governance changes travel in that same merge and MUST be made before the
+deletion: a change committed to a branch that is then removed never reached
+`main`.
 
 `git push` and opening a pull request MUST NOT happen without an explicit
 instruction in the current session. Branches and merges stay local by default;
 the remote is the operator's decision, every time.
 
 Rationale: an agent working in the primary checkout leaves unreviewable state
-where the operator's own uncommitted work lives. Remote writes are irreversible
-in effect and cheap to defer.
+where the operator's own uncommitted work lives — which happened twice in one
+session, both times while the agent believed it was working correctly. Remote
+writes are irreversible in effect and cheap to defer.
 
 ### III. One Contract, Five Files
 
@@ -81,11 +116,47 @@ Rationale: an unlaunched deployment path and a floating linter version both
 produce false confidence. The CloudFormation template was labelled correctly
 only after it was nearly deleted as dead weight.
 
+### VI. Only Real Infrastructure Proves Provisioning
+
+`bash hack/check.sh` executes nothing. A green gate MUST NOT be reported as
+evidence that provisioning works. Every defect found in the control plane was
+found by running it against a real account: a launch request missing an image id,
+a price read from the wrong field of a price dimension, user-data that was not
+base64-encoded, an ingress controller that answered on 443 through iptables
+while the intended server still listened on its socket, and a worker that its
+cluster and its provider named differently with no way to correlate the two.
+
+A test double, or a cloud emulator adopted alongside the code, MUST NOT stand in
+for a real account. Such a substitute encodes a model of the cloud, and a model
+shared with the implementation agrees with the implementation's bugs. No local
+AWS, GCP, Azure, or OCI emulator may be adopted as an integration tier, and no
+tier that finds a strict subset of what a mandatory run already finds may
+displace that run.
+
+Only a real account exercises the provisioning seam: the installer on a fresh
+distribution, the sandbox runtime loading, contention for ports 80 and 443,
+certificate issuance, pinning against a served certificate, public name
+resolution and address assignment, and user-data crossing the instance boundary.
+These are not a coverage gap to be closed by more tests. They are the product.
+
+Before a release is cut, the lifecycle MUST be executed against a real account:
+create a cluster, wait for it to report ready, confirm the pinned URL serves and
+its pin matches, add a worker, wait for it to report ready, remove the worker,
+delete the cluster, and confirm no billable resource remains. A release MUST NOT
+be cut on a green gate alone. Until that lifecycle is scripted, running it is a
+manual obligation and MUST be stated when the release is cut.
+
+Rationale: ten defects in a single session, none visible to a green gate, and
+all cheap to fix once found. A faster tier that finds four of them is a way to
+skip the run that finds all of them while feeling quick.
+
 ## Operational Constraints
 
 - **Cluster boundary.** The control plane is the dashboard, API, and database.
   Sandboxes run only inside clusters. SDKs and the CLI talk to a cluster URL
-  directly and MUST NOT route through the control plane.
+  directly and MUST NOT route through the control plane. A sandbox call against
+  a control plane is `503 cluster_unavailable`, never a `404` and never a proxied
+  request.
 - **Secrets.** API keys and admin passwords MUST be generated by the control
   plane and passed in, never generated on a host and read back over SSH. Secret
   values MUST NOT appear in stack outputs, CI logs, tickets, or screenshots.
@@ -128,7 +199,7 @@ only after it was nearly deleted as dead weight.
 1. Read `AGENTS.md` for the per-area contracts. It is the operational expression
    of this constitution; where the two disagree, the constitution wins and both
    MUST be corrected in the same change.
-2. Create a worktree: `git worktree add ../dawnbx-<task> -b task/<slug> main`.
+2. Create a worktree: `git worktree add .worktree/<task> -b task/<slug> main`.
 3. Install dependencies once per worktree: `npm ci --prefix web`,
    `npm ci --prefix sdk/typescript`, `npm ci --prefix docs`, and
    `python3 -m venv .venv && .venv/bin/pip install coverage`.
@@ -138,8 +209,12 @@ only after it was nearly deleted as dead weight.
    `CHECK_LIVE=1 bash hack/check.sh`. It installs into a Lima VM and runs
    `hack/verify.sh` inside it against real gVisor.
 7. Commit on the task branch. Merge to `main` locally. Push only on instruction.
-8. CI runs the same gate on every push and pull request, so a hook-less clone
-   is held to the same floors.
+8. Delete the worktree and its branch: `git worktree remove .worktree/<task>`
+   then `git branch -d task/<slug>`.
+9. Before cutting a release, run the lifecycle in Principle VI against a real
+   account and state in the release that it was run.
+10. CI runs the same gate on every push and pull request, so a hook-less clone
+    is held to the same floors.
 
 ## Governance
 
@@ -158,15 +233,18 @@ carry a migration plan for existing code.
 - PATCH — clarification, wording, or typo fixes that change no requirement.
 
 **Compliance.** Every review MUST verify the change against Principles I
-through V and the Operational Constraints. The gate is the mechanical half of
+through VI and the Operational Constraints. The gate is the mechanical half of
 compliance and MUST be green; the judgement half — whether the tests assert
 behaviour, whether the five contract files agree, whether new infrastructure
 has a consumer, whether anything provider-specific has leaked above the provider
-boundary — is the reviewer's, and MUST be stated in the review rather than
+boundary, and whether a claim about provisioning rests on something other than a
+real run — is the reviewer's, and MUST be stated in the review rather than
 assumed.
 
 **Review expectations.** A reviewer who cannot verify a principle from the diff
 and the gate output MUST say so instead of approving. Complexity that violates
-Principle V MUST be justified in writing at the time it is introduced.
+Principle V MUST be justified in writing at the time it is introduced. A reviewer
+MUST NOT accept a stated test tier as coverage for the provisioning seam, on the
+strength of a passing run, without asking what that tier actually executed.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-26
+**Version**: 1.3.0 | **Ratified**: 2026-09-26 | **Last Amended**: 2026-09-27
