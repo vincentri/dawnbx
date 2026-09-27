@@ -573,8 +573,13 @@ func (m *Manager) Extend(ctx context.Context, id string, ttl *string) (*View, er
 	if err := m.Store.WriteMeta(meta); err != nil {
 		return nil, err
 	}
-	m.syncAnnotations(ctx, meta) // failure is fixed by the next reconcile tick
-	return m.Get(ctx, id)
+	// Build the view from the state just written. The previous version re-read
+	// through Get, and that re-read can reject what the write repaired: a ttl of
+	// "1ns" is valid, parses to an instant already in the past, and the re-read
+	// then answers 410 for an operation that worked. The operation the caller
+	// asked for is exactly the one that set the expiry.
+	pod := m.syncAnnotations(ctx, meta) // failure is fixed by the next reconcile tick
+	return view(meta, pod), nil
 }
 
 func (m *Manager) Start(ctx context.Context, id string) (*View, error) {
@@ -622,17 +627,21 @@ func (m *Manager) stop(ctx context.Context, meta store.Meta, reason string) erro
 	return nil
 }
 
-func (m *Manager) syncAnnotations(ctx context.Context, meta store.Meta) {
+// syncAnnotations keeps the pod's expiry annotation in step with meta, and
+// returns the pod it fetched. The pod is returned because the caller usually
+// wants it for the view it is about to build, and a second pods.Get to get it
+// again is a round trip that can also fail.
+func (m *Manager) syncAnnotations(ctx context.Context, meta store.Meta) *corev1.Pod {
 	p, err := m.Kube.CoreV1().Pods(Namespace).Get(ctx, meta.ID, metav1.GetOptions{})
 	if err != nil {
-		return
+		return nil
 	}
 	want := ""
 	if meta.ExpiresAt != nil {
 		want = meta.ExpiresAt.Format(time.RFC3339)
 	}
 	if p.Annotations["dawnbx/expires-at"] == want {
-		return
+		return p
 	}
 	if p.Annotations == nil {
 		p.Annotations = map[string]string{}
@@ -643,6 +652,7 @@ func (m *Manager) syncAnnotations(ctx context.Context, meta store.Meta) {
 		p.Annotations["dawnbx/expires-at"] = want
 	}
 	m.Kube.CoreV1().Pods(Namespace).Update(ctx, p, metav1.UpdateOptions{})
+	return p
 }
 
 type ExecReq struct {
