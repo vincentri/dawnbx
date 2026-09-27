@@ -79,8 +79,12 @@ fail() { # problem cause fix
   report FAILURE "$1: $2. Fix: $3"
   exit 1
 }
-# set -e exits skip fail(); still tell the stack instead of letting it time out.
-trap 'report FAILURE "install.sh stopped at line $LINENO. Fix: see /var/log/cloud-init-output.log or re-run by hand"' ERR
+# set -e exits skip fail(), so a failure in a command carrying no `|| fail`
+# guard used to report only a line number: the CloudFormation WaitCondition
+# carried "stopped at line 445" where fail() would have carried what went wrong
+# and what to do about it. The trap goes through fail() now, so every failure
+# path - guarded or not - reaches the stack with a cause and a fix.
+trap 'fail "install failed at line $LINENO" "the command above did not succeed, so the install is incomplete" "read that line, fix it, and re-run - or read /var/log/cloud-init-output.log for the full log"' ERR
 
 # ---------------------------------------------------------------- preflight
 # Upgrades without --server-bin or --release-url reuse the installed binary.

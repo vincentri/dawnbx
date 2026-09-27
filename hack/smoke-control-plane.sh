@@ -11,12 +11,25 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
-BIN=$(mktemp -d)/dawnbx-server
-DIR=$(mktemp -d)/cp
-LOG=$(mktemp)
-PORT=${PORT:-$((18000 + RANDOM % 2000))}
-cleanup() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -rf "$(dirname "$BIN")" "$DIR" "$LOG"; }
+# One temp root, so cleanup is one rm and nothing has to be reconstructed from
+# a filename. pid is initialised before the trap is armed: set -u is on, and
+# any exit before the server starts - a failed build, above all - ran cleanup
+# with pid unbound, which aborted the function on the unbound-variable error.
+# The temp directory survived and the real message was replaced by
+# "pid: unbound variable".
+TMP=$(mktemp -d)
+pid=
+cleanup() {
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
+
+PORT=${PORT:-$((18000 + RANDOM % 2000))}
+BIN=$TMP/dawnbx-server
+DIR=$TMP/cp
+LOG=$TMP/server.log
 
 go build -o "$BIN" ./cmd/dawnbx-server || { echo "build failed"; exit 2; }
 
