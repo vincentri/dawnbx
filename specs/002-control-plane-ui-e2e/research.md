@@ -213,20 +213,66 @@ needed. The cost is entirely in the migration and in what has never run.
 `migrate()`. `pgx/v5` is already a dependency and the driver is registered by a
 blank import (`auth.go:20`), so `sql.Open("pgx", …)` is live. Against SQLite the
 DSN carries `journal_mode(WAL)`, `busy_timeout(5000)` and `foreign_keys(1)` and
-sets `SetMaxOpenConns(1)`; those pragmas have no PostgreSQL equivalent, so the
-migration must be engine-aware rather than shared verbatim.
+sets `SetMaxOpenConns(1)`; those pragmas are connection settings on the SQLite
+DSN, not schema statements, so they do not affect what `migrate()` executes. The
+probe below confirms the migration runs unmodified on PostgreSQL.
 
-**What has never been verified.** Every `postgres://` string in the repository's
-tests is `postgres://nobody@127.0.0.1:1/none` — port 1, where nothing listens.
-Those tests assert that a database error is *reported cleanly*; they do not
-assert that PostgreSQL works. So:
+**What has never been verified — and what probing actually found.** Every
+`postgres://` string in the repository's tests is `postgres://nobody@127.0.0.1:1/none`
+— port 1, where nothing listens. Those tests assert that a database error is
+*reported cleanly*; they do not assert that PostgreSQL works. So the engine had
+never been exercised for real by the test suite.
 
-- No test has ever run `migrate()` to completion against PostgreSQL.
-- No test has ever round-tripped a user, a session, an audit row, or a cluster
-  record through `pgx`.
-- A schema statement valid on SQLite may fail on PostgreSQL, and the reverse
-  failure — a statement SQLite accepts that PostgreSQL rejects — would only
-  appear at container start.
+A throwaway probe was run against a real PostgreSQL 15 in a container
+(2026-09-27). It reached a data round-trip and failed:
+
+```
+EnsureAdmin OK — admin row written
+CreateUser FAILED: insert or update on table "users" violates
+  foreign key constraint "users_org_id_fkey" (SQLSTATE 23503)
+```
+
+**That was the probe's bug, not the product's.** The probe called
+`CreateUser("acme", …)` for an org named `acme` that it had never created.
+PostgreSQL was correctly enforcing the foreign key. `EnsureAdmin` — the real
+startup path, and the thing that actually matters — had already succeeded one
+line earlier.
+
+A second probe established the truth, and its output is the version worth
+keeping:
+
+```
+EnsureAdmin OK on a virgin database — the claimed defect is NOT real
+CreateUser OK once the org exists — the FK was correct all along
+FK is enforced: a user in a missing org is rejected, as it should be
+```
+
+**Corrected findings:**
+
+- **`migrate()` is sound.** It completes against PostgreSQL and creates all
+  eleven tables, including the `default` org row. The shared migration needs no
+  engine-specific branches; the SQLite-only pragmas are connection settings on
+  the SQLite DSN, not schema, not statements.
+- **The auth write path is sound.** `EnsureAdmin` works on a virgin PostgreSQL
+  database, which is the first thing a control plane does. The existing
+  `DAWNBX_TEST_DATABASE_URL` convention (`internal/auth/auth_test.go:17-47`)
+  already runs the entire auth suite against either engine, so this path was
+  covered — it had simply never been pointed at a real server in CI.
+- **There is no product defect to fix.** The first version of this section
+  claimed otherwise, and two commits were made on that basis before a second
+  probe disproved it. Both were reverted rather than amended, so the record
+  shows the mistake and its correction.
+
+**The lesson, recorded because it is the point of this feature**: a probe is a
+test written by the same reasoning that produced the code under test, and it
+agreed with its own blind spot — it assumed a user belongs to a pre-existing org
+and wrote a test that never created one. The failure looked exactly like a real
+constraint violation, which is what made it persuasive enough to write two
+commits on. A green suite is not the only kind of false confidence; a red one
+invented by your own fixture is the same failure wearing the opposite colour.
+This is also why the *second* probe, not the first, is the evidence — a claim
+this consequential needs a check that could have gone the other way.
+
 
 **Why the database holds auth state** (which is what makes the engine matter):
 the dashboard keeps nothing in the browser — no `localStorage`, no
@@ -236,12 +282,14 @@ and a session row to the database, and the `dawnbx_session` cookie
 is an opaque pointer to that row. The database also holds the audit trail,
 cluster records, and cluster credentials sealed with AES-256-GCM.
 
-**Consequence, stated plainly**: this suite becomes the first successful
-execution of the PostgreSQL path in this repository. A green run is therefore
-evidence about two things at once — that the operator-facing flows work, and
-that the engine works — and one signal standing in for two is weaker for both.
-The suite's own scope statement (FR-015) already forbids it from being read as
-evidence that provisioning works; the same discipline now applies to the engine.
+**Consequence, corrected**: there is no product bug to fix, so this feature
+carries no fix. What it does carry is the first *sustained* execution of the
+PostgreSQL path in CI — a smaller claim than it sounds, since the auth suite
+already runs on either engine and was merely never pointed at a real server
+automatically. The remaining unknown is the rest of the control plane's own
+behaviour on PostgreSQL, which the suite's sign-in test (T020) exercises for
+real. FR-015 still forbids reading any of it as evidence about cloud
+provisioning.
 
 **Alternatives considered**:
 - *Keep SQLite, add PostgreSQL as an option* — rejected by the operator's
@@ -316,10 +364,10 @@ here so they are not mistaken for resolved.
    the existing `newProvider` seam** — R-001 concludes the seam exists; the
    build tag is the safe way to keep a test provider out of a shipped binary,
    and the final form is settled at implementation.
-4. **How `migrate()` becomes engine-aware** — R-008. SQLite's pragmas have no
-   PostgreSQL equivalent, and the shared migration has never run against
-   PostgreSQL. Whether this is one migration with per-engine branches or two
-   migrations is an implementation decision, but it must be settled by running
-   both engines, not by reading the SQL.
+4. ~~**How `migrate()` becomes engine-aware**~~ — **settled by execution, and
+   the premise was wrong twice over.** `migrate()` needs no change, and neither
+   does the auth write path. The real open item is operational, not structural:
+   whether CI points `DAWNBX_TEST_DATABASE_URL` at a real PostgreSQL service so
+   the suite that already supports both engines actually runs on both.
 5. **What happens to an existing control plane's SQLite data** — deferred by
    R-008, and it must be decided before any deployment that has one.

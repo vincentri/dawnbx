@@ -59,10 +59,10 @@ this is complete.
 
 ### PostgreSQL as the control plane's database
 
-- [ ] T005 [P] Write a failing test in `internal/auth/auth_postgres_test.go` that opens a PostgreSQL connection, runs the migration, and round-trips a user, a session, an audit row, and a cluster record through `pgx`
-- [ ] T006 Make `migrate()` in `internal/auth/auth.go` engine-aware: SQLite keeps its `journal_mode(WAL)`, `busy_timeout(5000)`, `foreign_keys(1)` pragmas and `SetMaxOpenConns(1)`; PostgreSQL gets statements valid on it. The current shared migration has never run on PostgreSQL
-- [ ] T007 Run `go test ./internal/auth/ -run Postgres` and confirm T005 now passes — this is the first successful execution of the PostgreSQL path in this repository (R-008)
-- [ ] T008 [P] Add a Compose-independent check in `internal/auth/auth_postgres_test.go` that skips with a clear message when no `DAWNBX_TEST_POSTGRES_URL` is set, so a developer without a database is not blocked
+- [ ] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
+- [ ] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml` and point `DAWNBX_TEST_DATABASE_URL` at it, so the auth suite runs on both engines rather than whichever one happens to be configured
+- [ ] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
+- [ ] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
 
 ### Test provider, selectable only in a test build
 

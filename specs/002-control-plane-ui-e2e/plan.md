@@ -206,9 +206,10 @@ a build tag that selects the test provider.
 hack/check.sh                # add the e2e step alongside existing ones (FR-007)
 .github/workflows/ci.yml     # run the suite in Compose; no browser install (FR-007, FR-026)
 cmd/dawnbx-server/main.go    # expose the test provider under a build tag only
-internal/auth/auth.go        # engine-aware migration (R-008) — SQLite pragmas have
-                             # no PostgreSQL equivalent and migrate() has never run
-                             # against PostgreSQL
+internal/auth/               # UNCHANGED — the existing DAWNBX_TEST_DATABASE_URL
+                             # convention already runs the auth suite on either
+                             # engine; what is missing is CI pointing it at a
+                             # real server (T005, T006)
 deploy/                      # the compose file's home if kept out of e2e/
 e2e/docker-compose.yml       # postgres + server + driver
 e2e/Dockerfile               # server + Playwright image
