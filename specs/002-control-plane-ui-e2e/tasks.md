@@ -188,7 +188,32 @@ requirement this feature creates.
 - [X] T049 Ran the determinism check: 20 consecutive runs, 19 passing. The one failure was my own interference — a foreground run of mine while the loop tore the stack down under it, which closed the browser mid-test ("Target page, context or browser has been closed"). Runs 2-20 were serial and untouched and every one passed (FR-002, SC-002).
 - [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
 - [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
-- [ ] T052 **Release gate**: run the real-account lifecycle via `hack/verify.sh` against a control plane on PostgreSQL and record the result in `specs/002-control-plane-ui-e2e/quickstart.md`. The suite cannot stand in for this (Principle VI, R-008). This is a release blocker, not a follow-up
+- [X] T052 **Release gate: PASSED.** Run against account 434702089003, region ap-southeast-1, on
+  2026-09-27, with the control plane on real PostgreSQL and the shipped daemon.
+
+  - Control plane started with **zero e2e symbols** in the binary — the real product, not the
+    test provider. Roster showed `aws` available with `aws-ssm-securestring` delivery.
+  - Cluster `gate`: quoted (live AWS pricing, `t4g.medium` $0.0424/h), created, progressed
+    `requesting_host` → `bootstrapping` → **`ready`** in ~10 min.
+  - **URL `https://13.215.42.121.sslip.io` served 200**, with a real **Let's Encrypt**
+    certificate (issuer `CN=YE1`) naming that domain — not self-signed, not a wildcard.
+  - **Stored pin matched the live SPKI byte for byte**:
+    `4aa308cff959f3d41a84a4a384e0b8f089ce9d12176053bc762cbf2dcbaa74d3`. The pin the control
+    plane established from the handshake is the certificate the cluster serves.
+  - Worker added (`i-02230c2534dd4d71c`) and reached **ready** — node correlation by address
+    worked, which was the hardest part to get right.
+  - Worker removed (204), nodes empty, EC2 confirmed it terminated. Cluster deleted (200).
+  - **Sweep: 0 stacks created today, 0 running instances, 0 EIPs, 0 volumes, 0 SSM
+    parameters.** The key pair created for the run was deleted. Pre-existing stacks
+    (`dawnbx-host-1205018d`, `pat-test-*`) predate this run and were not touched.
+
+  **What this did and did not prove.** It proves the control plane provisions on real AWS,
+  on real PostgreSQL, through the real installer, and that the pin, certificate, and node
+  correlation hold end to end. It does **not** exercise this branch's own daemon: a cluster
+  bootstraps the *released* binary, and the release in use is **v0.1.9**, which predates this
+  feature. Testing this branch's daemon requires a release cut first.
+
+  Cost: two `t4g.medium` instances for roughly 25 minutes, about $0.04.
 - [X] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)
 
 ---
