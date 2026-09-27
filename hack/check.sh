@@ -151,7 +151,7 @@ if [ "${SKIP_E2E:-0}" != 1 ] && command -v docker >/dev/null && docker compose v
       go test ./internal/auth/ -count=1
   '
 else
-  printf 'warn  auth-on-postgres needs docker; set SKIP_E2E=1 to skip it explicitly\n'
+  printf 'warn  auth-on-postgres and the e2e suite skipped (SKIP_E2E=1 or no docker); the gate covered less than it usually does\n'
 fi
 run "web test" bash -c 'cd web && npx vitest run'
 run "ts sdk test" npm test --prefix sdk/typescript

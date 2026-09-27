@@ -39,16 +39,26 @@ and password files, never the secrets themselves.
 (t4g.medium by default) with an Elastic IP and HTTPS on `<ip>.sslip.io`, or on
 your domain. Create it in the console (**Create stack > Upload a template**)
 and fill in the key pair, your IP for SSH, and `ReleaseUrl`: the base URL of a
-release (see [Release](#release)). There's no public release yet, so you host
-one yourself for now. The stack
-finishes when the installer does (about 5 min). Then the `SshCommand` output
-prints the API key and admin password.
+release (see [Release](#release)). Releases are cut automatically on every push to
+`main`, so `ReleaseUrl` is
+`https://github.com/vincentri/dawnbx/releases/download/v0.1.12` (pin a version;
+`latest/download` moves). The stack finishes when the installer does, about
+8 min. Then the `SshCommand` output prints the API key and admin password.
 
-The template has not been launched yet: it is cfn-lint clean, but nothing has
-been created from it. Prefer `install.sh` on a box you already have.
+The template has been launched repeatedly against a real account, including a
+full lifecycle on `v0.1.12`: a cluster reached ready behind a genuine Let's
+Encrypt certificate whose SPKI matched the pin the control plane stored, a worker
+joined and was removed, and the account swept clean afterwards. Prefer
+`install.sh` on a box you already have when you only need one server.
 
-- `CpuCredits` defaults to `standard`: the price stays fixed, but CPU slows
-  down once burst credits run out. `unlimited` stays fast and bills the extra.
+- `t4g.medium` (4 GB) is the smallest size that installs: the host runs k3s, gVisor
+  and dawnbx-server, and the apiserver is still starting when memory is tightest.
+  A run is about 20 minutes, so roughly $0.04.
+- The Elastic IP is released with the stack. On a failed run, check for a leftover
+  one: an unattached address is billed until it goes.
+
+- `CpuCredits` defaults to `standard`: the price stays fixed, but CPU slows down
+  once burst credits run out. `unlimited` stays fast and bills the extra.
 - If creation fails, re-create with rollback disabled ("Preserve successfully
   provisioned resources"). Then SSH in and read `/var/log/cloud-init-output.log`.
 - Workers: launch them into the stack's `SecurityGroup` output, then run the
@@ -144,8 +154,10 @@ curl -s -H "Authorization: Bearer $DAWNBX_API_KEY" -d '{}' $DAWNBX_URL/v1/sandbo
 - **Audit log:** creates, kills, forks, logins, key, user and org changes are
   recorded there.
 - **Storage:** everything above lives in SQLite at
-  `/var/lib/dawnbx/server/dawnbx.db`. To run several API nodes against one
-  database, pass `--database-url postgres://...` to `dawnbx-server`.
+  `/var/lib/dawnbx/server/dawnbx.db` by default, and in PostgreSQL when
+  `--database-url postgres://...` is passed. The control plane runs on
+  PostgreSQL, because it is designed for more than one API node and SQLite is
+  single-writer; the auth suite is tested on both engines.
 
 ## API
 
@@ -194,30 +206,109 @@ and nothing keeps the two equal, so change both.
 
 ## Develop
 
+### Test it
+
+One command runs everything: lint, builds, unit tests, coverage floors, and the
+browser suite. It needs Go, Node 24 and Python; the browser suite also needs
+Docker.
+
 ```sh
-go test -race ./...
-(cd web && npm install && npm run dev)   # dashboard on :5173, proxies /v1 to 127.0.0.1:8080
-python3 -m unittest discover -s sdk/python/tests
-(cd sdk/typescript && npm test)
-python3 sdk/python/tests/smoke.py    # end-to-end against a live server
-DAWNBX_TEST_DATABASE_URL=postgres://... go test ./internal/auth   # auth on Postgres (drops its tables first)
+bash hack/check.sh                  # the gate, with the browser suite (~3 min)
+SKIP_E2E=1 bash hack/check.sh       # no Docker: skips the suite, and says so
+CHECK_LIVE=1 bash hack/check.sh     # adds a Lima VM: real k3s, gVisor, installer
 ```
 
-The dashboard is React + Vite in `web/`. `npm run build` writes it to
-`internal/api/ui`, which the server embeds; that output is committed so
-`go build` needs no Node. API types come from `internal/api/openapi.yaml`
-(`npm run gen` after changing it).
+The live tier is the only thing that runs `install.sh` and the CloudFormation
+user-data for real. It needs [Lima](https://lima-vm.io) (`brew install lima`) and
+takes about five minutes. It has earned its place: it caught a `local` in
+`install.sh` that silently broke the installer, which the gate above could not
+see.
+
+### The browser suite on its own
+
+18 tests drive the control-plane dashboard in a real browser and record a video
+of every run. It runs entirely in Docker Compose — PostgreSQL, the server and the
+browser — so nothing is installed on your machine except the recordings.
+
+```sh
+bash e2e/run.sh                     # the whole suite, ~1.5 min
+bash e2e/run.sh -- -g "sign in"     # one test
+docker compose -f e2e/docker-compose.yml up -d server   # browse it at :18080
+docker compose -f e2e/docker-compose.yml down -v        # remove everything
+```
+
+Recordings land in `.e2e/`, which is git-ignored. Locally every run is kept, so a
+*passing* run can be watched to confirm the journey really happened; in CI only
+failures are kept, so a green push uploads nothing.
+
+Use `e2e/run.sh` rather than a raw `docker compose run`: the script starts from a
+fresh stack, and a raw run inherits the last one's state and then fails on a
+cluster name that is already taken.
+
+The suite runs against a **test provider**, not a cloud. It proves the
+operator-facing interface and the orchestration above the provider boundary, and
+proves nothing about whether a real cloud accepts what is sent — that is what a
+real-account lifecycle is for. The [e2e guide](docs/content/docs/guide/e2e.mdx)
+covers running it and watching a recording.
+
+### Against a real database
+
+The gate runs the auth suite on SQLite, and again on PostgreSQL in a container.
+To use your own:
+
+```sh
+DAWNBX_TEST_DATABASE_URL='postgres://user:pass@host:5432/db?sslmode=disable' \
+  go test ./internal/auth/ -count=1
+```
+
+It drops the tables first, so point it at a scratch database.
+
+### The dashboard
+
+React + Vite in `web/`. `npm run build` writes to `internal/api/ui`, which the
+server embeds; that output is committed so `go build` needs no Node. API types
+come from `internal/api/openapi.yaml` (`npm run gen` after changing it).
+
+```sh
+cd web && npm install && npm run dev   # on :5173, proxies /v1 to 127.0.0.1:8080
+```
 
 ### Release
 
+Every push to `main` cuts a release once the gate is green, named
+`v0.1.<run-number>`, and its assets are fetchable without an account. Locally:
+
 ```sh
-go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean   # local build into dist/
+go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean   # into dist/
 ```
 
 A release is `install.sh`, `checksums.txt` and binaries named
 `<binary>-<os>-<arch>` (e.g. `dawnbx-server-linux-arm64`). Wherever those are
 served over HTTPS, `sudo ./install.sh --release-url <base-url>` downloads the
 binaries and checks them against `checksums.txt`.
+
+Pin a version. `latest/download` moves, and a cluster that installs one is not
+reproducible.
+
+### Work on this in a worktree
+
+Not on `main`, and not in the primary checkout:
+
+```sh
+git worktree add .worktree/<task> -b task/<slug> main
+cd .worktree/<task>
+npm ci --prefix web && npm ci --prefix sdk/typescript && npm ci --prefix docs
+```
+
+`.worktree/` is git-ignored and excluded from the Docker build context. When the
+work merges, remove both:
+
+```sh
+git worktree remove .worktree/<task> && git branch -d task/<slug>
+```
+
+`AGENTS.md` has the per-area contracts; read it before changing the installer,
+the provider boundary, or the gate.
 
 ## License
 
