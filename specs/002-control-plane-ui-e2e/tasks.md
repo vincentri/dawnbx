@@ -166,8 +166,8 @@ remove the worker, delete the cluster — all observed in the browser.
 ### Implementation for User Story 3
 
 - [X] T039 [US3] Add the `holdWorkers` outcome to `e2e/fixtures/test-provider.ts`, returning `ErrNodeBusy` from `RemoveNode` when set
-- [ ] T040 [US3] Add selectors in `e2e/support/selectors.ts` for the node list, the add-worker control, the refusal notice, and the delete confirmation
-- [ ] T041 [US3] Add a selector in `e2e/support/selectors.ts` asserting the unreachable case is never rendered as an empty node list, so a future change cannot regress it silently
+- [X] T040 [US3] Add selectors in `e2e/support/selectors.ts` for the node list, the add-worker control, the refusal notice, and the delete confirmation
+- [X] T041 [US3] Add a selector in `e2e/support/selectors.ts` asserting the unreachable case is never rendered as an empty node list, so a future change cannot regress it silently
 
 **Checkpoint**: All three user stories pass independently.
 
@@ -184,7 +184,7 @@ requirement this feature creates.
 - [X] T045 Update `.github/workflows/ci.yml` to run the suite in Compose. The browser install moves into the image, so the workflow no longer installs Playwright itself
 - [X] T046 [P] Update `AGENTS.md` with the Compose-based suite, the per-environment retention rule, and the fact that the suite is not evidence about cloud provisioning
 - [X] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
-- [ ] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
+- [X] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
 - [ ] T049 Run the determinism check from `quickstart.md` — 20 consecutive runs, all agreeing (FR-002, SC-002)
 - [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
 - [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement

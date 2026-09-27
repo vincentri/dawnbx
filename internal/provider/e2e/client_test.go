@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"dawnbx/internal/cluster"
 	"dawnbx/internal/provider"
 	"dawnbx/internal/provider/e2e/fakeserver"
 )
@@ -132,12 +133,140 @@ func TestSetOutcomeDefaultsTheAdvanceInterval(t *testing.T) {
 	}
 }
 
+// TestControlRouteBodyIsApplied covers the shape the suite actually posts. The
+// route and the suite once disagreed - the suite sent the environment a server is
+// started with, the route parsed a JSON body - and the disagreement was silent:
+// the route answered 204 and the outcome never changed, so a test asserting a
+// cluster had failed was really asserting against one that had quietly gone
+// ready. This is the test that would have caught it.
+func TestControlRouteBodyIsApplied(t *testing.T) {
+	const body = `{"cluster":"fail","failure_reason":"the size is not offered here","advance_ms":10}`
+	p := New(Outcome{ProviderAvailable: boolp(true)})
+	if err := p.SetOutcomeFromJSON([]byte(body)); err != nil {
+		t.Fatalf("SetOutcomeFromJSON: %v", err)
+	}
+	got := p.outcome()
+	if got.Cluster != "fail" {
+		t.Fatalf("cluster outcome is %q, want %q; the route's key and the JSON tag disagree", got.Cluster, "fail")
+	}
+	if got.FailureReason != "the size is not offered here" {
+		t.Errorf("failure reason is %q, want the one the route was given", got.FailureReason)
+	}
+	// advance_ms must survive the round trip too. It was json:"-", so a test that
+	// asked for a short phase silently got the default and its cluster had not
+	// failed by the time it gave up.
+	if got.AdvanceAfter != 10*time.Millisecond {
+		t.Errorf("advance is %v, want the 10ms the body asked for", got.AdvanceAfter)
+	}
+	if got.ProviderAvailable == nil || !*got.ProviderAvailable {
+		t.Error("an outcome that says nothing about availability must leave the provider available")
+	}
+
+	// And the outcome must actually change what a cluster does.
+	ctx := context.Background()
+	h, err := p.Create(ctx, provider.ClusterSpec{Region: "test-1", InstanceType: "test.small"}, provider.Bootstrap{AdminPassword: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := p.Status(ctx, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.State == provider.Ready {
+			t.Fatal("a cluster told to fail reported ready; the outcome is not reaching the provider")
+		}
+		if st.State == provider.Failed {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatal("a cluster told to fail never did")
+}
+
 func TestUnavailableProviderIsListedEvenWhenUnreachable(t *testing.T) {
 	// Both flags at once: the roster must still name the provider as
 	// unavailable, and a cluster must still be reported unreachable. They are
 	// independent conditions, not one another.
-	p := New(Outcome{Cluster: "unreachable", ProviderAvailable: false})
+	p := New(Outcome{Cluster: "unreachable", ProviderAvailable: boolp(false)})
 	if p.Capabilities().Available {
 		t.Error("an unavailable provider reported itself available")
+	}
+}
+
+// TestWithServerPointsAReadyClusterAtTheFakeCluster: a ready cluster must publish
+// an address something answers on. The first version returned a name that
+// resolved nowhere, and the lifecycle stalled in "verifying" for thirty seconds
+// before anything said why.
+func TestWithServerPointsAReadyClusterAtTheFakeCluster(t *testing.T) {
+	srv, err := fakeserver.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.AdoptPassword("pw")
+
+	p := New(Outcome{AdvanceAfter: time.Millisecond}).WithServer(srv)
+	if p.Server() != srv {
+		t.Error("Server() did not return the attached fake cluster")
+	}
+	ctx := context.Background()
+	h, err := p.Create(ctx, provider.ClusterSpec{Region: "test-1", InstanceType: "test.small"}, provider.Bootstrap{AdminPassword: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := p.Status(ctx, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.State == provider.Ready {
+			if st.URL != srv.URL {
+				t.Fatalf("ready at %q, want the fake cluster's %q", st.URL, srv.URL)
+			}
+			// And it must be reachable, or the claim is untested.
+			rem := cluster.NewRemote(st.URL)
+			if _, err := rem.EstablishPin(ctx, st.URL); err != nil {
+				t.Fatalf("the published URL does not answer a pin: %v", err)
+			}
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatal("the cluster never reported ready")
+}
+
+// TestAWorkerIsReportedByTheClusterItWasAddedTo: the control plane learns a
+// worker's state by asking the cluster what workers it has. A fixture that
+// creates a worker and never tells the cluster leaves every worker provisioning
+// for ever, which is indistinguishable from a product that never brings workers
+// up.
+func TestAWorkerIsReportedByTheClusterItWasAddedTo(t *testing.T) {
+	srv, err := fakeserver.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.AdoptPassword("pw")
+	p := New(Outcome{AdvanceAfter: time.Millisecond}).WithServer(srv)
+	ctx := context.Background()
+
+	h, err := p.Create(ctx, provider.ClusterSpec{Region: "test-1"}, provider.Bootstrap{AdminPassword: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := p.AddNode(ctx, h, provider.NodeSpec{InstanceType: "test.small"}, provider.Bootstrap{AdminPassword: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srv.Nodes) != 1 || srv.Nodes[0].Name != id {
+		t.Fatalf("the cluster reports %+v, want the worker %q", srv.Nodes, id)
+	}
+	// And removing it takes it back out, or a removed worker would linger.
+	if err := p.RemoveNode(ctx, h, provider.NodeRef{ID: id}); err != nil {
+		t.Fatalf("RemoveNode: %v", err)
+	}
+	if len(srv.Nodes) != 0 {
+		t.Errorf("the cluster still reports %+v after the worker was removed", srv.Nodes)
 	}
 }

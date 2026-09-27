@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { controlPlane } from '../fixtures/control-plane';
-import { envFor, type TestOutcome } from '../fixtures/test-provider';
+import { bodyFor, type TestOutcome } from '../fixtures/test-provider';
 import { eventually } from '../support/expect';
 import {
   activeStepText,
@@ -38,7 +38,7 @@ async function present(outcome: TestOutcome): Promise<void> {
   const res = await fetch(`${base}/v1/e2e/outcome`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(envFor(outcome)),
+    body: JSON.stringify(bodyFor(outcome)),
   });
   if (!res.ok && res.status !== 204) {
     throw new Error(`the suite could not set the provider outcome: ${res.status}`);
@@ -81,6 +81,11 @@ test.describe('a cluster that fails', () => {
   });
 
   test('tells an unreachable cluster apart from one with no workers', async ({ page }) => {
+    // Waits for a cluster to reach a terminal state, which costs several
+    // dashboard refetch intervals. test.slow() raises the limit for this test
+    // alone; raising it globally would let a genuinely stuck test take
+    // minutes to be told so.
+    test.slow();
     await present({ cluster: 'unreachable' });
 
     await openForm(page, 'unreachable');
@@ -138,20 +143,22 @@ test.describe('a quote that went stale', () => {
     await estimateButton(page).click();
     await expect(page.getByText(/\/mo|\$[0-9]/).first()).toBeVisible({ timeout: 20_000 });
 
-    // Change the configuration after quoting, then try to create.
+    // Change the configuration after quoting. "Change configuration" returns to
+    // the configuration step, so the price that was quoted is no longer on
+    // screen and the create action is gone with it - which is the first half of
+    // the guarantee: a cluster cannot be created at a price for a configuration
+    // the operator has since changed.
     await page.getByRole('button', { name: 'Change configuration' }).click();
+    await expect(page.getByRole('button', { name: 'Estimate price' })).toBeVisible();
+    // The create action must not survive the change; if it did, an operator could
+    // approve one thing and pay for another.
+    await expect(page.getByRole('button', { name: 'Confirm and create' })).toHaveCount(0);
+
+    // And re-quoting the new configuration must produce a new price, so the
+    // operator is pricing what they are about to create.
     await sizePicker(page).click();
     await page.getByRole('option').last().click();
-    await createButton(page).click();
-
-    // Either it refuses, or it asks for a fresh estimate. Silently creating at
-    // the old price is the one outcome that is wrong.
-    await eventually(
-      async () =>
-        (await page.getByText(/price changed|estimate|stale|re-quote/i).count()) > 0 ||
-        (await page.getByRole('button', { name: 'Estimate price' }).count()) > 0,
-      'the interface to require a fresh estimate after the configuration changed',
-      30_000,
-    );
+    await estimateButton(page).click();
+    await expect(page.getByText(/\/mo|\$[0-9]/).first()).toBeVisible({ timeout: 20_000 });
   });
 });

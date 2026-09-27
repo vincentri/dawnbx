@@ -1,18 +1,22 @@
 import { expect, test } from '@playwright/test';
 import { controlPlane } from '../fixtures/control-plane';
-import { envFor, type TestOutcome } from '../fixtures/test-provider';
+import { bodyFor, type TestOutcome } from '../fixtures/test-provider';
 import { eventually } from '../support/expect';
 import {
   activeStepText,
   clusterRow,
+  addWorkerButton,
   confirmInDialog,
   createButton,
+  deleteClusterButton,
   estimateButton,
   firstOption,
   nameField,
   providerChoice,
   regionPicker,
   sizePicker,
+  workerNodesButton,
+  workerSizePicker,
 } from '../support/selectors';
 
 /**
@@ -29,7 +33,7 @@ async function present(outcome: TestOutcome): Promise<void> {
   const res = await fetch(`${base}/v1/e2e/outcome`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(envFor(outcome)),
+    body: JSON.stringify(bodyFor(outcome)),
   });
   if (!res.ok && res.status !== 204) {
     throw new Error(`the suite could not set the provider outcome: ${res.status}`);
@@ -62,10 +66,21 @@ async function readyCluster(page: import('@playwright/test').Page, name: string)
 
 test.describe('a worker', () => {
   test('is added and reaches ready', async ({ page }) => {
+    // Waits for a full cluster lifecycle first, so it needs more than the
+    // suite's 30s default. Scoped to this test rather than raised globally.
+    test.slow();
     await present({ cluster: 'succeed' });
     await readyCluster(page, 'with-workers');
 
-    await page.getByRole('button', { name: /add.*(worker|node)/i }).first().click();
+    // The worker section is behind a button: the add control is not on the page
+    // until it is open.
+    await workerNodesButton(page).click();
+    // "Add worker" is disabled until a size is chosen, so the size is picked
+    // first. Clicking the disabled control is a 15s timeout and a failure that
+    // looks like a product bug.
+    await workerSizePicker(page).click();
+    await firstOption(page).click();
+    await addWorkerButton(page).click();
 
     // The worker must actually appear, not merely be requested. A list that
     // stays empty while the request succeeds is the "worker added" bug in its
@@ -84,9 +99,12 @@ test.describe('a worker', () => {
     await present({ cluster: 'succeed', holdWorkers: true });
     await readyCluster(page, 'busy-worker');
 
-    await page.getByRole('button', { name: /add.*(worker|node)/i }).first().click();
+    await workerNodesButton(page).click();
+    await workerSizePicker(page).click();
+    await firstOption(page).click();
+    await addWorkerButton(page).click();
     await eventually(
-      async () => (await page.getByText(/worker|node/i).count()) > 0,
+      async () => (await page.getByText(/test-node|worker/i).count()) > 0,
       'the worker to appear',
       60_000,
     );
@@ -104,18 +122,23 @@ test.describe('a worker', () => {
   });
 
   test('a cluster with no workers is deleted and leaves the list', async ({ page }) => {
+    // Waits for a cluster to reach a terminal state, which costs several
+    // dashboard refetch intervals. test.slow() raises the limit for this test
+    // alone; raising it globally would let a genuinely stuck test take
+    // minutes to be told so.
+    test.slow();
     await present({ cluster: 'succeed' });
-    await readyCluster(page, 'to-delete');
+    await readyCluster(page, 'delete-me');
 
-    await page.getByRole('button', { name: /delete cluster|delete/i }).first().click();
-    const confirm = page.getByRole('button', { name: /^delete|yes/i }).last();
+    await deleteClusterButton(page).click();
+    const confirm = page.getByRole('dialog').getByRole('button', { name: /delete|yes/i }).last();
     if (await confirm.count()) await confirm.click();
 
     // Deleting must remove it from the interface, not just answer 200. A cluster
     // that is gone from the database and still on screen is the failure an
     // operator notices last and trusts least.
     await eventually(
-      async () => (await clusterRow(page, 'to-delete').count()) === 0,
+      async () => (await clusterRow(page, 'delete-me').count()) === 0,
       'the deleted cluster to leave the list',
       60_000,
     );

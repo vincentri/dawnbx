@@ -160,3 +160,79 @@ func TestVersionAnswers(t *testing.T) {
 		t.Fatalf("the session established at login did not carry to a later call: %v", err)
 	}
 }
+
+// TestRequestsRecordsWhatWasAskedFor: the control plane reaching the cluster is
+// the thing several other assertions take on trust, so the server keeps its own
+// record of it rather than the test assuming a successful call happened.
+func TestRequestsRecordsWhatWasAskedFor(t *testing.T) {
+	s, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AdoptPassword("pw")
+	rem := dial(t, s, "pw")
+	if _, err := rem.Nodes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reqs := s.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("no request was recorded, so a passing test could not have been talking to this server")
+	}
+	saw := false
+	for _, r := range reqs {
+		if r == "/v1/nodes" {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("requests %v do not include the node listing", reqs)
+	}
+}
+
+// TestCloseIsSafeToCall: the suite tears servers down on every path, and a
+// teardown that panics would fail a test for a reason that has nothing to do
+// with the product.
+func TestCloseIsSafeToCall(t *testing.T) {
+	s, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+// TestAddAndRemoveNode: the cluster's own node list is where the control plane
+// learns a worker came up, so adding and removing are the two facts it depends
+// on. Adding twice must not double the worker, because a control plane that saw
+// it twice would report a phantom.
+func TestAddAndRemoveNode(t *testing.T) {
+	s, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddNode("worker-1")
+	s.AddNode("worker-1")
+	if len(s.Nodes) != 1 {
+		t.Fatalf("the same worker was reported %d times, want once", len(s.Nodes))
+	}
+	if s.Nodes[0].Name != "worker-1" {
+		t.Errorf("node is %q, want worker-1", s.Nodes[0].Name)
+	}
+	if s.Nodes[0].Addr == "" {
+		t.Error("a node with no address cannot be correlated; the address is the one thing both sides agree on")
+	}
+
+	s.AddNode("worker-2")
+	if len(s.Nodes) != 2 {
+		t.Fatalf("after a second worker the list is %d long, want 2", len(s.Nodes))
+	}
+	s.RemoveNode("worker-1")
+	if len(s.Nodes) != 1 || s.Nodes[0].Name != "worker-2" {
+		t.Errorf("after removing one worker the list is %+v, want only worker-2", s.Nodes)
+	}
+	s.RemoveNode("never-there")
+	if len(s.Nodes) != 1 {
+		t.Errorf("removing an unknown worker changed the list: %+v", s.Nodes)
+	}
+}

@@ -8,13 +8,15 @@
 # a ratchet, not a target: they may only rise. When you raise coverage, raise the
 # floor in the same commit. Never lower one to make a push go green.
 #
-# Go is at 90.8%. cmd/dawnbx-server reached 97.4% by extracting a callable
+# Go is at 91.0%. The control-plane e2e provider and its fake cluster are
+# covered by their own tests, including the paths a browser run exercises.
+# Previously cmd/dawnbx-server reached 97.4% by extracting a callable
 # serve() out of main(), so its startup sequence is tested rather than fatal-ed.
 # What is left is genuinely not unit testable: the k8s exec/TTY/SPDY plumbing
 # in internal/sandbox needs a real API server (the fake clientset's RESTClient
 # is nil), and live quota/gVisor behaviour is what hack/verify.sh is for. Run
 # the live tier on demand with CHECK_LIVE=1 bash hack/check.sh.
-go=90.8 - - -
+go=91.0 - - -
 web=94 93 90 94
 ts_sdk=95 85 95 95
 py_sdk=95 - - -

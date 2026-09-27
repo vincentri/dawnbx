@@ -187,7 +187,7 @@ run "no committed e2e recordings" python3 hack/check-e2e-artefacts.py
 # green gate that covered less than it claims.
 if [ "${SKIP_E2E:-0}" != 1 ]; then
   if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
-    run "control-plane e2e" docker compose -f e2e/docker-compose.yml run --rm driver
+    run "control-plane e2e" bash e2e/run.sh
   else
     printf 'warn  e2e needs docker compose; skipping (SKIP_E2E=1 to be explicit)\n'
   fi

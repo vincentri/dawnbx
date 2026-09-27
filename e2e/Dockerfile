@@ -19,7 +19,11 @@ FROM mcr.microsoft.com/playwright:v1.63.0-noble AS driver
 WORKDIR /e2e
 # The browser is already in this image, which is why nothing is downloaded to a
 # developer's machine when the suite runs.
-COPY e2e/package.json e2e/package-lock.json* ./
+# postgresql-client supplies psql, which the run uses to reset the database so
+# every run starts from an empty one. It is the only thing added to the image
+# beyond Node and the browser.
+RUN apt-get update -qq   && apt-get install -y -qq --no-install-recommends postgresql-client   && rm -rf /var/lib/apt/lists/*
+COPY e2e/package.json e2e/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY e2e/ ./
 # Compose starts the driver with the suite command; this is only for a bare

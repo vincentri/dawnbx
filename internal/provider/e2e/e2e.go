@@ -38,9 +38,13 @@ type Outcome struct {
 	// interface to show a specific reason, so a generic string would let a test
 	// pass without proving the reason is rendered.
 	FailureReason string `json:"failure_reason"`
-	// ProviderAvailable is false when the provider should appear in the roster
-	// as unavailable (FR-013).
-	ProviderAvailable bool `json:"provider_available"`
+	// ProviderAvailable reports whether this provider should appear as usable.
+	// It is a pointer because the zero value has to mean "available": a bare
+	// bool would make an outcome that simply omits the field present the provider
+	// as unavailable, which is what happened - a control route that takes
+	// partial JSON turns everything it does not mention into the opposite of
+	// what a reader would assume.
+	ProviderAvailable *bool `json:"provider_available,omitempty"`
 	// HoldWorkers makes RemoveNode refuse, as it does for a node still holding
 	// sandboxes (FR-012).
 	HoldWorkers bool `json:"hold_workers"`
@@ -49,6 +53,16 @@ type Outcome struct {
 	// reliably present when the interface next polls; a value at or above the
 	// poll interval turns every phase observation into a race (research.md
 	// R-003). The suite sets it from the environment.
+	// AdvanceAfter is settable over the control route, because a test that
+	// declares a timing has to be able to have it.
+	//
+	// It is a raw time.Duration, so it is JSON-encoded in NANOSECONDS: a body
+	// saying 10 means 10ns, not 10ms. That is the wire format, and the suite
+	// sends milliseconds, so the conversion happens in SetOutcomeFromJSON rather
+	// than being left to whoever reads the field later. It was `json:"-"`,
+	// which meant the route silently replaced it with the default: a test asking
+	// for a short phase got 2.5s and its cluster had not failed by the time the
+	// test gave up.
 	AdvanceAfter time.Duration `json:"-"`
 }
 
@@ -115,6 +129,18 @@ func New(out Outcome) *Provider {
 	}
 }
 
+// boolp is a test-and-caller convenience for the tri-state availability field.
+func boolp(v bool) *bool { return &v }
+
+// available resolves the tri-state: unset means the provider is available,
+// because a test that does not care about the roster should not have to say so.
+func available(v *bool) bool {
+	if v == nil {
+		return true
+	}
+	return *v
+}
+
 // outcome reads the current outcome under the lock.
 func (p *Provider) outcome() Outcome {
 	p.mu0.RLock()
@@ -128,6 +154,10 @@ func (p *Provider) outcome() Outcome {
 func (p *Provider) SetOutcome(out Outcome) {
 	if out.AdvanceAfter <= 0 {
 		out.AdvanceAfter = 2500 * time.Millisecond
+	}
+	if out.ProviderAvailable == nil {
+		yes := true
+		out.ProviderAvailable = &yes
 	}
 	p.mu0.Lock()
 	defer p.mu0.Unlock()
@@ -152,7 +182,7 @@ func (p *Provider) ID() string { return "test" }
 
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		Available: p.outcome().ProviderAvailable,
+		Available: available(p.outcome().ProviderAvailable),
 		Delivery:  "control-plane-test-harness",
 		Regions:   []string{"test-1", "test-2"},
 	}
@@ -298,6 +328,14 @@ func (p *Provider) AddNode(_ context.Context, h provider.Handle, _ provider.Node
 	// so a test that waits for a ready node is waiting on the provider and not
 	// on a sleep.
 	p.clusters[ref.Cluster].nodes = append(p.clusters[ref.Cluster].nodes, provider.NodeRef{ID: id, ClusterName: id})
+	// The fake cluster must learn about the worker, because the control plane
+	// learns a worker's state by asking the cluster what workers it has. A
+	// fixture that never reports the worker it was told to create leaves every
+	// worker stuck at "provisioning" for ever, which is indistinguishable from a
+	// product that never brings workers up.
+	if p.server != nil {
+		p.server.AddNode(id)
+	}
 	return id, nil
 }
 
@@ -321,6 +359,9 @@ func (p *Provider) RemoveNode(_ context.Context, h provider.Handle, node provide
 		if n.ID == node.ID {
 			c.nodes = append(c.nodes[:i], c.nodes[i+1:]...)
 			delete(p.nodes, node.ID)
+			if p.server != nil {
+				p.server.RemoveNode(node.ID)
+			}
 			return nil
 		}
 	}
@@ -432,11 +473,27 @@ func (c *clusterClient) MintAPIKey(ctx context.Context, name string) (string, er
 // that only exists in an e2e build. It is deliberately not reachable from the
 // product's own router: a shipped binary has no route that could call it.
 func (p *Provider) SetOutcomeFromJSON(raw []byte) error {
-	var out Outcome
-	if err := json.Unmarshal(raw, &out); err != nil {
+	// advance_ms is a plain integer, not a duration string, so it is read apart
+	// from the rest and converted here. Decoding it into a time.Duration would
+	// read 10 as ten nanoseconds, which is a thousandth of what the sender meant,
+	// and the failure that causes is a test that times out rather than an error.
+	var wire struct {
+		Cluster           string `json:"cluster"`
+		FailureReason     string `json:"failure_reason"`
+		ProviderAvailable *bool  `json:"provider_available"`
+		HoldWorkers       bool   `json:"hold_workers"`
+		AdvanceMs         int64  `json:"advance_ms"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
-	p.SetOutcome(out)
+	p.SetOutcome(Outcome{
+		Cluster:           wire.Cluster,
+		FailureReason:     wire.FailureReason,
+		ProviderAvailable: wire.ProviderAvailable,
+		HoldWorkers:       wire.HoldWorkers,
+		AdvanceAfter:      time.Duration(wire.AdvanceMs) * time.Millisecond,
+	})
 	return nil
 }
 

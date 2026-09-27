@@ -98,7 +98,7 @@ func TestUnreachableIsNotAnEmptyCluster(t *testing.T) {
 }
 
 func TestUnavailableProviderIsStillListed(t *testing.T) {
-	p := New(Outcome{ProviderAvailable: false})
+	p := New(Outcome{ProviderAvailable: boolp(false)})
 	if p.Capabilities().Available {
 		t.Error("a provider told to be unavailable still reports itself available; the roster would offer it")
 	}

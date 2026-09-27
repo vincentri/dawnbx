@@ -37,10 +37,11 @@ var errNoFailureReason = errors.New("DAWNBX_E2E_CLUSTER=fail needs DAWNBX_E2E_FA
 func wireE2EProvider() serverDeps {
 	d := productionDeps()
 	d.newProvider = func(_ context.Context, cfg config) (provider.Provider, error) {
+		available := os.Getenv("DAWNBX_E2E_PROVIDER_UNAVAILABLE") != "1"
 		out := e2e.Outcome{
+			ProviderAvailable: &available,
 			Cluster:           envOr("DAWNBX_E2E_CLUSTER", "succeed"),
 			FailureReason:     os.Getenv("DAWNBX_E2E_FAILURE_REASON"),
-			ProviderAvailable: os.Getenv("DAWNBX_E2E_PROVIDER_UNAVAILABLE") != "1",
 			HoldWorkers:       os.Getenv("DAWNBX_E2E_HOLD_WORKERS") == "1",
 		}
 		if ms := os.Getenv("DAWNBX_E2E_ADVANCE_MS"); ms != "" {

@@ -100,12 +100,23 @@ export const phaseBadge = (page: Page, phase: string): Locator =>
   page.getByText(phase, { exact: true }).first();
 
 /**
- * A cluster's row. Exact, for the same reason phaseBadge is: a loose match here
- * would also find the name in the confirmation dialog, the heading, or a
- * paragraph, and the row would never be the thing that was asserted.
+ * A cluster's row in the sidebar.
+ *
+ * Scoped to the sidebar, not the whole page, because a deleted cluster's name
+ * stays in the detail panel's heading after it leaves the list: an assertion that
+ * searched the page found the heading and concluded the delete had not worked,
+ * while the sidebar had already dropped the row. The row is what the assertion
+ * is about.
  */
-export const clusterRow = (page: Page, name: string): Locator =>
-  page.getByText(name, { exact: true }).first();
+export function clusterRow(page: Page, name: string): Locator {
+  // The cluster list is a Card, not a nav or an aside, so it is found by the
+  // heading it carries. Scoping to it is what makes "the row left the list" a
+  // statement about the list.
+  return page
+    .locator('div', { has: page.getByText('Every cluster this control plane manages.') })
+    .locator('button', { hasText: name })
+    .first();
+}
 
 /** The detail panel's failure reason, shown when a cluster will not come up. */
 export const failureDetail = (page: Page): Locator => page.getByText(/failed|could not|unreachable|refus/i).first();
@@ -113,8 +124,29 @@ export const failureDetail = (page: Page): Locator => page.getByText(/failed|cou
 /** The refusal notice for an operation the product will not perform. */
 export const refusalNotice = (page: Page): Locator => page.getByText(/still holds sandboxes|worker|node/i).first();
 
-/** The add-worker control on a cluster's detail panel. */
-export const addWorkerButton = (page: Page): Locator => page.getByRole('button', { name: /add.*(worker|node)|worker/i }).first();
+/**
+ * Opens the worker section of a cluster's detail panel. The add-worker control
+ * does not exist until this is open, so a test that reaches for "Add worker"
+ * first is looking for a button that has not been rendered.
+ */
+export const workerNodesButton = (page: Page): Locator =>
+  page.getByRole('button', { name: 'Worker nodes' });
 
-/** The delete-cluster control. */
-export const deleteClusterButton = (page: Page): Locator => page.getByRole('button', { name: /delete/i }).first();
+/**
+ * The worker's size picker, inside the worker section. It is labelled "worker
+ * size", distinct from the cluster's own "size", and "Add worker" stays disabled
+ * until it has a value.
+ */
+export const workerSizePicker = (page: Page): Locator =>
+  page.getByRole('combobox', { name: 'worker size' });
+
+/** Returns from the worker section to the cluster detail. */
+export const backToClusterButton = (page: Page): Locator =>
+  page.getByRole('button', { name: 'Back to the cluster' });
+
+/** The add-worker control inside the worker section. */
+export const addWorkerButton = (page: Page): Locator => page.getByRole('button', { name: 'Add worker' });
+
+/** Deletes the cluster from its detail panel. */
+export const deleteClusterButton = (page: Page): Locator =>
+  page.getByRole('button', { name: 'Delete cluster' });

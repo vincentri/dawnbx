@@ -120,6 +120,34 @@ func Start() (*Server, error) {
 	return s, nil
 }
 
+// AddNode reports a worker in the cluster's own node list, which is where the
+// control plane learns whether a worker came up.
+func (s *Server) AddNode(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range s.Nodes {
+		if n.Name == id {
+			return
+		}
+	}
+	// The address is the one thing both sides agree on, and the control plane
+	// matches on it when the provider's name and the cluster's differ.
+	s.Nodes = append(s.Nodes, cluster.RemoteNode{Name: id, Addr: "10.0.0.2\t" + id})
+}
+
+// RemoveNode drops a worker from the cluster's list, as removing one would.
+func (s *Server) RemoveNode(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.Nodes[:0]
+	for _, n := range s.Nodes {
+		if n.Name != id {
+			out = append(out, n)
+		}
+	}
+	s.Nodes = out
+}
+
 // AdoptPassword sets the one password Login will accept. It is called from
 // Create, because that is where the control plane actually provides the
 // credential the cluster is later expected to accept.
