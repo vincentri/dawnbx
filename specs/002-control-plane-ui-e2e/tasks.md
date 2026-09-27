@@ -69,20 +69,20 @@ this is complete.
 - [X] T009 [P] Create `internal/provider/e2e/e2e.go` implementing the full provider interface from `internal/provider/provider.go` — `Capabilities`, `Regions`, `InstanceTypes`, `Estimate`, `Create`, `Status`, `Nodes`, `RemoveNode`, `Destroy` — driven by the `TestOutcome` fields in `data-model.md`
 - [X] T010 [P] Create `cmd/dawnbx-server/provider_e2e.go` behind `//go:build e2e`, wiring `serverDeps.newProvider` (`cmd/dawnbx-server/main.go:116`) to the test provider
 - [X] T011 Verify with `go build ./cmd/dawnbx-server` and `strings dawnbx-server | grep -i e2e` that a **default** build contains no test-provider symbol, then with `go build -tags e2e` that it does. A default build that can select a test provider is a security failure, not a style issue
-- [ ] T012 [P] Create `e2e/fixtures/test-provider.ts` mapping each test's declared outcome to the provider configuration, validating that `failureReason` is non-empty when the outcome is `fail` and that `advanceAfter` is positive (data-model.md validation rules)
+- [X] T012 [P] Create `e2e/fixtures/test-provider.ts` mapping each test's declared outcome to the provider configuration, validating that `failureReason` is non-empty when the outcome is `fail` and that `advanceAfter` is positive (data-model.md validation rules)
 
 ### Container environment
 
-- [ ] T013 [P] Create `e2e/Dockerfile` with a build stage for `dawnbx-server` (embedded dashboard bundle included) and a test stage carrying `@playwright/test` and its browser
-- [ ] T014 [P] Create `e2e/docker-compose.yml` with three services — `postgres` (PostgreSQL 16, named volume, health check), `server` (`--control-plane`, pointed at `postgres` via `--database-url`, its own files on a volume), `driver` (the suite) — bind-mounting only `../.e2e` to the host (R-009)
-- [ ] T015 Make the `server` service depend on the `postgres` health check, never on a sleep, and confirm the migration completes before the server starts serving
-- [ ] T016 [P] Create `e2e/fixtures/control-plane.ts` that waits for the database, waits for the server's health endpoint, and reads the generated administrator credential from `<data-dir>/server/admin.env` (R-007). The credential must never be logged, asserted on, or written to a report (FR-021)
+- [X] T013 [P] Create `e2e/Dockerfile` with a build stage for `dawnbx-server` (embedded dashboard bundle included) and a test stage carrying `@playwright/test` and its browser
+- [X] T014 [P] Create `e2e/docker-compose.yml` with three services — `postgres` (PostgreSQL 16, named volume, health check), `server` (`--control-plane`, pointed at `postgres` via `--database-url`, its own files on a volume), `driver` (the suite) — bind-mounting only `../.e2e` to the host (R-009)
+- [X] T015 Make the `server` service depend on the `postgres` health check, never on a sleep, and confirm the migration completes before the server starts serving
+- [X] T016 [P] Create `e2e/fixtures/control-plane.ts` that waits for the database, waits for the server's health endpoint, and reads the generated administrator credential from `<data-dir>/server/admin.env` (R-007). The credential must never be logged, asserted on, or written to a report (FR-021)
 
 ### Retention and reporting
 
-- [ ] T017 Create `e2e/support/retention.ts` — locally keep every recording, in CI delete recordings for tests that passed, apply the cap automatically (FR-023, FR-024, NFR-005, NFR-007)
-- [ ] T018 [P] Create `e2e/fixtures/expect.ts` with helpers that wait for an operator-visible state with a bounded timeout, where a timeout fails the test and never passes it
-- [ ] T019 [P] Create `e2e/support/summary.ts` reporting tests executed against tests defined, so a skipped test is visible and fails the run (FR-022)
+- [X] T017 Create `e2e/support/retention.ts` — locally keep every recording, in CI delete recordings for tests that passed, apply the cap automatically (FR-023, FR-024, NFR-005, NFR-007)
+- [X] T018 [P] Create `e2e/fixtures/expect.ts` with helpers that wait for an operator-visible state with a bounded timeout, where a timeout fails the test and never passes it
+- [X] T019 [P] Create `e2e/support/summary.ts` reporting tests executed against tests defined, so a skipped test is visible and fails the run (FR-022)
 
 **Checkpoint**: `docker compose -f e2e/docker-compose.yml run --rm driver` starts a
 control plane on PostgreSQL with a test provider, and `docker compose -f
@@ -103,7 +103,7 @@ in the recorded video, and the cluster reached `ready`.
 
 > Write these first; they must fail before the fixture supports them.
 
-- [ ] T020 [P] [US1] Sign-in spec in `e2e/specs/sign-in.spec.ts` — reach the signed-in shell through the real form, using the credential from the fixture (FR-021)
+- [X] T020 [P] [US1] Sign-in spec in `e2e/specs/sign-in.spec.ts` — reach the signed-in shell through the real form, using the credential from the fixture (FR-021)
 - [ ] T021 [P] [US1] Price-before-create spec in `e2e/specs/cluster-request.spec.ts` — assert a price is rendered, and that no cluster is created without one (FR-008)
 - [ ] T022 [P] [US1] Progression spec in `e2e/specs/cluster-request.spec.ts` — confirm the quote, then wait for an intermediate phase and then `ready` (FR-009)
 
@@ -186,7 +186,7 @@ requirement this feature creates.
 - [ ] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
 - [ ] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
 - [ ] T049 Run the determinism check from `quickstart.md` — 20 consecutive runs, all agreeing (FR-002, SC-002)
-- [ ] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
+- [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
 - [ ] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
 - [ ] T052 **Release gate**: run the real-account lifecycle via `hack/verify.sh` against a control plane on PostgreSQL and record the result in `specs/002-control-plane-ui-e2e/quickstart.md`. The suite cannot stand in for this (Principle VI, R-008). This is a release blocker, not a follow-up
 - [ ] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)

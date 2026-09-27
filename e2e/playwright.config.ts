@@ -14,9 +14,14 @@ import { defineConfig } from '@playwright/test';
 //                (FR-023). Configuring video per environment instead would make
 //                "a green CI run uploads nothing" something to remember rather
 //                than something enforced.
+// Where recordings land. It differs between the two environments because only the
+// container can see the bind mount: on a developer machine the suite would
+// normally run in the image, but the config also has to work for a bare run.
+const outputDir = process.env.DAWNBX_E2E_OUTPUT_DIR ?? '../.e2e';
+
 export default defineConfig({
   testDir: './specs',
-  outputDir: '../.e2e',
+  outputDir,
   // No retries: see above. A skipped test fails the run (FR-022), so a suite that
   // quietly skips a broken test would report green while covering nothing.
   retries: 0,
@@ -30,7 +35,7 @@ export default defineConfig({
   // clears its own output folder, and nesting it under test-results would have
   // it delete the videos it is meant to describe.
   reporter: process.env.CI
-    ? [['list'], ['html', { outputFolder: '../.e2e-report', open: 'never' }]]
+    ? [['list'], ['html', { outputFolder: `${outputDir}-report`, open: 'never' }]]
     : [['list']],
   use: {
     // The server service, by name on the Compose network.
