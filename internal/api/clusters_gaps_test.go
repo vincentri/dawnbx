@@ -407,9 +407,6 @@ func TestControlAccessorsRefuseRatherThanPanic(t *testing.T) {
 			if _, err := c.usable(); err == nil {
 				t.Error("usable() handed out a provider with no registry")
 			}
-			if c.available() {
-				t.Error("available() is true with no provider")
-			}
 			if got := c.providers(); got == nil {
 				t.Error("providers() returned nil, which a caller must nil-check")
 			}

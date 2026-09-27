@@ -60,11 +60,11 @@ func (m *Manager) checkHeadroom(min float64) error {
 	return nil
 }
 
-// checkNode is checkHeadroom(15) for the disk meta's workspace lives on. A
+// checkNode is checkHeadroom(AdmitFreePct) for the disk meta's workspace lives on. A
 // worker's free space comes from the last reconcile tick.
 func (m *Manager) checkNode(meta store.Meta) error {
 	if m.local(meta) {
-		return m.checkHeadroom(15)
+		return m.checkHeadroom(AdmitFreePct)
 	}
 	if slices.Contains(m.lowDisk(), meta.Node) {
 		return errf(507, "disk_low", "kill unused sandboxes on that node (dawnbx ls) or grow its disk",
@@ -179,7 +179,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 	}
 	sort.Slice(metas, func(i, j int) bool { return usage[metas[i].ID] > usage[metas[j].ID] })
 	for node, freeNow := range free {
-		if freeNow() >= 10 {
+		if freeNow() >= ReclaimFreePct {
 			continue
 		}
 		for i, meta := range metas {
@@ -187,7 +187,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 				continue
 			}
 			f := freeNow()
-			if f >= 10 {
+			if f >= ReclaimFreePct {
 				break
 			}
 			log.Printf("reconcile: volume %.1f%% free on %q, deleting %s", f, node, meta.ID)
@@ -197,7 +197,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 				d.freed += usage[meta.ID]
 			}
 		}
-		if f := freeNow(); f < 10 {
+		if f := freeNow(); f < ReclaimFreePct {
 			for i, meta := range metas {
 				if nodeOf(meta) == node && meta.ExpiresAt == nil && meta.Status == StatusRunning {
 					log.Printf("reconcile: volume %.1f%% free on %q, stopping %s", f, node, meta.ID)
@@ -211,7 +211,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 
 	var low []string
 	for n, d := range disks {
-		if d.freePct() < 15 {
+		if d.freePct() < AdmitFreePct {
 			low = append(low, n)
 		}
 	}

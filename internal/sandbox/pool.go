@@ -71,7 +71,7 @@ func (m *Manager) FillPool(ctx context.Context) {
 		return
 	}
 	defer m.fillMu.Unlock()
-	if m.checkHeadroom(15) != nil {
+	if m.checkHeadroom(AdmitFreePct) != nil {
 		return
 	}
 	for n := m.warm(); n < m.PoolSize; n++ {

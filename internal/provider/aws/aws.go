@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -173,7 +174,7 @@ func New(ctx context.Context, o Options) (provider.Provider, error) {
 	if c := o.SSHCIDR; c == "0.0.0.0/0" || c == "/0" {
 		return nil, fmt.Errorf("%w: aws rescue ssh cidr must name who may use the key, not the whole internet", provider.ErrUnavailable)
 	}
-	if !contains(regions, o.Region) {
+	if !slices.Contains(regions, o.Region) {
 		return nil, fmt.Errorf("%w: aws region %q is not one this build provisions in", provider.ErrUnavailable, o.Region)
 	}
 	cfg, err := load(ctx, o.Region, o.HTTPClient)
@@ -489,7 +490,7 @@ func (a *AWS) forRegion(region string) (*clients, error) {
 	if region == "" {
 		region = a.region
 	}
-	if !contains(a.regions, region) {
+	if !slices.Contains(a.regions, region) {
 		return nil, fmt.Errorf("%w: aws region %q is not one this build provisions in", provider.ErrUnavailable, region)
 	}
 	if c, ok := a.cache.Load(region); ok {
@@ -558,18 +559,6 @@ func slug(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
-}
-
-// contains is a linear scan on purpose. The region list is eleven entries and is
-// not kept sorted, and a binary search over a list that only looks sorted fails
-// silently on exactly the call that matters: a handle naming a real region.
-func contains(vs []string, v string) bool {
-	for _, s := range vs {
-		if s == v {
-			return true
-		}
-	}
-	return false
 }
 
 // sleep waits, or gives up when the context does.

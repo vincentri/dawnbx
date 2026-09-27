@@ -35,6 +35,14 @@ const (
 	DiskLimit      = 5 << 30 // per-sandbox, bytes
 	Grace          = 10 * time.Minute
 
+	// Volume headroom, as a percentage free. AdmitFreePct is the floor for
+	// scheduling a sandbox at all; ReclaimFreePct is the level under which the
+	// reconciler starts deleting expiring sandboxes and stopping a
+	// keep-forever one. They were bare literals at seven sites, so changing one
+	// and not another would silently change eviction.
+	AdmitFreePct   = 15.0
+	ReclaimFreePct = 10.0
+
 	StatusRunning  = "running"
 	StatusStopped  = "stopped"
 	StatusDeleting = "deleting"
@@ -185,7 +193,7 @@ func (m *Manager) Create(ctx context.Context, r CreateReq) (*View, error) {
 	if _, err := resource.ParseQuantity(r.Memory); err != nil {
 		return nil, errf(400, "invalid_resources", `memory like "1Gi" or "512Mi"`, "bad memory %q", r.Memory)
 	}
-	if err := m.checkHeadroom(15); err != nil {
+	if err := m.checkHeadroom(AdmitFreePct); err != nil {
 		return nil, err
 	}
 	now := m.Now().UTC()

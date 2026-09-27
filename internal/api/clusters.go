@@ -138,11 +138,6 @@ func noCluster() error {
 
 // --- dependencies ---
 
-func (c *Control) available() bool {
-	_, err := c.usable()
-	return err == nil
-}
-
 // usable is the one provider this build can provision with right now, or the
 // refusal. It is a question about the registry rather than about a field, so a
 // provider that failed to configure and a provider this build does not have are
@@ -303,7 +298,9 @@ func (c *Control) nodes(ctx context.Context, cl *cluster.Cluster) ([]cluster.Nod
 			unmatched = append(unmatched, s.ID)
 		}
 	}
-	if len(unmatched) > 0 && c.available() {
+	if len(unmatched) > 0 {
+		// One resolution, not two: this used to ask available() and then
+		// usable() on the next line, and the two answers could disagree.
 		if prov, err := c.usable(); err == nil {
 			if handle, herr := c.reg.Handle(cl.Name); herr == nil {
 				if addrs, aerr := prov.NodeAddrs(ctx, handle, unmatched); aerr != nil {
@@ -603,7 +600,7 @@ func (s *Server) clusters(h route) {
 		if cl.Status != cluster.StatusReady || cl.URL == "" {
 			return nil, clusterUnavailable("cluster " + name + " is not ready")
 		}
-		if !c.available() {
+		if _, err := c.usable(); err != nil {
 			return nil, clusterUnavailable("no provider is available to deliver a rotated credential")
 		}
 		pw, err := auth.MintPassword(24)
@@ -708,7 +705,7 @@ func (s *Server) clusters(h route) {
 		if cl.Status != cluster.StatusReady {
 			return nil, clusterUnavailable("cluster " + cl.Name + " is not ready")
 		}
-		if !c.available() {
+		if _, err := c.usable(); err != nil {
 			return nil, clusterUnavailable("no provider is available to add a worker")
 		}
 		var req struct {
@@ -759,7 +756,7 @@ func (s *Server) clusters(h route) {
 			return nil, err
 		}
 		id := r.PathValue("node")
-		if !c.available() {
+		if _, err := c.usable(); err != nil {
 			return nil, clusterUnavailable("no provider is available to remove a worker")
 		}
 		// Ask the cluster before believing our own cache: it is the authority on

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -150,7 +151,7 @@ func (r *Registry) Validate(req CreateRequest, cat Catalogue) error {
 	if _, err := r.db.GetCluster(req.Name); err == nil {
 		return fmt.Errorf("%w: %s", ErrExists, req.Name)
 	}
-	if !contains(cat.Regions, req.Region) {
+	if !slices.Contains(cat.Regions, req.Region) {
 		return fmt.Errorf("%w: region %q is not one of %s", ErrInvalid, req.Region, strings.Join(cat.Regions, ", "))
 	}
 	found := false
@@ -444,12 +445,3 @@ func (r *Registry) Delete(name string) error {
 // Forget removes the record entirely, after the provider has confirmed the
 // resources are gone.
 func (r *Registry) Forget(name string) error { return r.db.DeleteCluster(name) }
-
-func contains(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}

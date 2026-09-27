@@ -166,7 +166,7 @@ func (p *Provisioner) Run(ctx context.Context, name string) error {
 	case provider.Gone:
 		return p.fail(ctx, name, "the provider reports the host is gone")
 	case provider.Ready:
-		return p.verify(ctx, name, c, handle, st)
+		return p.verify(ctx, name, st)
 	default:
 		return p.reg.Phase(name, StatusProvisioning, c.Phase, st.Reason)
 	}
@@ -216,7 +216,7 @@ func stalledNote(p *Provisioner, name string) string {
 // plane injected and issues a key of its own — which is a stronger claim than
 // "the stack went green", and provider-neutral, because every provider gives a
 // running host an HTTP API.
-func (p *Provisioner) verify(ctx context.Context, name string, c *Cluster, handle provider.Handle, st provider.Status) error {
+func (p *Provisioner) verify(ctx context.Context, name string, st provider.Status) error {
 	if err := p.reg.Phase(name, StatusProvisioning, PhaseVerifying, ""); err != nil {
 		return err
 	}

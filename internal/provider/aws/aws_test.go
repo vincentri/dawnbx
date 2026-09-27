@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -204,7 +205,7 @@ func (f *fake) called(want ...string) {
 	defer f.mu.Unlock()
 	var missing []string
 	for _, w := range want {
-		if !contains(f.seen, w) {
+		if !slices.Contains(f.seen, w) {
 			missing = append(missing, w)
 		}
 	}
@@ -296,7 +297,7 @@ func TestCapabilities(t *testing.T) {
 	if c.Delivery != "aws-ssm-securestring" {
 		t.Errorf("Delivery = %q, want the SSM SecureString", c.Delivery)
 	}
-	if len(c.Regions) == 0 || !contains(c.Regions, "eu-west-1") {
+	if len(c.Regions) == 0 || !slices.Contains(c.Regions, "eu-west-1") {
 		t.Errorf("Regions = %v, want the configured region among them", c.Regions)
 	}
 	// A caller that sorts the list in place must not be able to reorder what the

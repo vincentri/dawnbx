@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,7 +95,7 @@ func (c *cfn) event(id, status, reason, physical string) string {
 func (c *cfn) did(action string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return contains(c.calls, action)
+	return slices.Contains(c.calls, action)
 }
 
 func (c *cfn) handle() provider.Handle {

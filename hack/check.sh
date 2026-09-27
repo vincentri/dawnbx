@@ -52,6 +52,12 @@ run "eslint (ts sdk)" bash -c 'cd sdk/typescript && npx eslint .'
 run "prettier (ts sdk)" bash -c 'cd sdk/typescript && npx prettier --check .'
 run "ruff check" ruff check sdk/python
 run "ruff format" ruff format --check sdk/python
+# The docs site is required to have node_modules here and AGENTS.md has always
+# listed this as a gate step, but nothing ran it: the install was checked and the
+# type check was not. The script already exists and passes, so the gate was
+# demanding a dependency install for a step that did not exist.
+run "docs typecheck" npm run types:check --prefix docs
+
 # The one contract, linted. This is the generator the dashboard's types come
 # from, run against the file itself: it fails on a YAML mistake, an unresolvable
 # $ref, or an operation that cannot be typed, which is the class of drift the
