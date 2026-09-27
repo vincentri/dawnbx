@@ -153,7 +153,9 @@ type site struct {
 // into an exit code.
 func serve(ctx context.Context, cfg config, d serverDeps) error {
 	if cfg.version {
-		println(api.Version)
+		// fmt.Println, not the builtin println: the builtin writes to stderr, and
+		// `-version > file` is how an operator and the installer compare builds.
+		fmt.Println(api.Version)
 		return nil
 	}
 	log.SetFlags(0) // journald timestamps

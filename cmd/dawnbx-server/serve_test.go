@@ -34,16 +34,21 @@ import (
 	"dawnbx/internal/store"
 )
 
-// captureStderr returns what f wrote to file descriptor 2. The builtin
-// println and the logger both go there, and the descriptor itself has to be
-// redirected to see the former.
-func captureStderr(t *testing.T, f func()) string {
+// captureFD returns what f wrote to the given file descriptor. The logger
+// writes to 2 and `-version` writes to 1, so both are captured: the descriptor
+// itself has to be redirected to see either.
+//
+// It is a named argument rather than two near-identical functions because the
+// only difference is the number, and the day one of them stops matching what
+// the code writes is the day the test silently stops testing anything - which
+// is what happened to the version test when it captured only stderr.
+func captureFD(t *testing.T, fd int, f func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := syscall.Dup(2)
+	saved, err := syscall.Dup(fd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +57,7 @@ func captureStderr(t *testing.T, f func()) string {
 		b, _ := io.ReadAll(r)
 		done <- string(b)
 	}()
-	if err := syscall.Dup2(int(w.Fd()), 2); err != nil {
+	if err := syscall.Dup2(int(w.Fd()), fd); err != nil {
 		t.Fatal(err)
 	}
 	out := log.Writer()
@@ -60,7 +65,7 @@ func captureStderr(t *testing.T, f func()) string {
 	f()
 	log.SetOutput(out)
 	w.Close()
-	syscall.Dup2(saved, 2)
+	syscall.Dup2(saved, fd)
 	syscall.Close(saved)
 	return <-done
 }
@@ -268,7 +273,7 @@ func get(t *testing.T, c *http.Client, url, key string, want int) []byte {
 // the database, the cluster or a socket. Every setting here points at nothing,
 // so reaching any later step would return an error instead.
 func TestVersionReturnsBeforeAnySetup(t *testing.T) {
-	out := captureStderr(t, func() {
+	out := captureFD(t, 1, func() {
 		err := serve(context.Background(), config{
 			version:     true,
 			dataDir:     filepath.Join(t.TempDir(), "absent"),

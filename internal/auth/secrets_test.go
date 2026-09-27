@@ -200,8 +200,11 @@ func TestKeyAndUserConstraints(t *testing.T) {
 	if _, err := d.CreateUser("acme", "bob", "bob-password", "member"); err != nil {
 		t.Fatal(err)
 	}
-	if !d.OrgExists("acme") || d.OrgExists("ghost") {
-		t.Error("OrgExists is wrong for acme/ghost")
+	if ok, err := d.OrgExists("acme"); err != nil || !ok {
+		t.Errorf("OrgExists(acme) = %v, %v; want true, nil", ok, err)
+	}
+	if ok, err := d.OrgExists("ghost"); err != nil || ok {
+		t.Errorf("OrgExists(ghost) = %v, %v; want false, nil", ok, err)
 	}
 	// One row per username across every org, and SetPassword says so when the
 	// user is not there at all.
@@ -411,5 +414,52 @@ func TestMintPasswordLengthAndAlphabet(t *testing.T) {
 	b, _ := MintPassword(24)
 	if a == b {
 		t.Error("two mints returned the same password")
+	}
+}
+
+// Every credential in this file is built from randRead. When the entropy source
+// fails, crypto/rand leaves the buffer zeroed and the caller used to carry on,
+// which hands out a token an attacker can predict: the key becomes a constant,
+// and so does the session. Each of these must refuse instead.
+func TestAFailingEntropySourceRefusesRatherThanMints(t *testing.T) {
+	d := open(t)
+	if err := d.CreateOrg("acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("acme", "bob", "bob-password", "member"); err != nil {
+		t.Fatal(err)
+	}
+
+	real := randRead
+	randRead = func([]byte) (int, error) { return 0, errors.New("entropy source unavailable") }
+	t.Cleanup(func() { randRead = real })
+
+	if _, err := randID(12); err == nil {
+		t.Error("randID returned an id from a zero-filled buffer")
+	}
+	if pw, err := MintPassword(24); err == nil {
+		t.Errorf("MintPassword returned %q from a zero-filled buffer", pw)
+	}
+	if tok, k, err := d.CreateKey("acme", "ci", "bob", nil); err == nil {
+		t.Errorf("CreateKey returned %q (%v) from a zero-filled buffer", tok, k.ID)
+	}
+	if tok, p, err := d.Login("bob", "bob-password"); err == nil {
+		t.Errorf("Login issued session %q for %v from a zero-filled buffer", tok, p)
+	}
+	if err := d.Audit("acme", "user:bob", "test", "x"); err == nil {
+		t.Error("Audit wrote a row with a predictable id")
+	}
+	if err := d.RecordOp("acme", "create", "validating", ""); err == nil {
+		t.Error("RecordOp wrote a row with a predictable id")
+	}
+
+	// And with entropy restored, the same calls work, so the failures above are
+	// the seam and not a broken database.
+	randRead = real
+	if _, err := randID(12); err != nil {
+		t.Errorf("randID failed with real entropy: %v", err)
+	}
+	if _, _, err := d.CreateKey("acme", "ci", "bob", nil); err != nil {
+		t.Errorf("CreateKey failed with real entropy: %v", err)
 	}
 }

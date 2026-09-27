@@ -36,7 +36,7 @@ func runMain(t *testing.T, args ...string) string {
 	oldArgs := os.Args
 	os.Args = append([]string{"dawnbx-server"}, args...)
 	defer func() { os.Args = oldArgs }()
-	return captureStderr(t, main)
+	return captureFD(t, 1, main)
 }
 
 // TestVersionFlagExitsBeforeAnythingElse: `dawnbx-server -version` is what an

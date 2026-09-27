@@ -129,7 +129,9 @@ func (s *Server) manage(h route) {
 			if !who(r).Admin {
 				return nil, forbidden("members make keys for their own org only", "")
 			}
-			if !s.Auth.OrgExists(req.Org) {
+			if ok, err := s.Auth.OrgExists(req.Org); err != nil {
+				return nil, err
+			} else if !ok {
 				return nil, bad("no org "+req.Org, "GET /v1/orgs lists them")
 			}
 			org = req.Org
@@ -235,7 +237,9 @@ func (s *Server) manage(h route) {
 		if req.Org == "" {
 			req.Org = who(r).Org
 		}
-		if !s.Auth.OrgExists(req.Org) {
+		if ok, err := s.Auth.OrgExists(req.Org); err != nil {
+			return nil, err
+		} else if !ok {
 			return nil, bad("no org "+req.Org, "POST /v1/orgs makes one")
 		}
 		if req.Role == "" {

@@ -164,14 +164,25 @@ func (d *DB) migrate() error {
 	return nil
 }
 
-func randID(n int) string {
+// randRead is crypto/rand.Read behind a name, so a test can make the entropy
+// source fail and prove a credential is refused rather than minted out of a
+// zero-filled buffer. The same shape as sandbox.FreePct and sandbox.CopyTree.
+var randRead = rand.Read
+
+// randID returns n characters of a lowercase alphanumeric id. It reports the
+// crypto/rand error rather than dropping it: an id or a credential built on a
+// zero-filled buffer is predictable, and a predictable key is a key an attacker
+// can guess.
+func randID(n int) (string, error) {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
-	rand.Read(b)
+	if _, err := randRead(b); err != nil {
+		return "", fmt.Errorf("rand id: %w", err)
+	}
 	for i := range b {
 		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // MintPassword returns n characters of random text for an administrator
@@ -189,7 +200,7 @@ func MintPassword(n int) (string, error) {
 	b := make([]byte, n)
 	// crypto/rand failing is not recoverable and must not be swallowed: the
 	// caller would hand out a predictable password.
-	if _, err := rand.Read(b); err != nil {
+	if _, err := randRead(b); err != nil {
 		return "", fmt.Errorf("mint password: %w", err)
 	}
 	out := make([]byte, len(b))
@@ -260,13 +271,18 @@ type Key struct {
 
 // CreateKey returns the plaintext token once: dbx_<id>_<secret>.
 func (d *DB) CreateKey(org, name, by string, expires *time.Time) (string, *Key, error) {
-	k := &Key{ID: randID(12), Org: org, Name: name, Created: d.Now().UTC().Truncate(time.Second), CreatedBy: by, Expires: expires}
-	secret := make([]byte, 24)
-	rand.Read(secret)
-	tok := "dbx_" + k.ID + "_" + hex.EncodeToString(secret)
-	_, err := d.db.Exec(`INSERT INTO api_keys (id, org_id, name, hash, created, created_by, expires) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		k.ID, org, name, hash(tok), k.Created.Unix(), by, unix(expires))
+	id, err := randID(12)
 	if err != nil {
+		return "", nil, err
+	}
+	secret := make([]byte, 24)
+	if _, err := randRead(secret); err != nil {
+		return "", nil, fmt.Errorf("api key secret: %w", err)
+	}
+	k := &Key{ID: id, Org: org, Name: name, Created: d.Now().UTC().Truncate(time.Second), CreatedBy: by, Expires: expires}
+	tok := "dbx_" + k.ID + "_" + hex.EncodeToString(secret)
+	if _, err = d.db.Exec(`INSERT INTO api_keys (id, org_id, name, hash, created, created_by, expires) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		k.ID, org, name, hash(tok), k.Created.Unix(), by, unix(expires)); err != nil {
 		return "", nil, err
 	}
 	return tok, k, nil
@@ -383,8 +399,12 @@ func (d *DB) ImportKeyFile(path string) error {
 			created = d.Now()
 		}
 		// ON CONFLICT DO NOTHING is the same in SQLite and Postgres.
+		id, err := randID(12)
+		if err != nil {
+			return err
+		}
 		if _, err := d.db.Exec(`INSERT INTO api_keys (id, org_id, name, hash, created, created_by) VALUES ($1, $2, 'installer', $3, $4, 'install.sh')
-			ON CONFLICT (hash) DO NOTHING`, randID(12), DefaultOrg, k.SHA256, created.Unix()); err != nil {
+			ON CONFLICT (hash) DO NOTHING`, id, DefaultOrg, k.SHA256, created.Unix()); err != nil {
 			return err
 		}
 	}
@@ -478,7 +498,11 @@ func (d *DB) CreateUser(org, username, password, role string) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	u := &User{ID: randID(12), Org: org, Username: username, Role: role, Created: d.Now().UTC().Truncate(time.Second)}
+	uid, err := randID(12)
+	if err != nil {
+		return nil, err
+	}
+	u := &User{ID: uid, Org: org, Username: username, Role: role, Created: d.Now().UTC().Truncate(time.Second)}
 	_, err = d.db.Exec(`INSERT INTO users (id, org_id, username, password_hash, role, created) VALUES ($1, $2, $3, $4, $5, $6)`,
 		u.ID, org, username, string(ph), role, u.Created.Unix())
 	if isDuplicate(err) {
@@ -566,10 +590,15 @@ func (d *DB) ListOrgs() ([]Org, error) {
 	return out, rows.Err()
 }
 
-func (d *DB) OrgExists(id string) bool {
+// OrgExists reports whether the org is there, and whether it could ask. A
+// dropped error here reads as "no such org", which both callers turn into a 400
+// telling the operator their request is malformed when the store is broken.
+func (d *DB) OrgExists(id string) (bool, error) {
 	var n int
-	d.db.QueryRow(`SELECT COUNT(*) FROM orgs WHERE id = $1`, id).Scan(&n)
-	return n > 0
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM orgs WHERE id = $1`, id).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (d *DB) dropSessions(userID string) error {
@@ -612,7 +641,9 @@ func (d *DB) Login(username, password string) (string, *Principal, error) {
 		return "", nil, err
 	}
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := randRead(b); err != nil {
+		return "", nil, fmt.Errorf("session token: %w", err)
+	}
 	tok := hex.EncodeToString(b)
 	now := d.Now()
 	d.db.Exec(`DELETE FROM sessions WHERE expires < $1`, now.Unix())
@@ -666,8 +697,12 @@ type Event struct {
 
 // Audit records who did what; failures only log, they never fail the request.
 func (d *DB) Audit(org, actor, action, target string) error {
-	_, err := d.db.Exec(`INSERT INTO audit_log (id, at, org_id, actor, action, target) VALUES ($1, $2, $3, $4, $5, $6)`,
-		randID(16), d.Now().Unix(), org, actor, action, target)
+	id, err := randID(16)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`INSERT INTO audit_log (id, at, org_id, actor, action, target) VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, d.Now().Unix(), org, actor, action, target)
 	return err
 }
 
@@ -935,8 +970,12 @@ func (d *DB) DeleteNode(cluster, id string) error {
 // RecordOp appends one phase of one operation. The table is append-only: the
 // history is what makes a failed provisioning explicable afterwards.
 func (d *DB) RecordOp(cluster, kind, phase, detail string) error {
-	_, err := d.db.Exec(`INSERT INTO cluster_ops (id, cluster, kind, phase, detail, created)
-		VALUES ($1, $2, $3, $4, $5, $6)`, randID(16), cluster, kind, phase, detail, d.Now().Unix())
+	id, err := randID(16)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`INSERT INTO cluster_ops (id, cluster, kind, phase, detail, created)
+		VALUES ($1, $2, $3, $4, $5, $6)`, id, cluster, kind, phase, detail, d.Now().Unix())
 	return err
 }
 
