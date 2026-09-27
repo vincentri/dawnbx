@@ -3,6 +3,7 @@ package provider
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // TestIDsIsSortedAndIndependent: IDs copies before sorting, so a caller cannot
@@ -191,5 +192,43 @@ func TestIDsCoversDeclaredProviders(t *testing.T) {
 	r.Register(newFake("aws"))
 	if got := join(r.IDs()); got != "aws,gcp" {
 		t.Errorf("IDs() = %q, want aws,gcp", got)
+	}
+}
+
+// TestAvailableIsSerialisedAgainstRegistration: Available walks the listing
+// that Register and Declare write, so it has to hold the read lock while it
+// does. It did not, which is a data race the moment anything registers after
+// startup, and the race detector is not part of the gate — so this checks the
+// lock, deterministically.
+//
+// The registry is declared-only, which is the shape that shows the gap: with
+// no usable provider the loop never reaches Get, so an Available that takes no
+// lock of its own reads the listing and returns while a writer still owns it.
+// A registered provider would hide that, because Get blocks on the write lock
+// and the read would look serialised by accident.
+func TestAvailableIsSerialisedAgainstRegistration(t *testing.T) {
+	r := NewRegistry()
+	r.Declare("aws")
+	r.Declare("gcp")
+
+	r.mu.Lock() // as Register and Declare hold it
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Available()
+	}()
+
+	select {
+	case <-done:
+		r.mu.Unlock()
+		t.Fatal("Available read the listing while a registration held the registry")
+	case <-time.After(50 * time.Millisecond):
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Available never returned after the registry was released")
 	}
 }

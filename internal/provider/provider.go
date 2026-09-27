@@ -276,7 +276,15 @@ func (r *Registry) Get(id string) (Provider, error) {
 // Available returns the one provider this build can provision with, or nil.
 // Phase one has exactly one by design; a second available provider is a
 // programming error rather than a silent coin flip.
+//
+// It reads the listing under the read lock, and it reads r.all directly rather
+// than calling Get: a second RLock inside this one can deadlock when a writer
+// queues between them, and holding no lock at all was a data race against every
+// Register and Declare. This runs on the request path, so "it only registers at
+// startup" was never a reason to leave it unsynchronised.
 func (r *Registry) Available() (Provider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	var found Provider
 	for _, l := range r.order {
 		if !l.Available {
@@ -285,7 +293,8 @@ func (r *Registry) Available() (Provider, error) {
 		if found != nil {
 			return nil, fmt.Errorf("more than one provider is available: %s and %s", found.ID(), l.ID)
 		}
-		if p, err := r.Get(l.ID); err == nil {
+		// The same rule Get applies: listed is not the same as usable.
+		if p, ok := r.all[l.ID]; ok && p.Capabilities().Available {
 			found = p
 		}
 	}
