@@ -68,41 +68,24 @@ type Catalogue struct {
 	MinDisk int
 }
 
-// Cluster is the record the control plane keeps. Every field is provider
-// neutral: `provider_state` is the adapter's opaque handle and is the only
-// column that holds anything cloud-specific, and nothing outside this package
-// and the adapter may interpret it.
-type Cluster struct {
-	Name          string    `json:"name"`
-	Provider      string    `json:"provider"`
-	Region        string    `json:"region"`
-	InstanceType  string    `json:"instance_type"`
-	DiskGiB       int       `json:"disk_gib"`
-	Domain        string    `json:"domain"`
-	Status        string    `json:"status"`
-	Phase         string    `json:"phase"`
-	Detail        string    `json:"detail"`
-	QuoteID       string    `json:"-"`
-	HourlyUSD     float64   `json:"hourly_usd"`
-	MonthlyUSD    float64   `json:"monthly_usd"`
-	ProviderState string    `json:"-"`
-	URL           string    `json:"url"`
-	TLSPin        string    `json:"tls_pin"`
-	Created       time.Time `json:"created"`
-	Updated       time.Time `json:"updated"`
-}
+// Cluster is the record the control plane keeps, and Node is one worker on it.
+//
+// Both are aliases of the store's row rather than a second struct beside it.
+// They were separate types with the same seventeen and seven fields in the
+// same order and the same JSON tags, kept in step by hand through two
+// field-for-field mappers - which is the arrangement that lets a column be
+// added to one and forgotten in the other, silently, with nothing failing.
+// An alias cannot drift, and if a field ever needs to exist in only one of
+// them, that is the moment to split them back apart on purpose.
+//
+// Every field is provider neutral. `ProviderState` is the adapter's opaque
+// handle and is the only one that holds anything cloud-specific; it carries no
+// json tag, so no response can leak it, and nothing outside this package and
+// the adapter may interpret it. A node's `ID` is the handle the adapter gave
+// us, not a name we invented, so removing a worker needs no translation table.
+type Cluster = auth.Cluster
 
-// Node is one worker. `ID` is the handle the adapter gave us, not a name we
-// invented, so removing a node needs no translation table.
-type Node struct {
-	Cluster      string    `json:"-"`
-	ID           string    `json:"id"`
-	InstanceType string    `json:"instance_type"`
-	Status       string    `json:"status"`
-	Detail       string    `json:"detail"`
-	Sandboxes    int       `json:"sandboxes"`
-	Created      time.Time `json:"created"`
-}
+type Node = auth.ClusterNode
 
 // CreateRequest is the validated shape a create arrives as.
 type CreateRequest struct {
@@ -115,12 +98,15 @@ type CreateRequest struct {
 	QuoteID      string
 }
 
-// Store is the persistence the Registry needs. internal/auth.DB satisfies it;
-// the interface exists so this package is testable without SQLite.
+// Store is the persistence the Registry needs. internal/auth.DB satisfies it,
+// and the interface exists so this package is testable without a driver — but
+// it does not buy independence from auth, because the row types above are
+// auth's. What it buys is one seam to fake instead of a package to stub: the
+// test constructs cluster.Cluster and never names auth.
 type Store interface {
-	CreateCluster(c auth.Cluster) error
-	GetCluster(name string) (*auth.Cluster, error)
-	ListClusters() ([]auth.Cluster, error)
+	CreateCluster(c Cluster) error
+	GetCluster(name string) (*Cluster, error)
+	ListClusters() ([]Cluster, error)
 	DeleteCluster(name string) error
 	SetClusterState(name, status, phase, detail string) error
 	SetClusterURL(name, url, pin string) error
@@ -129,8 +115,8 @@ type Store interface {
 	SaveCredentials(cluster string, adminEnc, apiEnc []byte) error
 	Credentials(cluster string) (admin, api []byte, rotated *time.Time, err error)
 	RotateCredentials(cluster string, adminEnc, apiEnc []byte) error
-	AddNode(n auth.ClusterNode) error
-	ListNodes(cluster string) ([]auth.ClusterNode, error)
+	AddNode(n Node) error
+	ListNodes(cluster string) ([]Node, error)
 	SetNodeStatus(cluster, id, status, detail string, sandboxes int) error
 	DeleteNode(cluster, id string) error
 	RecordOp(cluster, kind, phase, detail string) error
@@ -189,7 +175,7 @@ func (r *Registry) Validate(req CreateRequest, cat Catalogue) error {
 // not touch a cloud: the caller drives the state machine.
 func (r *Registry) Create(req CreateRequest, est provider.Estimate, handle provider.Handle) (*Cluster, error) {
 	now := r.now().UTC()
-	c := auth.Cluster{
+	c := Cluster{
 		Name:          req.Name,
 		Provider:      req.Provider,
 		Region:        req.Region,
@@ -286,7 +272,7 @@ func (r *Registry) Get(name string) (*Cluster, error) {
 		// other says "the control plane cannot read its own database".
 		return nil, fmt.Errorf("reading cluster %s: %w", name, err)
 	}
-	return fromAuth(c), nil
+	return c, nil
 }
 
 // LastProgress is when the cluster last moved to a new phase, which is the only
@@ -352,11 +338,7 @@ func (r *Registry) List() ([]Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Cluster, 0, len(rows))
-	for _, c := range rows {
-		out = append(out, *fromAuth(&c))
-	}
-	return out, nil
+	return append(make([]Cluster, 0, len(rows)), rows...), nil
 }
 
 // SaveAdminPassword seals and stores the one credential injected into the host.
@@ -426,11 +408,7 @@ func (r *Registry) Nodes(name string) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Node, 0, len(rows))
-	for _, n := range rows {
-		out = append(out, fromAuthNode(&n))
-	}
-	return out, nil
+	return append(make([]Node, 0, len(rows)), rows...), nil
 }
 
 // PutNode records a worker.
@@ -439,7 +417,7 @@ func (r *Registry) PutNode(n Node) error {
 	if created.IsZero() {
 		created = r.now().UTC()
 	}
-	return r.db.AddNode(auth.ClusterNode{
+	return r.db.AddNode(Node{
 		Cluster: n.Cluster, ID: n.ID, InstanceType: n.InstanceType,
 		Status: n.Status, Detail: n.Detail, Sandboxes: n.Sandboxes, Created: created,
 	})
@@ -466,21 +444,6 @@ func (r *Registry) Delete(name string) error {
 // Forget removes the record entirely, after the provider has confirmed the
 // resources are gone.
 func (r *Registry) Forget(name string) error { return r.db.DeleteCluster(name) }
-
-func fromAuth(c *auth.Cluster) *Cluster {
-	return &Cluster{
-		Name: c.Name, Provider: c.Provider, Region: c.Region, InstanceType: c.InstanceType,
-		DiskGiB: c.DiskGiB, Domain: c.Domain, Status: c.Status, Phase: c.Phase,
-		Detail: c.Detail, QuoteID: c.QuoteID, HourlyUSD: c.HourlyUSD, MonthlyUSD: c.MonthlyUSD,
-		ProviderState: c.ProviderState, URL: c.URL, TLSPin: c.TLSPin,
-		Created: c.Created, Updated: c.Updated,
-	}
-}
-
-func fromAuthNode(n *auth.ClusterNode) Node {
-	return Node{Cluster: n.Cluster, ID: n.ID, InstanceType: n.InstanceType, Status: n.Status,
-		Detail: n.Detail, Sandboxes: n.Sandboxes, Created: n.Created}
-}
 
 func contains(list []string, want string) bool {
 	for _, v := range list {
