@@ -195,10 +195,6 @@ report ready, removing it, and confirming the cluster reflects each step.
   may be introduced as a substitute for a real run.
 - The sandbox-facing interface, which requires a live cluster to be meaningful.
 - The recorded real-account lifecycle run itself, which is a separate feature.
-- Converting an existing control plane's SQLite data to PostgreSQL. Fresh
-  deployments are in scope; migrating live data is deferred, because an existing
-  control plane holds session and credential state and that conversion is a
-  separate concern from running the control plane on PostgreSQL.
 
 ## Assumptions
 
