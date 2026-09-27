@@ -106,6 +106,16 @@ A fresh worktree needs `npm ci --prefix web`, `npm ci --prefix sdk/typescript`, 
 - `npm run build --prefix web` — **required for any `web/` change**, see §3
 - `python3 hack/check-harness-cites.py` — runs on every commit via `.githooks/pre-commit`; fails when a line in this file cites a file that is gone. Enable it once per clone with `git config core.hooksPath .githooks`. If it blocks you, the cite is stale or the sentence should go — do not widen the check to make it pass.
 
+**Two gaps in that gate, each of which has already hidden a real bug.** It runs
+no `go test -race`, so a concurrency invariant needs a test that fails *without*
+the detector — a registry read that took no lock passed every test in the suite
+while racing every write to it. And a test double is not evidence about a
+query: `memStore.Ops` read a limit of 0 as unlimited where the SQL behind it
+read it as no rows, so the stall check was green against the fake and dead in
+production. A double's edge-case semantics must match the store it stands in
+for, and a test asserts through the code under test rather than through the
+double — reaching into the double is what let the two disagree unnoticed.
+
 Live tier, only for sandbox / k8s / quota work: `hack/dev-vm.sh` builds and installs into the Lima VM, `hack/verify.sh` runs inside it as root against k3s, gVisor, and a real sandbox pod. Neither is a lint gate.
 
 ## 3. The one cross-area contract
