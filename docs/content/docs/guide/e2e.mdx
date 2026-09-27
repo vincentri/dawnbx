@@ -1,0 +1,104 @@
+---
+title: End-to-end tests
+description: Running the control-plane browser suite, and what it does and does not prove.
+---
+
+# End-to-end tests
+
+The control-plane dashboard has a browser-driven suite in `e2e/`. It starts a
+real control plane, drives the real interface, and records a video of every test.
+
+## Running it
+
+```bash
+bash e2e/run.sh              # run the suite
+bash e2e/run.sh -- -g "sign in"   # one test
+```
+
+Use the script rather than a raw `docker compose run`: it starts from a fresh
+stack each time, so a second run cannot fail on state the first one left behind.
+
+Docker and Docker Compose are the only requirements. The browser, the
+dependencies, the server and the database all live in containers, so a run
+installs nothing on your machine.
+
+The dashboard is published on `http://localhost:18080` while the stack is up, so
+you can watch a run happen.
+
+## Where the recordings go
+
+They land in `.e2e/`, which is git-ignored.
+
+- **Locally**, every recording is kept — so you can watch a *passing* run and
+  confirm the journey really happened rather than trusting the result.
+- **In CI**, only failures are kept, so a green run uploads nothing.
+
+A failed run also leaves a `trace.zip` and a screenshot next to the video; the
+error context in `error-context.md` usually says which assertion failed without
+opening the video at all.
+
+## What it proves, and what it does not
+
+It runs against a **test provider**, not a cloud. That is deliberate: the suite
+exercises the operator-facing interface and the orchestration above the provider
+boundary, deterministically, in about half a minute, with no account and no
+credentials.
+
+It proves **nothing** about whether a real cloud accepts what is sent. A test
+provider returning a ready cluster is not evidence that AWS would. That is
+covered only by the real-account lifecycle run, which stays manual.
+
+Both are needed, and neither substitutes for the other.
+
+## The test provider
+
+A second implementation of the same provider interface the real cloud adapters
+implement, which is what makes the orchestrator above that boundary testable
+without provisioning anything. A future cloud is testable by the same suite
+without changes to it.
+
+It is selected only by a build made with `-tags e2e`. A shipped binary contains
+no test provider and no route that could select one:
+
+```bash
+go build ./cmd/dawnbx-server
+strings dawnbx-server | grep -i e2e     # no output
+```
+
+## Choosing what the provider does
+
+The outcome is per test, set through a control route that exists only in that
+build:
+
+```bash
+curl -X POST http://localhost:18080/v1/e2e/outcome \
+  -H 'Content-Type: application/json' \
+  -d '{"cluster":"fail","failure_reason":"the instance type is not available here"}'
+```
+
+`succeed`, `fail`, and `unreachable` are the cluster outcomes; `holdWorkers`
+makes a node removal refuse. A `fail` outcome without a reason is rejected at
+startup, because a test asserting a failure is shown with nothing to assert on
+would pass without proving anything.
+
+## Why it does not skip
+
+A skipped test fails the run. A suite that skips what it cannot check reports
+green while covering nothing, and the number it reports — tests executed against
+tests defined — is the only thing that makes a coverage claim checkable.
+
+## The database
+
+The control plane runs on PostgreSQL, in a container. The auth suite supports
+both engines through one variable, and both are worth running:
+
+```bash
+# PostgreSQL
+DAWNBX_TEST_DATABASE_URL='postgres://…' go test ./internal/auth/
+
+# SQLite, the default
+go test ./internal/auth/
+```
+
+There is no separate Postgres code path, which is why neither run is interesting
+on its own.

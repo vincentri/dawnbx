@@ -1,0 +1,116 @@
+# The control-plane UI end-to-end suite (specs/002-control-plane-ui-e2e).
+#
+# Three services, and the only thing that reaches the host is `.e2e/`, which is
+# bind-mounted because the recordings are the point. Browsers, node_modules, the
+# server binary and the database all live here, so `down -v` returns a developer's
+# machine to exactly its prior state (research.md R-009).
+#
+# Run:  docker compose -f e2e/docker-compose.yml run --rm driver
+# Stop: docker compose -f e2e/docker-compose.yml down -v
+
+name: dawnbx-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: dawnbx
+    # A named volume, not a bind mount: nothing about the database belongs on the
+    # host, and `down -v` must remove it.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Published so the host can run the auth suite against this engine, which
+      # is the tier that proves it continuously rather than by hand.
+      # Loopback for the same reason, and because it is how the host-side auth
+      # tier reaches this engine.
+      - "127.0.0.1:${DAWNBX_E2E_PG_PORT:-55433}:5432"
+    healthcheck:
+      # The server waits on this rather than on a sleep (T015). A sleep here is
+      # the classic source of "works on my machine, fails in CI".
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dawnbx"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+
+  server:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+      target: server-build
+    command:
+      - /out/dawnbx-server
+      - -control-plane
+      - -listen
+      - 0.0.0.0:8080
+      - -data-dir
+      - /data
+      - -database-url
+      # The control plane runs on PostgreSQL, the same as production once this
+      # feature lands. It is the engine the auth suite already supports through
+      # DAWNBX_TEST_DATABASE_URL, now continuously rather than only by hand.
+      - postgres://postgres:e2e@postgres:5432/dawnbx?sslmode=disable
+    environment:
+      # The outcome the test provider presents. A test that needs a failure sets
+      # these per run, because the provider is built once at startup.
+      DAWNBX_E2E_CLUSTER: "${DAWNBX_E2E_CLUSTER:-succeed}"
+      DAWNBX_E2E_FAILURE_REASON: "${DAWNBX_E2E_FAILURE_REASON:-}"
+      DAWNBX_E2E_PROVIDER_UNAVAILABLE: "${DAWNBX_E2E_PROVIDER_UNAVAILABLE:-0}"
+      DAWNBX_E2E_HOLD_WORKERS: "${DAWNBX_E2E_HOLD_WORKERS:-0}"
+      # A phase lasts 2.5s, so a cluster spends about 12s in flight and the
+      # dashboard's 5s refetch samples it three or four times. At 1s the whole
+      # lifecycle finished inside one poll interval and the interface went
+      # straight from "nothing yet" to "ready" - the operator saw no progression
+      # at all, and a test asserting on it could only pass by matching unrelated
+      # text. This is the cost R-003 predicted: the provider is fast, the
+      # interface is what samples it, and the slower of the two sets the pace.
+      DAWNBX_E2E_ADVANCE_MS: "${DAWNBX_E2E_ADVANCE_MS:-2500}"
+    volumes:
+      - serverdata:/data
+    ports:
+      # Published so a developer can open the dashboard in a browser and watch a
+      # run, which is the "watch it happen" path the retention rule assumes.
+      # Loopback only. This is a control plane that mints its own
+      # administrator password, and publishing it on every interface would put
+      # that password behind anything on the network.
+      - "127.0.0.1:${DAWNBX_E2E_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/v1/version >/dev/null || exit 1"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+
+  driver:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+      target: driver
+    environment:
+      DAWNBX_E2E_BASE_URL: http://server:8080
+      # The bind mount, not ../.e2e: the container has no repository above it.
+      DAWNBX_E2E_OUTPUT_DIR: /e2e-out
+      # Recorded locally unless CI says otherwise; retention.ts applies the rule.
+      CI: "${CI:-}"
+    volumes:
+      # The only path that leaves a container. Read-write, because the run writes
+      # the video the operator is meant to play (FR-025, R-009).
+      - ../.e2e:/e2e-out
+      # The control plane's own volume, read-only. The suite signs in with the
+      # password the control plane minted, and that file is where an operator
+      # reads it from; without this the driver could not authenticate at all.
+      # Read-only so a test cannot rewrite the credential it is about to use.
+      - serverdata:/data:ro
+    depends_on:
+      server:
+        condition: service_healthy
+
+
+volumes:
+  pgdata:
+  serverdata:

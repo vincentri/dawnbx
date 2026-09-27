@@ -27,6 +27,12 @@ type Control struct {
 	reg         *cluster.Registry
 	known       *provider.Registry
 	provisioner *cluster.Provisioner
+	// remoteFor builds the client for a cluster the control plane needs to ask
+	// directly. It is a field for the same reason cluster.Provisioner.RemoteFor
+	// is one: without a seam, the only way to exercise a route that reads from a
+	// live cluster is a live cluster, and the node routes were therefore
+	// unreachable from any test.
+	remoteFor func(url string) *cluster.Remote
 }
 
 // NewControl wires the cluster routes. p may be nil: a control plane whose
@@ -239,13 +245,25 @@ func (c *Control) remote(ctx context.Context, cl *cluster.Cluster) (*cluster.Rem
 	if err != nil {
 		return nil, err
 	}
-	rem := cluster.NewRemote(cl.URL)
+	rem := c.newRemote(cl.URL)
 	rem.Pin = cl.TLSPin
 	if err := rem.Login(ctx, pw); err != nil {
 		return nil, err
 	}
 	return rem, nil
 }
+
+// newRemote builds the client, honouring an injected factory when one is set.
+func (c *Control) newRemote(url string) *cluster.Remote {
+	if c.remoteFor != nil {
+		return c.remoteFor(url)
+	}
+	return cluster.NewRemote(url)
+}
+
+// SetRemoteFactory substitutes the client used to reach a live cluster. It
+// exists so the node routes can be exercised without one; see the field.
+func (c *Control) SetRemoteFactory(f func(url string) *cluster.Remote) { c.remoteFor = f }
 
 // nodes returns a cluster's workers, refreshed from the cluster itself.
 //

@@ -11,6 +11,13 @@
 # be tracked, and a task that ends deletes its own directory anyway.
 .worktree/
 
+# Control-plane e2e output: per-test video recordings and the run report
+# (specs/002-control-plane-ui-e2e, FR-025). Recordings are written in a
+# container and bind-mounted here so a developer can play them, which is exactly
+# why they must never be committed.
+.e2e/
+.e2e-report/
+
 # Spec Kit per-machine bookkeeping. The constitution, templates, scripts and
 # workflows under .specify/ are tracked; these three churn on every refresh and
 # say which AI integration this checkout happens to use.

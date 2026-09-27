@@ -1,0 +1,322 @@
+---
+
+description: "Task list for the control-plane UI end-to-end test suite"
+---
+
+# Tasks: Control-Plane UI End-to-End Tests
+
+**Input**: Design documents from `specs/002-control-plane-ui-e2e/`
+
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md,
+contracts/test-provider.md, quickstart.md
+
+**Tests**: Required. This feature *is* a test tier, and Principle IV requires a
+behaviour change to ship with a test that fails before and passes after. The
+PostgreSQL migration in Phase 2 is the critical case: it has never executed
+successfully in this repository (research.md R-008), so it is written
+test-first.
+
+**Organization**: Tasks are grouped by user story so each story can be
+implemented, tested, and delivered as an independent increment.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (US1, US2, US3)
+- Include exact file paths in descriptions
+
+## Path Conventions
+
+- `e2e/` — the suite, sibling to `web/`, `sdk/`, `docs/`. Deliberately **not**
+  inside `web/`, so it does not inherit that package's Vitest config, coverage
+  thresholds, or Biome rules.
+- `.e2e/` — run output (recordings, report), git-ignored, bind-mounted out of
+  the container.
+- Go product code stays in its existing locations; this feature changes
+  `internal/auth/` and `cmd/dawnbx-server/` and nothing else.
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Create the `e2e/` package and the ignore rule. No product code is
+touched here.
+
+- [X] T001 Create `e2e/package.json` with `@playwright/test` as the only runtime dependency and `playwright.config.ts` as the test script
+- [X] T002 [P] Add `.e2e/` to `.gitignore` so recordings are never committed (FR-025)
+- [X] T003 [P] Create `e2e/tsconfig.json` extending the repo's TypeScript settings for the suite
+- [X] T004 Create `e2e/playwright.config.ts` with `outputDir` pointing at `../.e2e`, `video: 'on'`, `use.baseURL` for the control plane, and `retries: 0` (a retry would mask the determinism claim in SC-002)
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Make the control plane start on PostgreSQL inside a container, with
+a test provider selectable only in a test build. No user story can run until
+this is complete.
+
+**⚠️ CRITICAL**: No user story work can begin until this phase is complete.
+
+### PostgreSQL as the control plane's database
+
+- [X] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
+- [X] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml`, publish it, and point `DAWNBX_TEST_DATABASE_URL` at it so the auth suite runs on both engines. The convention already existed; what did not was anything running it, so CI proved SQLite and nothing else. It is a gate step of its own, skipped loudly rather than silently.
+- [X] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
+- [X] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
+
+### Test provider, selectable only in a test build
+
+- [X] T009 [P] Create `internal/provider/e2e/e2e.go` implementing the full provider interface from `internal/provider/provider.go` — `Capabilities`, `Regions`, `InstanceTypes`, `Estimate`, `Create`, `Status`, `Nodes`, `RemoveNode`, `Destroy` — driven by the `TestOutcome` fields in `data-model.md`
+- [X] T010 [P] Create `cmd/dawnbx-server/provider_e2e.go` behind `//go:build e2e`, wiring `serverDeps.newProvider` (`cmd/dawnbx-server/main.go:116`) to the test provider
+- [X] T011 Verify with `go build ./cmd/dawnbx-server` and `strings dawnbx-server | grep -i e2e` that a **default** build contains no test-provider symbol, then with `go build -tags e2e` that it does. A default build that can select a test provider is a security failure, not a style issue
+- [X] T012 [P] Create `e2e/fixtures/test-provider.ts` mapping each test's declared outcome to the provider configuration, validating that `failureReason` is non-empty when the outcome is `fail` and that `advanceAfter` is positive (data-model.md validation rules)
+
+### Container environment
+
+- [X] T013 [P] Create `e2e/Dockerfile` with a build stage for `dawnbx-server` (embedded dashboard bundle included) and a test stage carrying `@playwright/test` and its browser
+- [X] T014 [P] Create `e2e/docker-compose.yml` with three services — `postgres` (PostgreSQL 16, named volume, health check), `server` (`--control-plane`, pointed at `postgres` via `--database-url`, its own files on a volume), `driver` (the suite) — bind-mounting only `../.e2e` to the host (R-009)
+- [X] T015 Make the `server` service depend on the `postgres` health check, never on a sleep, and confirm the migration completes before the server starts serving
+- [X] T016 [P] Create `e2e/fixtures/control-plane.ts` that waits for the database, waits for the server's health endpoint, and reads the generated administrator credential from `<data-dir>/server/admin.env` (R-007). The credential must never be logged, asserted on, or written to a report (FR-021)
+
+### Retention and reporting
+
+- [X] T017 Create `e2e/support/retention.ts` — locally keep every recording, in CI delete recordings for tests that passed, apply the cap automatically (FR-023, FR-024, NFR-005, NFR-007)
+- [X] T018 [P] Create `e2e/fixtures/expect.ts` with helpers that wait for an operator-visible state with a bounded timeout, where a timeout fails the test and never passes it
+- [X] T019 [P] Create `e2e/support/summary.ts` reporting tests executed against tests defined, so a skipped test is visible and fails the run (FR-022)
+
+**Checkpoint**: `docker compose -f e2e/docker-compose.yml run --rm driver` starts a
+control plane on PostgreSQL with a test provider, and `docker compose -f
+e2e/docker-compose.yml down -v` leaves the machine unchanged. Foundation ready.
+
+---
+
+## Phase 3: User Story 1 - Review a cluster request end to end (Priority: P1) 🎯 MVP
+
+**Goal**: An operator signs in, sees a price before anything is created,
+confirms, and watches the cluster advance to ready — proven in a real browser.
+
+**Independent Test**: Run the suite in Compose with no cloud credentials. The
+sign-in, quote, confirmation, phase progression, and ready state are all observed
+in the recorded video, and the cluster reached `ready`.
+
+### Tests for User Story 1 ⚠️
+
+> Write these first; they must fail before the fixture supports them.
+
+- [X] T020 [P] [US1] Sign-in spec in `e2e/specs/sign-in.spec.ts` — reach the signed-in shell through the real form, using the credential from the fixture (FR-021)
+- [X] T021 [P] [US1] Price-before-create spec in `e2e/specs/cluster-request.spec.ts` — assert a price is rendered, and that no cluster is created without one (FR-008)
+- [X] T022 [P] [US1] Progression spec in `e2e/specs/cluster-request.spec.ts` — confirm the quote, then wait for an intermediate phase and then `ready` (FR-009)
+
+### Implementation for User Story 1
+
+- [X] T023 [US1] Configure the success outcome in `e2e/fixtures/test-provider.ts` so a cluster's lifecycle outlasts more than one dashboard poll. **2.5s per phase, not the 1s this task originally specified** — at 1s the whole lifecycle finished inside one 5s refetch interval, so the interface went from nothing to ready with nothing in between and an operator would never see a progression. 2.5s is sampled three or four times (research.md R-003: the provider is fast, the interface sets the pace, and the slower of the two wins).
+- [X] T024 [US1] Add a stable selector for the request form, the price, the confirm control, and each phase badge in `e2e/support/selectors.ts`, matching what `web/src/pages/clusters.tsx` already renders
+- [X] T025 [US1] Assert in `e2e/specs/cluster-request.spec.ts` that the cluster reaches `ready` and that its URL is visible
+- [X] T026 [US1] Measure this phase's wall-clock cost and record it against NFR-001 in `specs/002-control-plane-ui-e2e/plan.md`. Only this story observes progression, at ~5s per observed phase because the dashboard's refetch — not the fixture — sets that floor (R-003)
+- [X] T027 [US1] If T026 shows the budget cannot hold, narrow the assertion to the terminal state plus one observed intermediate phase, and note the change in `specs/002-control-plane-ui-e2e/plan.md`. Do **not** shorten `advanceAfter` below the UI's poll interval — that trades speed for flake
+
+**Checkpoint**: User Story 1 passes on its own in a container with no cloud
+credentials, and the video shows the operator's session.
+
+---
+
+## Phase 4: User Story 2 - Recover from a failure without reading source (Priority: P2)
+
+**Goal**: A failed cluster shows a specific reason on screen, an unreachable
+cluster is distinguishable from one with no workers, and a failed run leaves a
+playable recording.
+
+**Independent Test**: Drive a cluster to a failed state and an unreachable
+state; the interface shows a specific reason in each case and the recordings
+exist for both.
+
+### Tests for User Story 2 ⚠️
+
+- [X] T028 [P] [US2] Failure-reason spec in `e2e/specs/failure.spec.ts` — a failed cluster shows the specific reason, not a generic message (FR-010)
+- [X] T029 [P] [US2] Unreachable-versus-empty spec in `e2e/specs/failure.spec.ts` — a cluster that cannot be reached is not presented as having no workers (FR-010)
+- [X] T030 [P] [US2] Provider-unavailable spec in `e2e/specs/failure.spec.ts` — an unavailable provider is visible in the roster and visibly unavailable, not absent (FR-013)
+- [X] T031 [P] [US2] Stale-quote spec in `e2e/specs/failure.spec.ts` — a quote that went stale is refused with an explanation and can be re-quoted without re-entering the form (FR-014)
+- [X] T032 [P] [US2] Recording-artefact spec in `e2e/specs/retention.spec.ts` — a failed test's recording exists and is playable; a passing test's recording is absent under `CI=1` (FR-023)
+
+### Implementation for User Story 2
+
+- [X] T033 [US2] Add the `fail`, `unreachable`, and `providerAvailable: false` outcomes to `e2e/fixtures/test-provider.ts`, each producing the specific value the interface must render
+- [X] T034 [US2] Add selectors in `e2e/support/selectors.ts` for the failure detail, the unreachable notice, and the unavailable-provider marker
+- [X] T035 [US2] Verify in `e2e/specs/retention.spec.ts` that no recording contains the run's administrator credential or any secret (FR-021's secrecy clause)
+
+**Checkpoint**: User Story 2 passes on its own. A failing run is diagnosable by
+playing the video (SC-003, SC-006).
+
+---
+
+## Phase 5: User Story 3 - Manage a worker's life in the browser (Priority: P3)
+
+**Goal**: An operator adds a worker, sees it ready, is refused a removal that
+would strand workloads, and deletes a cluster cleanly.
+
+**Independent Test**: Add a worker, wait for ready, attempt a refused removal,
+remove the worker, delete the cluster — all observed in the browser.
+
+### Tests for User Story 3 ⚠️
+
+- [X] T036 [P] [US3] Add-worker spec in `e2e/specs/workers.spec.ts` — a worker is added and reaches `ready` (FR-011)
+- [X] T037 [P] [US3] Refused-removal spec in `e2e/specs/workers.spec.ts` — removing a node holding workloads is refused with a reason naming the cause (FR-012)
+- [X] T038 [P] [US3] Remove-and-delete spec in `e2e/specs/workers.spec.ts` — the worker is removed and the cluster deleted and disappears from the list (FR-011)
+
+### Implementation for User Story 3
+
+- [X] T039 [US3] Add the `holdWorkers` outcome to `e2e/fixtures/test-provider.ts`, returning `ErrNodeBusy` from `RemoveNode` when set
+- [X] T040 [US3] Add selectors in `e2e/support/selectors.ts` for the node list, the add-worker control, the refusal notice, and the delete confirmation
+- [X] T041 [US3] Add a selector in `e2e/support/selectors.ts` asserting the unreachable case is never rendered as an empty node list, so a future change cannot regress it silently
+
+**Checkpoint**: All three user stories pass independently.
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Wire the suite into the gate and CI, and satisfy the release
+requirement this feature creates.
+
+- [X] T042 [P] Add `.e2e/` verification to `hack/check-harness-cites.py` or a sibling check, so a committed recording fails the gate
+- [X] T043 [P] Update `docs/content/docs/guide/` with how to run the suite in Compose and where the recordings land
+- [X] T044 Add the suite to `hack/check.sh` as a step alongside the existing checks, replacing nothing (FR-007)
+- [X] T045 Update `.github/workflows/ci.yml` to run the suite in Compose. The browser install moves into the image, so the workflow no longer installs Playwright itself
+- [X] T046 [P] Update `AGENTS.md` with the Compose-based suite, the per-environment retention rule, and the fact that the suite is not evidence about cloud provisioning
+- [X] T047 [P] Add `e2e/` to the coverage-floor consideration in `hack/coverage-floor.txt` — the suite is excluded from the dashboard's Vitest coverage, and this must be stated rather than left implicit
+- [X] T048 Run the full `bash hack/check.sh` and confirm it is green with the suite included
+- [X] T049 Ran the determinism check: 20 consecutive runs, 19 passing. The one failure was my own interference — a foreground run of mine while the loop tore the stack down under it, which closed the browser mid-test ("Target page, context or browser has been closed"). Runs 2-20 were serial and untouched and every one passed (FR-002, SC-002).
+- [X] T050 Run the container-isolation check from `quickstart.md` — no `node_modules`, no browser cache on the host (R-009)
+- [X] T051 Verify `strings dawnbx-server | grep -i e2e` returns nothing for a default build, closing out the T011 security requirement
+- [X] T052 **Release gate: PASSED.** Run against account 434702089003, region ap-southeast-1, on
+  2026-09-27, with the control plane on real PostgreSQL and the shipped daemon.
+
+  - Control plane started with **zero e2e symbols** in the binary — the real product, not the
+    test provider. Roster showed `aws` available with `aws-ssm-securestring` delivery.
+  - Cluster `gate`: quoted (live AWS pricing, `t4g.medium` $0.0424/h), created, progressed
+    `requesting_host` → `bootstrapping` → **`ready`** in ~10 min.
+  - **URL `https://13.215.42.121.sslip.io` served 200**, with a real **Let's Encrypt**
+    certificate (issuer `CN=YE1`) naming that domain — not self-signed, not a wildcard.
+  - **Stored pin matched the live SPKI byte for byte**:
+    `4aa308cff959f3d41a84a4a384e0b8f089ce9d12176053bc762cbf2dcbaa74d3`. The pin the control
+    plane established from the handshake is the certificate the cluster serves.
+  - Worker added (`i-02230c2534dd4d71c`) and reached **ready** — node correlation by address
+    worked, which was the hardest part to get right.
+  - Worker removed (204), nodes empty, EC2 confirmed it terminated. Cluster deleted (200).
+  - **Sweep: 0 stacks created today, 0 running instances, 0 EIPs, 0 volumes, 0 SSM
+    parameters.** The key pair created for the run was deleted. Pre-existing stacks
+    (`dawnbx-host-1205018d`, `pat-test-*`) predate this run and were not touched.
+
+  **What this did and did not prove.** It proves the control plane provisions on real AWS,
+  on real PostgreSQL, through the real installer, and that the pin, certificate, and node
+  correlation hold end to end. It does **not** exercise this branch's own daemon: a cluster
+  bootstraps the *released* binary, and the release in use is **v0.1.9**, which predates this
+  feature. Testing this branch's daemon requires a release cut first.
+
+  Cost: two `t4g.medium` instances for roughly 25 minutes, about $0.04.
+- [X] T053 Decide what happens to an existing control plane's SQLite data and record the decision in `docs/content/docs/guide/`, before deploying to any instance that has one (deferred by R-008, open item 5)
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies — can start immediately
+- **Foundational (Phase 2)**: Depends on Setup — **BLOCKS all user stories**
+- **User Stories (Phase 3–5)**: All depend on Foundational completion
+  - Stories can then proceed in parallel
+  - Or sequentially in priority order (P1 → P2 → P3)
+- **Polish (Phase 6)**: Depends on all desired user stories being complete,
+  **except T052**, which depends on Phase 2 alone and may run in parallel with
+  the stories.
+
+### User Story Dependencies
+
+- **User Story 1 (P1)**: Starts after Foundational — no dependencies on other stories
+- **User Story 2 (P2)**: Starts after Foundational — shares the fixture with US1
+- **User Story 3 (P3)**: Starts after Foundational — shares the fixture with US1/US2
+
+All three share `e2e/fixtures/` and `e2e/support/`, which is why the fixture work
+is Foundational rather than per-story. Stories are otherwise independent and each
+is independently testable.
+
+### Within Each User Story
+
+- Tests are written and MUST fail before implementation
+- Fixture support before specs that depend on it
+- Story complete before moving to the next priority
+
+### Parallel Opportunities
+
+- All Setup tasks marked [P] can run in parallel
+- All Foundational tasks marked [P] can run in parallel within Phase 2
+- Once Foundational completes, all three stories can start in parallel
+- All spec files for a story marked [P] can run in parallel
+- T052 (the live release gate) can run as soon as Phase 2 completes
+
+---
+
+## Parallel Example: User Story 1
+
+```bash
+# All US1 specs in parallel — different files:
+Task: "Sign-in spec in e2e/specs/sign-in.spec.ts"
+Task: "Price-before-create spec in e2e/specs/cluster-request.spec.ts"
+
+# Provider fixture and selectors are independent of the specs:
+Task: "Configure the success outcome in e2e/fixtures/test-provider.ts"
+Task: "Add stable selectors in e2e/support/selectors.ts"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1: Setup
+2. Complete Phase 2: Foundational (CRITICAL — blocks all stories, and includes
+   the PostgreSQL migration, which is itself the riskiest task here)
+3. Complete Phase 3: User Story 1
+4. **STOP and VALIDATE**: run the suite in Compose, play the video, confirm the
+   journey is real
+5. Run T052 — the live control-plane run on PostgreSQL. This is the first time
+   this engine runs outside a test, and it is what makes the rest credible
+
+### Incremental Delivery
+
+1. Setup + Foundational → Foundation ready, PostgreSQL proven in a container
+2. Add US1 → Test independently → the MVP: one real journey, recorded
+3. Add US2 → Test independently → failures become diagnosable
+4. Add US3 → Test independently → node lifecycle covered
+5. Polish → gate, CI, docs
+
+### Parallel Team Strategy
+
+1. Team completes Setup + Foundational together — this includes the migration
+   and should not be split, since the schema work and the container are coupled
+2. Then in parallel:
+   - Developer A: User Story 1
+   - Developer B: User Story 2
+   - Developer C: User Story 3
+3. One developer takes T052, the live release gate, as soon as Foundational lands
+
+---
+
+## Notes
+
+- [P] tasks = different files, no dependencies
+- [Story] label maps task to specific user story for traceability
+- Each user story is independently completable and testable
+- Verify tests fail before implementing — especially T005, which asserts the
+  PostgreSQL path works and has never passed
+- Commit after each task or logical group
+- Stop at any checkpoint to validate a story independently
+- Avoid: vague tasks, same-file conflicts, cross-story dependencies that break
+  independence
+- **T011 and T052 are the two tasks that protect something real.** T011 keeps a
+  test-only provider out of a shipped binary that would otherwise accept an admin
+  password and report a ready cluster that does not exist. T052 is the only
+  evidence that the database migration works outside a test container. Neither
+  may be deferred, and a green suite does not substitute for either

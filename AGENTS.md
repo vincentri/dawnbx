@@ -85,6 +85,34 @@ before the first line is written.
 - `node_modules/` is gitignored: a new worktree has none — run `npm ci --prefix web` (and `npm ci --prefix sdk/typescript`, `npm ci --prefix docs`) once per worktree.
 - Only exception is a direct hotfix on `main`; say so in the commit body.
 
+## 1a. The control-plane e2e suite
+
+`e2e/` drives the control-plane dashboard in a real browser. It runs entirely in
+Docker Compose — PostgreSQL, the server, and the browser — so nothing installs on
+a developer machine except `.e2e/`, which is bind-mounted out because the
+recordings are the output.
+
+```bash
+docker compose -f e2e/docker-compose.yml run --rm driver
+```
+
+Three things about it that are easy to get wrong:
+
+- **It runs a test provider, not a cloud.** The suite proves the operator-facing
+  interface and the orchestration above the provider boundary. It proves nothing
+  about whether AWS accepts what is sent, and must never be reported as if it
+  did. Only the real-account lifecycle does that.
+- **The outcome is per test, not per server.** A test sets what the provider
+  presents through `POST /v1/e2e/outcome`, which exists only in a `-tags e2e`
+  build. A shipped binary has no such route; `strings dawnbx-server | grep -i
+  e2e` must be empty for a default build.
+- **Recordings are kept per environment.** Locally every recording survives, so a
+  passing run can be watched; in CI only failures are kept, so a green run
+  uploads nothing.
+
+A green suite is not a substitute for a real run, and neither is a substitute for
+the other. See `specs/002-control-plane-ui-e2e/`.
+
 ## 2. Checks
 
 **Nothing gets pushed until the whole gate is green.** `bash hack/check.sh` is that gate, one command, every step reported so one run shows every failure. `.githooks/pre-push` runs it and refuses the push.
