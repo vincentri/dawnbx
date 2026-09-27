@@ -272,7 +272,7 @@ func serveControlPlane(ctx context.Context, cfg config, d serverDeps) error {
 	} else {
 		prow.Register(prov)
 		provisioner := cluster.NewProvisioner(registry, prov)
-		provisioner.SetClientFactory(func(url string) cluster.ClusterClient { return cluster.NewRemote(url) })
+		provisioner.SetClientFactory(clientFactory(prov))
 		ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		go provisioner.Watch(ctx)
@@ -441,7 +441,7 @@ func acmeServe(d serverDeps) func(*http.Server) error {
 func main() {
 	// flag.CommandLine is ExitOnError, so a bad flag exits 2 from Parse.
 	cfg, _ := parseFlags(flag.CommandLine, os.Args[1:])
-	if err := serve(context.Background(), cfg, productionDeps()); err != nil {
+	if err := serve(context.Background(), cfg, e2eDeps()); err != nil {
 		log.Fatal(err)
 	}
 }

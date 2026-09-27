@@ -66,9 +66,9 @@ this is complete.
 
 ### Test provider, selectable only in a test build
 
-- [ ] T009 [P] Create `internal/provider/e2e/e2e.go` implementing the full provider interface from `internal/provider/provider.go` — `Capabilities`, `Regions`, `InstanceTypes`, `Estimate`, `Create`, `Status`, `Nodes`, `RemoveNode`, `Destroy` — driven by the `TestOutcome` fields in `data-model.md`
-- [ ] T010 [P] Create `cmd/dawnbx-server/provider_e2e.go` behind `//go:build e2e`, wiring `serverDeps.newProvider` (`cmd/dawnbx-server/main.go:116`) to the test provider
-- [ ] T011 Verify with `go build ./cmd/dawnbx-server` and `strings dawnbx-server | grep -i e2e` that a **default** build contains no test-provider symbol, then with `go build -tags e2e` that it does. A default build that can select a test provider is a security failure, not a style issue
+- [X] T009 [P] Create `internal/provider/e2e/e2e.go` implementing the full provider interface from `internal/provider/provider.go` — `Capabilities`, `Regions`, `InstanceTypes`, `Estimate`, `Create`, `Status`, `Nodes`, `RemoveNode`, `Destroy` — driven by the `TestOutcome` fields in `data-model.md`
+- [X] T010 [P] Create `cmd/dawnbx-server/provider_e2e.go` behind `//go:build e2e`, wiring `serverDeps.newProvider` (`cmd/dawnbx-server/main.go:116`) to the test provider
+- [X] T011 Verify with `go build ./cmd/dawnbx-server` and `strings dawnbx-server | grep -i e2e` that a **default** build contains no test-provider symbol, then with `go build -tags e2e` that it does. A default build that can select a test provider is a security failure, not a style issue
 - [ ] T012 [P] Create `e2e/fixtures/test-provider.ts` mapping each test's declared outcome to the provider configuration, validating that `failureReason` is non-empty when the outcome is `fail` and that `advanceAfter` is positive (data-model.md validation rules)
 
 ### Container environment
