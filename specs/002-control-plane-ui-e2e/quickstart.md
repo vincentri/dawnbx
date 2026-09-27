@@ -61,14 +61,14 @@ fails the gate.
 ### On its own (faster loop while developing a test)
 
 ```bash
-docker compose -f e2e/docker-compose.yml run --rm driver \
+bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts
 ```
 
 ### One test, to watch it happen
 
 ```bash
-docker compose -f e2e/docker-compose.yml run --rm driver \
+bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts -g "sign in"
 ```
 
@@ -153,7 +153,7 @@ These are the checks worth running by hand once, after implementation.
 
 ```bash
 for i in $(seq 1 20); do
-  docker compose -f e2e/docker-compose.yml run --rm driver \
+  bash e2e/run.sh \
     npx playwright test --config e2e/playwright.config.ts || echo "run $i FAILED"
 done
 ```
@@ -174,7 +174,7 @@ Must be green. If anything asks for a cloud, the fixture is wrong.
 ### Unattended (NFR-002)
 
 ```bash
-CI=1 docker compose -f e2e/docker-compose.yml run --rm driver \
+CI=1 bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts
 ```
 
@@ -183,11 +183,11 @@ Must be green with no display and no prompt. This is what CI does.
 ### Retention differs by environment (FR-023)
 
 ```bash
-docker compose -f e2e/docker-compose.yml run --rm driver \
+bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts
 find .e2e -name '*.webm' | wc -l     # every test has a recording
 
-CI=1 docker compose -f e2e/docker-compose.yml run --rm driver \
+CI=1 bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts
 find .e2e -name '*.webm' | wc -l     # 0 on an all-passing run
 ```
@@ -233,7 +233,7 @@ and cost almost nothing. If the suite overruns:
 ## Verifying the container really is isolated
 
 ```bash
-docker compose -f e2e/docker-compose.yml run --rm driver \
+bash e2e/run.sh \
   npx playwright test --config e2e/playwright.config.ts
 ls node_modules/e2e 2>/dev/null && echo "LEAKED to host" || echo "clean"
 ls ~/Library/Caches/ms-playwright >/dev/null 2>&1 && echo "browser on host" || echo "clean"

@@ -11,9 +11,12 @@ real control plane, drives the real interface, and records a video of every test
 ## Running it
 
 ```bash
-docker compose -f e2e/docker-compose.yml run --rm driver
-docker compose -f e2e/docker-compose.yml down -v   # remove everything
+bash e2e/run.sh              # run the suite
+bash e2e/run.sh -- -g "sign in"   # one test
 ```
+
+Use the script rather than a raw `docker compose run`: it starts from a fresh
+stack each time, so a second run cannot fail on state the first one left behind.
 
 Docker and Docker Compose are the only requirements. The browser, the
 dependencies, the server and the database all live in containers, so a run
