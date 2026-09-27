@@ -2,9 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 
 	"dawnbx/internal/store"
 )
@@ -113,5 +118,83 @@ func TestForkInheritsParent(t *testing.T) {
 	}
 	if meta.CPU != "2" || meta.Memory != "2Gi" || meta.KeyID != "key-1" || meta.Node != m.Self {
 		t.Errorf("child meta on disk: %+v", meta)
+	}
+}
+
+// A fork that fails partway must roll back through the real delete path, and
+// the property that matters is what survives a rollback that itself fails.
+//
+// The hand-rolled teardown this replaced deleted the pod, ignored whether that
+// worked, and then removed the row regardless. So a pod delete that failed left
+// nothing behind to retry: no meta, no pod, and a workspace the reconciler
+// would never look at again. m.remove marks the sandbox deleting before it
+// deletes anything, precisely so a crash or an apiserver blip midway leaves a
+// row the next reconcile tick can finish.
+func TestARollbackThatCannotDeleteLeavesSomethingToRetry(t *testing.T) {
+	m, kube := setup(t)
+	ctx := context.Background()
+	parent := mk(t, m, "sb-retry001", nil)
+	m.RunExec = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) (int, error) { return 0, nil }
+
+	// The reactor is installed before markReady, which runs a goroutine against
+	// the fake clientset for the rest of the test: PrependReactor after that
+	// point is a data race with it.
+	kube.PrependReactor("delete", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("apiserver gone")
+	})
+	markReady(t, kube)
+
+	// The copy fails, so the rollback runs; the pod delete then fails too.
+	real := CopyTree
+	var mu sync.Mutex
+	calls := 0
+	CopyTree = func(src, dst string) error {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 2 {
+			return errors.New("no space left on device")
+		}
+		return real(src, dst)
+	}
+	t.Cleanup(func() { CopyTree = real })
+
+	if _, err := m.Fork(ctx, parent.ID, ForkReq{Count: 3}); err == nil {
+		t.Fatal("a fork whose copy failed reported success")
+	}
+
+	// The kid the copy got to must still be on record, marked deleting, so the
+	// reconciler finishes the job. A row that vanished is a row nothing will
+	// ever look at again.
+	ids, err := m.Store.IDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notMarked, onRecord []string
+	for _, id := range ids {
+		if id == parent.ID {
+			continue
+		}
+		meta, err := m.Store.ReadMeta(id)
+		if err != nil {
+			t.Errorf("a rolled-back kid has a directory but no record: %s", id)
+			continue
+		}
+		onRecord = append(onRecord, id)
+		if meta.Status != StatusDeleting {
+			notMarked = append(notMarked, id+" is "+meta.Status)
+		}
+	}
+	if len(notMarked) > 0 {
+		t.Errorf("a kid the rollback could not delete is not marked for the reaper: %v", notMarked)
+	}
+	// The positive half, which is the one that fails without m.remove: a
+	// rollback that could not delete the pod must leave a row behind. Deleting
+	// the record anyway is what makes the workspace unreachable - nothing left
+	// for the reconciler to find.
+	if len(onRecord) == 0 {
+		t.Error("the rollback removed the record even though the pod delete failed: " +
+			"there is nothing left for the reconciler to retry")
 	}
 }

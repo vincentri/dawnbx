@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
+	"log"
 	"os/exec"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"dawnbx/internal/store"
 )
@@ -94,12 +93,16 @@ func (m *Manager) Fork(ctx context.Context, id string, r ForkReq) ([]*View, erro
 		kids[i], pods[i] = got, p
 		defer unlock()
 	}
-	cleanup := func() {
+	// The rollback is the normal delete path, not a cheaper version of it. A
+	// hand-rolled teardown left the pod running for its 30s grace, never marked
+	// the kid deleting - so the reconcile retry that finishes an interrupted
+	// kill could not see it - and fired the remote rm in an untracked goroutine
+	// whose error went nowhere. A rollback that fails is then unrecoverable: no
+	// row anywhere names the workspace left on the worker's disk.
+	rollback := func() {
 		for _, k := range kids {
-			m.Kube.CoreV1().Pods(Namespace).Delete(context.Background(), k.ID, metav1.DeleteOptions{})
-			os.RemoveAll(m.Store.Dir(k.ID))
-			if remote {
-				go m.onNode(context.Background(), node, "rm-"+k.ID, "rm -rf -- /sb/"+k.ID)
+			if err := m.remove(context.Background(), k); err != nil {
+				log.Printf("fork: rolling back %s: %v", k.ID, err)
 			}
 		}
 	}
@@ -109,7 +112,7 @@ func (m *Manager) Fork(ctx context.Context, id string, r ForkReq) ([]*View, erro
 		for i, k := range kids {
 			if pods[i] == nil {
 				if err := m.Store.Create(k); err != nil {
-					cleanup()
+					rollback()
 					return nil, err
 				}
 			}
@@ -119,18 +122,18 @@ func (m *Manager) Fork(ctx context.Context, id string, r ForkReq) ([]*View, erro
 			err = m.freezeAndCopy(ctx, parent.ID, kids, pods, true)
 		}
 		if err != nil {
-			cleanup()
+			rollback()
 			return nil, err
 		}
 		return views, nil
 	}
 	if err := m.freezeAndCopy(ctx, parent.ID, kids, pods, false); err != nil {
-		cleanup()
+		rollback()
 		return nil, err
 	}
 	views, err := m.startKids(ctx, kids, pods)
 	if err != nil {
-		cleanup()
+		rollback()
 		return nil, err
 	}
 	return views, nil

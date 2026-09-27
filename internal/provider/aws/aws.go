@@ -293,8 +293,13 @@ func (a *AWS) Create(ctx context.Context, spec provider.ClusterSpec, boot provid
 			// the cluster it already asked for.
 			return toHandle(h)
 		}
-		ps.deleteSecret(ctx, h.Parameter)
-		a.deleteStack(ctx, c, h)
+		// The compensating teardown is reported, not swallowed. If the create
+		// failed and the delete fails too, the caller sees only the create
+		// error and the handle is never returned, so nothing anywhere names the
+		// stack that is now running and billing. A CFN delete can fail for
+		// reasons that clear on their own, and this is the one place that would
+		// have retried it.
+		err = errors.Join(err, ps.deleteSecret(ctx, h.Parameter), a.deleteStack(ctx, c, h))
 		return provider.Handle{}, scrub(err, boot.AdminPassword)
 	}
 	return toHandle(h)

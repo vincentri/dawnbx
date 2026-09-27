@@ -537,3 +537,40 @@ func TestDestroyWaitsForTheStackToBeGone(t *testing.T) {
 		t.Errorf("Destroy returned after %d reads; it must wait until the stack is gone", described)
 	}
 }
+
+// When the create fails, Create compensates by deleting the secret and the
+// stack. Those two calls used to have their errors dropped, so a compensation
+// that also failed left an instance running that nothing named: the handle is
+// never returned, the caller only sees the create error, and there is no record
+// anywhere pointing at what is now billing. The failure has to travel with the
+// one the caller already has.
+func TestAFailedCreateReportsItsOwnFailedCompensation(t *testing.T) {
+	f := newFake(t, func(action string, _ []byte) (int, string) {
+		switch action {
+		case "AmazonSSM.PutParameter":
+			return 200, `{"Version":1}`
+		case "CreateStack":
+			return 400, `<ErrorResponse><Error><Code>ValidationError</Code>` +
+				`<Message>Stack creation failed</Message></ErrorResponse>`
+		case "DeleteStack":
+			return 403, `<ErrorResponse><Error><Code>AccessDenied</Code>` +
+				`<Message>not permitted to delete</Message></ErrorResponse>`
+		}
+		return 200, "{}"
+	})
+	a := newAWS(t, f, nil)
+	spec := provider.ClusterSpec{Region: "eu-west-1", InstanceType: "t4g.medium", DiskGiB: 30, Domain: "team.example.com"}
+
+	_, err := a.Create(context.Background(), spec, provider.Bootstrap{AdminPassword: secret})
+	if err == nil {
+		t.Fatal("a refused create reported success")
+	}
+	// The operations, not the service's prose: what an operator needs is the
+	// name of the call that failed, so a retry or a cleanup knows what to aim
+	// at, and the AWS message text is not part of any contract here.
+	for _, want := range []string{"CreateStack", "DeleteStack"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %s, so the orphaned stack is undiscoverable: %v", want, err)
+		}
+	}
+}
