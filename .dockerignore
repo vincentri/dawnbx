@@ -1,0 +1,45 @@
+# What Docker may not send as build context.
+#
+# Without this the whole working tree is uploaded to the daemon on every build,
+# which is slow at best and wrong at worst: a per-task worktree under .worktree/
+# is a second full checkout with its own node_modules, and nothing in the build
+# needs any of it. The context is what the Dockerfile COPYs from, so this is a
+# correctness boundary as much as a speed one.
+
+# Per-task worktrees: a second checkout, with its own node_modules and its own
+# e2e/ that would shadow the real one.
+.worktree/
+
+# Version control and the git internals the worktrees live in.
+.git/
+.gitignore
+
+# Installed dependencies. The image runs npm ci itself, so shipping the host's
+# node_modules is pure weight and can carry the wrong platform's binaries.
+**/node_modules/
+
+# Run output. .e2e/ holds video recordings, which is exactly the kind of file
+# that does not belong in a build context.
+.e2e/
+.e2e-report/
+
+# Build and test output.
+**/dist/
+**/build/
+coverage/
+**/__pycache__/
+.venv/
+**/*.egg-info/
+*.test
+*.tsbuildinfo
+
+# Local state and editor noise.
+.commandcode/
+.harness-eval/
+.omp/
+.gstack/
+.claude/
+.DS_Store
+*.swp
+.idea/
+.vscode/
