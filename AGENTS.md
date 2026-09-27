@@ -6,6 +6,20 @@ This file is the only agent rules file. Do not add a per-folder `AGENTS.md` unti
 
 **Governance:** `.specify/memory/constitution.md` is the constitution (v1.2.0, ratified 2026-09-26). It supersedes practice and habit, and this file is its operational expression: where the two disagree the constitution wins, and both are corrected in the same change. New features go through Spec Kit before any code — `/speckit.specify`, then plan, tasks, implement. Do not start a feature from a chat request alone.
 
+**State (2026-09-27).** `001-aws-control-plane` is merged into `main`: the SSH-free
+AWS control plane, 164 tasks, 0 open, converged four times. The whole lifecycle is
+proven against a real account — create, reach `ready`, add a worker, remove it,
+rotate credentials, delete — and `install.sh` is exercised by that path, not just
+by `hack/verify.sh`. Every push to `main` cuts a release.
+
+What a green gate does **not** cover, because it ran nothing: the ten bugs found
+in one session were all found by executing the product. A fake written by the
+same mind that wrote the code agrees with the code, and agrees with its bugs — a
+fake EC2 client accepts a request with no `ImageId`, a node list that answers with
+the provider's own id. Before believing a cluster feature works, run it against an
+account; `CHECK_LIVE=1 bash hack/check.sh` covers the box, and nothing but a real
+provisioning run covers the control plane's own paths.
+
 **Cluster management is provider-neutral.** The control plane (`dawnbx-server
 --control-plane`) manages clusters; sandboxes still run only inside them. The
 provider boundary in `internal/provider` carries values and intent — `ClusterSpec`,
@@ -38,14 +52,37 @@ Never edit, build, test, or commit in the primary checkout, and never on `main`.
 **Never push, and never open a PR, without an explicit instruction in the current session.** Branches, merges, and anything else stay in the local repo. The remote is the user's call, every time.
 
 ```bash
-# from the primary checkout
+# from the primary checkout, ~/work/private/sandbox
 git fetch origin
-git worktree add ../dawnbx-<task> -b task/<slug> origin/main
-cd ../dawnbx-<task>        # every command below runs here
+git worktree add .worktree/<task> -b task/<slug> origin/main
+cd .worktree/<task>          # every command below runs here
 ```
 
+Worktrees live in `.worktree/` **inside** the primary checkout, one directory per
+task, and `.worktree/` is gitignored — so a checkout of this repository can be
+opened anywhere and the rule reads the same, and there is no sibling directory
+outside the project to keep straight.
+
+**A task's directory is deleted when the task is merged.** Not left behind, not
+left "for reference":
+
+```bash
+git worktree remove .worktree/<task>
+git branch -d task/<slug>
+```
+
+Do the `AGENTS.md` update *before* that, and merge it: a change made on a branch
+that is then deleted never reached `main`.
+
+**The tell is the path, not the intention.** Writing a file into the primary
+checkout instead of the worktree happened twice in one session while doing exactly
+the right thing — a CI pin fix, a release workflow — and both had to be reverted
+and redone. Check the path in the `write` and `edit` call, not the plan in your
+head, and `git status` in the worktree before you commit. The primary checkout is
+a place you merge *into*; a task that starts there has already broken the rule
+before the first line is written.
+
 - `node_modules/` is gitignored: a new worktree has none — run `npm ci --prefix web` (and `npm ci --prefix sdk/typescript`, `npm ci --prefix docs`) once per worktree.
-- After the branch lands, drop the worktree: `git worktree remove ../dawnbx-<task>`.
 - Only exception is a direct hotfix on `main`; say so in the commit body.
 
 ## 2. Checks
@@ -120,5 +157,8 @@ Same for the UI: Vite writes its build straight into `internal/api/ui` with `emp
 
 ## 8. Ops surface
 
-- `deploy/aws/dawnbx.yaml` wraps `install.sh` on one arm64 EC2 with an EIP, and is the intended phase-1 path — but it has never been launched: cfn-lint clean, no stack ever created, and its `ReleaseUrl` must be hand-hosted until there is a public release. `install.sh` is the exercised path. Its `SshCommand` output is the *command* that reads the API key and admin password off the instance, not the secrets themselves — but running it puts them in your terminal, so keep that output out of tickets and CI logs.
+- `deploy/aws/dawnbx.yaml` wraps `install.sh` on one arm64 EC2 with an EIP, and is the intended phase-1 path. It has now been launched repeatedly against a real account, and the control plane creates clusters from it unattended. Its `ReleaseUrl` points at a GitHub release, cut by `.github/workflows/release.yml` on every push to `main`. The base is one release tag's asset prefix, `https://github.com/OWNER/dawnbx/releases/download/vX.Y.Z`; GitHub also serves a `latest` alias for the newest release, and that one moves, so pin the tag for anything you care about. Its `SshCommand` output is the *command* that reads the API key and admin password off the instance, not the secrets themselves — but running it puts them in your terminal, so keep that output out of tickets and CI logs.
+- k3s deploys traefik as a packaged ingress controller whose ServiceLB claims host ports 80 and 443 with **iptables rather than a listening socket**. dawnbx creates no Ingress and serves its own HTTPS on 443, so k3s's config disables traefik. Without that, every request is answered by traefik's default certificate and a 404 while `ss` still shows `dawnbx-server` listening — the socket is there and the traffic never reaches it.
+- Ubuntu 24.04, the image the template defaults to, has **no `awscli` package at all**. `install.sh` reads its bootstrap parameter with a stdlib SigV4 signer using the instance role, and uses the CLI only on a distro that ships one. Do not reintroduce an `apt-get install` of it; there is nothing to install.
+- A worker has two names and the two sides never agree: a cluster calls it `ip-172-31-22-242`, the provider calls it `i-0ad9fe…`. The address is the only bridge, so `Provider.NodeAddrs` exists and `NodeRef` carries both. A cluster that reports itself ready and cannot be reached is a `503 cluster_unreachable` carrying the reason — never an empty list, which reads as "no workers" and is the answer that leaves an operator waiting on a repair that is already broken.
 - `install.sh` provisions one box: k3s `v1.35.5+k3s1`, gVisor, and the server on loopback. It refuses to install where a node with the same name already exists — never point it at a machine with an existing cluster.
