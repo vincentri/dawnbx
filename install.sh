@@ -56,9 +56,11 @@ while [ $# -gt 0 ]; do
     --allow-join) ALLOW_JOIN=$2; shift ;;
     --join) JOIN_URL=$2 JOIN_TOKEN=${3:-}; shift 2 ;;
     --bootstrap-parameter) BOOTSTRAP_PARAM=$2; shift ;;
-    # 2..28 is the whole comment header: through the DAWNBX_BOOTSTRAP_PARAMETER
-    # entry, which is the last line before `set -euo pipefail`.
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    # The whole comment header, anchored to the `set -` that ends it rather than
+    # to a line number. The number was 28 and set -euo pipefail was on 29, and
+    # adding one flag description silently truncated --help - while README.md and
+    # the installation guide both promise it lists every flag.
+    -h|--help) sed -n '2,/^set -/p' "$0" | sed '$d'; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -350,6 +352,36 @@ if [ -n "$BOOTSTRAP_PARAM" ]; then
   export DAWNBX_ADMIN_PASSWORD
 fi
 
+# wait_probe runs a command until it succeeds, then runs it once more so the
+# caller can trust a zero return. The four waits this installer had were the same
+# shape with the timeout and the re-assertion written out in each, and they could
+# drift apart; the reason text stays at the call site, where the operator reads it.
+wait_probe() { # probe_cmd max_tries gap_seconds
+  local i
+  for i in $(seq 1 "$2"); do
+    if eval "$1" >/dev/null 2>&1; then
+      eval "$1" >/dev/null 2>&1
+      return 0
+    fi
+    sleep "$3"
+  done
+  return 1
+}
+
+# The two steps a freshly installed node takes before it can run a sandbox, and
+# that both the worker and the server branch need. They sat twenty lines apart and
+# were kept in step by hand, differing only in one word of the warning.
+drop_legacy_flannel() {
+  # left over from the VXLAN backend before wireguard-native
+  ip link del flannel.1 2>/dev/null || true
+}
+
+prepull_image() {
+  # $1 is where the image will be pulled: here, or the next sandbox create.
+  log "pre-pulling $DEFAULT_IMAGE"
+  k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create $1 will be slower"
+}
+
 # Everything that mints or writes a credential lives in server_identity, so the
 # strict umask is scoped to it. The previous version set umask 077 and then
 # restored it to a hardcoded 022, which silently widened a stricter caller's
@@ -539,18 +571,15 @@ if [ -n "$JOIN_URL" ]; then
   curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION K3S_URL=$JOIN_URL K3S_TOKEN=$JOIN_TOKEN sh -s - >"$tmp/k3s.log" 2>&1 ||
     fail "k3s agent install failed" "$(tail -1 "$tmp/k3s.log")" "see journalctl -u k3s-agent"
   # The kubelet's local health port answers once the node registered with the server.
-  for _ in $(seq 1 90); do
-    curl -fs http://127.0.0.1:10248/healthz >/dev/null 2>&1 && break
-    if journalctl -u k3s-agent --no-pager -n 50 2>/dev/null | grep -q 'password rejected'; then
-      fail "the server already has a node named $(hostname)" "k3s refuses a second machine with the same name" "on the server: sudo k3s kubectl delete node $(hostname), then re-run"
-    fi
-    sleep 2
-  done
-  curl -fs http://127.0.0.1:10248/healthz >/dev/null 2>&1 ||
+  # A node name already on the server is reported immediately rather than after
+  # the full wait, so the loop is bounded but the loop itself is the helper.
+  if journalctl -u k3s-agent --no-pager -n 50 2>/dev/null | grep -q 'password rejected'; then
+    fail "the server already has a node named $(hostname)" "k3s refuses a second machine with the same name" "on the server: sudo k3s kubectl delete node $(hostname), then re-run"
+  fi
+  wait_probe "curl -fs http://127.0.0.1:10248/healthz" 90 2 ||
     fail "worker did not join within 3 min" "$(journalctl -u k3s-agent -n 1 --no-pager -o cat)" "check the token, and that the server was installed with --allow-join covering $NODE_IP"
-  ip link del flannel.1 2>/dev/null || true
-  log "pre-pulling $DEFAULT_IMAGE"
-  k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create here will be slower"
+  drop_legacy_flannel
+  prepull_image here
   echo
   echo "Joined $JOIN_URL as node $(hostname). See it on the server's Nodes page."
   report SUCCESS "node $(hostname) joined $JOIN_URL"
@@ -566,15 +595,10 @@ if [ -n "$K3S_CONF_OLD" ] && [ "$K3S_CONF_OLD" != "$(cat /etc/rancher/k3s/config
   systemctl restart k3s
 fi
 K="k3s kubectl"
-for _ in $(seq 1 90); do
-  $K get node 2>/dev/null | grep -q ' Ready' && $K get runtimeclass gvisor >/dev/null 2>&1 && break
-  sleep 2
-done
-$K get node 2>/dev/null | grep -q ' Ready' || fail "k3s node not Ready after 3 min" "$(journalctl -u k3s -n 1 --no-pager)" "journalctl -u k3s"
-ip link del flannel.1 2>/dev/null || true # left over from the VXLAN backend before wireguard-native
-
-log "pre-pulling $DEFAULT_IMAGE"
-k3s crictl pull "$DEFAULT_IMAGE" >/dev/null || warn "pre-pull failed; first sandbox create will be slower"
+wait_probe "$K get node | grep -q ' Ready' && $K get runtimeclass gvisor" 90 2 ||
+  fail "k3s node not Ready after 3 min" "$(journalctl -u k3s -n 1 --no-pager)" "journalctl -u k3s"
+drop_legacy_flannel
+prepull_image "will be slower"
 
 # ---------------------------------------------------------------- dawnbx-server
 if [ -z "$SERVER_BIN" ] && [ -n "$RELEASE_URL" ]; then
@@ -620,11 +644,7 @@ UNIT
 systemctl daemon-reload
 systemctl enable dawnbx.service >/dev/null 2>&1
 systemctl restart dawnbx.service
-for _ in $(seq 1 30); do
-  curl -fs http://127.0.0.1:8080/v1/version >/dev/null && break
-  sleep 1
-done
-curl -fs http://127.0.0.1:8080/v1/version >/dev/null ||
+wait_probe "curl -fs http://127.0.0.1:8080/v1/version" 30 1 ||
   fail "dawnbx-server did not start" "$(journalctl -u dawnbx -n 1 --no-pager -o cat)" "journalctl -u dawnbx"
 log "dawnbx-server up on 127.0.0.1:8080"
 

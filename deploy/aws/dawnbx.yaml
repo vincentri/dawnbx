@@ -189,7 +189,18 @@ Resources:
             # The Elastic IP is attached right after boot; wait so Let's Encrypt reaches this box.
             t=$(curl -s -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)
             md() { curl -s -H "X-aws-ec2-metadata-token: $t" "http://169.254.169.254/latest/meta-data/$1"; }
-            for _ in $(seq 60); do [ "$(md public-ipv4)" = '${Ip}' ] && break; sleep 5; done
+            # The same shape as install.sh's wait_probe, but inlined: this runs
+            # in user-data before install.sh is on disk, so it cannot call a
+            # function defined in it. Kept deliberately close to that helper so
+            # the two do not drift in intent. install.sh carries the shared
+            # implementation for the three waits it owns.
+            ip=""; i=0
+            while [ "$i" -lt 60 ]; do
+              ip=$(md public-ipv4)
+              [ "$ip" = '${Ip}' ] && break
+              i=$((i+1)); sleep 5
+            done
+            [ "$ip" = '${Ip}' ] || fail "the elastic IP never appeared on this host" "expected ${Ip}, metadata reports $ip" "check the EIP association in the stack"
             # Workers join from inside the VPC (the security group limits it further).
             cidr=$(md "network/interfaces/macs/$(md mac)/vpc-ipv4-cidr-block")
             # The administrator password reaches this host through the instance

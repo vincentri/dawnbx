@@ -209,6 +209,7 @@ stale=$(git status --porcelain internal/api/ui)
 run "agent rules cites" python3 hack/check-harness-cites.py
 run "no committed e2e recordings" python3 hack/check-e2e-artefacts.py
 run "install.sh umask is scoped" bash hack/check-install-umask.sh
+run "install.sh --help is complete" bash hack/check-install-help.sh
 
 # ---- control-plane UI e2e ----------------------------------------------------
 # Browser-driven, in Docker Compose, against a test provider. It proves the
