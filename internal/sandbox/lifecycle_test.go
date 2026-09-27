@@ -134,7 +134,7 @@ func TestStartGraceAfterDiskCap(t *testing.T) {
 	m.Now = func() time.Time { return now }
 	markReady(t, kube)
 	s := mk(t, m, "sb-start001", func(x *store.Meta) {
-		x.Status, x.Reason, x.GraceUntil = StatusStopped, "over_disk_limit", ptr(now.Add(-time.Hour))
+		x.Status, x.Reason, x.GraceUntil = StatusStopped, string(reasonOverDiskLimit), ptr(now.Add(-time.Hour))
 	})
 
 	v, err := m.Start(ctx, s.ID)
@@ -150,7 +150,7 @@ func TestStartGraceAfterDiskCap(t *testing.T) {
 	}
 	// A sandbox stopped for a full node is refused there, not here.
 	full := mk(t, m, "sb-start002", func(x *store.Meta) {
-		x.Status, x.Reason, x.Node = StatusStopped, "disk_full", "w1"
+		x.Status, x.Reason, x.Node = StatusStopped, string(reasonDiskFull), "w1"
 	})
 	m.mu.Lock()
 	m.low = []string{"w1"}

@@ -149,7 +149,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 				if cur.Status == StatusStopped || (cur.GraceUntil != nil && m.Now().Before(*cur.GraceUntil)) {
 					return nil
 				}
-				return m.stop(ctx, cur, "over_disk_limit")
+				return m.stop(ctx, cur, reasonOverDiskLimit)
 			})
 			metas[i].Status = StatusStopped
 		}
@@ -201,7 +201,7 @@ func (m *Manager) Reconcile(ctx context.Context, startup bool) {
 			for i, meta := range metas {
 				if nodeOf(meta) == node && meta.ExpiresAt == nil && meta.Status == StatusRunning {
 					log.Printf("reconcile: volume %.1f%% free on %q, stopping %s", f, node, meta.ID)
-					m.withLock(meta.ID, func(cur store.Meta) error { return m.stop(ctx, cur, "disk_full") })
+					m.withLock(meta.ID, func(cur store.Meta) error { return m.stop(ctx, cur, reasonDiskFull) })
 					metas[i].Status = StatusStopped
 					break
 				}

@@ -77,7 +77,7 @@ func TestReconcileDiskCapBeforeHeadroom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Status != StatusStopped || meta.Reason != "over_disk_limit" {
+	if meta.Status != StatusStopped || meta.Reason != string(reasonOverDiskLimit) {
 		t.Errorf("over-cap sandbox: %+v, want stopped/over_disk_limit", meta)
 	}
 	if !m.exists(big.ID) {
@@ -92,7 +92,7 @@ func TestReconcileDiskCapBeforeHeadroom(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if meta.Status != StatusStopped || meta.Reason != "disk_full" {
+	if meta.Status != StatusStopped || meta.Reason != string(reasonDiskFull) {
 		t.Errorf("headroom victim: %+v, want stopped/disk_full", meta)
 	}
 }

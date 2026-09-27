@@ -47,6 +47,19 @@ const (
 	StatusDeleting = "deleting"
 )
 
+// stopReason is why a sandbox was stopped. It is a type because the reason
+// decides what happens when the operator starts it again: diskFull makes Start
+// check the node first, overDiskLimit grants a grace period instead. Those two
+// literals were the only thing standing between a typo and a sandbox started
+// onto a node that is still full, and nothing linked the producer to the
+// consumer at compile time.
+type stopReason string
+
+const (
+	reasonDiskFull      stopReason = "disk_full"
+	reasonOverDiskLimit stopReason = "over_disk_limit"
+)
+
 // Error is the API error envelope {code, message, hint}.
 type Error struct {
 	Status  int    `json:"-"`
@@ -590,12 +603,12 @@ func (m *Manager) Start(ctx context.Context, id string) (*View, error) {
 		return nil, err
 	}
 	if meta.Status == StatusStopped {
-		if meta.Reason == "disk_full" {
+		if stopReason(meta.Reason) == reasonDiskFull {
 			if err := m.checkNode(meta); err != nil {
 				return nil, err
 			}
 		}
-		if meta.Reason == "over_disk_limit" {
+		if stopReason(meta.Reason) == reasonOverDiskLimit {
 			g := m.Now().UTC().Add(Grace)
 			meta.GraceUntil = &g
 		}
@@ -615,8 +628,10 @@ func (m *Manager) Start(ctx context.Context, id string) (*View, error) {
 }
 
 // stop deletes the pod and keeps files. Caller holds the lock.
-func (m *Manager) stop(ctx context.Context, meta store.Meta, reason string) error {
-	meta.Status, meta.Reason, meta.GraceUntil = StatusStopped, reason, nil
+func (m *Manager) stop(ctx context.Context, meta store.Meta, reason stopReason) error {
+	// store.Meta.Reason is a string column, so the conversion happens here and
+	// nowhere else.
+	meta.Status, meta.Reason, meta.GraceUntil = StatusStopped, string(reason), nil
 	if err := m.Store.WriteMeta(meta); err != nil {
 		return err
 	}

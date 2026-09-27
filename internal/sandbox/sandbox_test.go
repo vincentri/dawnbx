@@ -192,7 +192,7 @@ func TestReconcile(t *testing.T) {
 	mk(t, m, "sb-expired1", func(x *store.Meta) { x.ExpiresAt = &past })
 	mk(t, m, "sb-missing1", nil) // meta but no pod: node lost it
 	mk(t, m, "sb-killing1", func(x *store.Meta) { x.Status = StatusDeleting })
-	mk(t, m, "sb-stopped1", func(x *store.Meta) { x.Status, x.Reason = StatusStopped, "disk_full" })
+	mk(t, m, "sb-stopped1", func(x *store.Meta) { x.Status, x.Reason = StatusStopped, string(reasonDiskFull) })
 	// Newer build's meta: must survive untouched.
 	os.MkdirAll(m.Store.Dir("sb-future1"), 0o755)
 	os.WriteFile(filepath.Join(m.Store.Dir("sb-future1"), "meta.json"), []byte(`{"v":2,"id":"sb-future1"}`), 0o600)
@@ -245,7 +245,7 @@ func TestDiskCapAndGrace(t *testing.T) {
 
 	a, _ := m.Store.ReadMeta("sb-big0001")
 	b, _ := m.Store.ReadMeta("sb-big0002")
-	if a.Status != StatusStopped || a.Reason != "over_disk_limit" {
+	if a.Status != StatusStopped || a.Reason != string(reasonOverDiskLimit) {
 		t.Errorf("over cap not stopped: %+v", a)
 	}
 	if b.Status != StatusRunning {
@@ -291,7 +291,7 @@ func TestHeadroom(t *testing.T) {
 
 	FreePct = func(string) (float64, error) { return 5, nil }
 	m.Reconcile(ctx, false)
-	if meta, _ := m.Store.ReadMeta("sb-forever1"); meta.Status != StatusStopped || meta.Reason != "disk_full" {
+	if meta, _ := m.Store.ReadMeta("sb-forever1"); meta.Status != StatusStopped || meta.Reason != string(reasonDiskFull) {
 		t.Errorf("forever sandbox not stopped: %+v", meta)
 	}
 	if _, err := m.Create(ctx, CreateReq{}); err == nil || err.(*Error).Code != "disk_low" {
@@ -476,7 +476,7 @@ func TestNodes(t *testing.T) {
 	}
 	warm := mk(t, m, store.NewID(), func(x *store.Meta) { x.Status, x.Node = StatusWarm, "w1" })
 	m.Reconcile(ctx, false)
-	if meta, _ := m.Store.ReadMeta(w.ID); meta.Status != StatusStopped || meta.Reason != "disk_full" {
+	if meta, _ := m.Store.ReadMeta(w.ID); meta.Status != StatusStopped || meta.Reason != string(reasonDiskFull) {
 		t.Errorf("worker sandbox not stopped on full worker disk: %+v", meta)
 	}
 	if !measured["w1"] || measured["srv"] {
@@ -492,7 +492,7 @@ func TestNodes(t *testing.T) {
 	if _, err := m.Fork(ctx, w2.ID, ForkReq{}); err == nil || err.(*Error).Code != "disk_low" {
 		t.Errorf("fork on low worker: %v", err)
 	}
-	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Reason == "disk_full" {
+	if meta, _ := m.Store.ReadMeta(legacy.ID); meta.Reason == string(reasonDiskFull) {
 		t.Errorf("server sandbox touched: %+v", meta)
 	}
 	// New sandboxes avoid the full worker.

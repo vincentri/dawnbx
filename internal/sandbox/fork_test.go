@@ -36,7 +36,7 @@ func TestForkCountValidation(t *testing.T) {
 	if _, err := m.Fork(ctx, "sb-nosuch01", ForkReq{}); err == nil || err.(*Error).Code != "not_found" {
 		t.Errorf("missing parent: %v", err)
 	}
-	stopped := mk(t, m, "sb-stopped", func(x *store.Meta) { x.Status, x.Reason = StatusStopped, "disk_full" })
+	stopped := mk(t, m, "sb-stopped", func(x *store.Meta) { x.Status, x.Reason = StatusStopped, string(reasonDiskFull) })
 	if _, err := m.Fork(ctx, stopped.ID, ForkReq{}); err == nil || err.(*Error).Code != "sandbox_stopped" {
 		t.Errorf("stopped parent: %v", err)
 	}

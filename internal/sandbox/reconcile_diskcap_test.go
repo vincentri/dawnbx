@@ -43,7 +43,7 @@ func TestDiskCapExactlyAtLimit(t *testing.T) {
 	if pod(kube, atCap.ID) == nil {
 		t.Error("a sandbox at the cap lost its pod")
 	}
-	if meta, _ := m.Store.ReadMeta(graceOver.ID); meta.Status != StatusStopped || meta.Reason != "over_disk_limit" {
+	if meta, _ := m.Store.ReadMeta(graceOver.ID); meta.Status != StatusStopped || meta.Reason != string(reasonOverDiskLimit) {
 		t.Errorf("a grace period that had already ended still saved the sandbox: %+v", meta)
 	}
 }
@@ -82,7 +82,7 @@ func TestUnmeasurableSandboxKeptRunning(t *testing.T) {
 			t.Errorf("%s lost its pod although nothing is known about its size", s.ID)
 		}
 	}
-	if meta, _ := m.Store.ReadMeta(huge.ID); meta.Status != StatusStopped || meta.Reason != "over_disk_limit" {
+	if meta, _ := m.Store.ReadMeta(huge.ID); meta.Status != StatusStopped || meta.Reason != string(reasonOverDiskLimit) {
 		t.Errorf("a worker-reported 6 GiB was not measured: %+v", meta)
 	}
 }
@@ -107,7 +107,7 @@ func TestStopKeepsFilesWhenPodDeleteFails(t *testing.T) {
 	m.Reconcile(ctx, false)
 
 	meta, err := m.Store.ReadMeta(s.ID)
-	if err != nil || meta.Status != StatusStopped || meta.Reason != "over_disk_limit" {
+	if err != nil || meta.Status != StatusStopped || meta.Reason != string(reasonOverDiskLimit) {
 		t.Errorf("over-cap sandbox not stopped: %+v %v", meta, err)
 	}
 	if _, err := os.Stat(keep); err != nil {
