@@ -37,8 +37,12 @@ export function isCI(env: NodeJS.ProcessEnv = process.env): boolean {
 export async function applyRetention(
   outputDir: string,
   results: readonly { status: string; video?: string }[],
+  // The environment is a parameter, not a lookup, so the rule is decidable by a
+  // caller that knows where it is running. Reading process.env here would make
+  // the behaviour depend on whatever the runner happened to export.
+  env: { ci?: boolean } = {},
 ): Promise<RetentionResult> {
-  const ci = isCI();
+  const ci = env.ci ?? isCI();
   const kept: string[] = [];
   const removed: string[] = [];
 

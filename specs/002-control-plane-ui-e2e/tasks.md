@@ -136,13 +136,13 @@ exist for both.
 - [X] T029 [P] [US2] Unreachable-versus-empty spec in `e2e/specs/failure.spec.ts` — a cluster that cannot be reached is not presented as having no workers (FR-010)
 - [X] T030 [P] [US2] Provider-unavailable spec in `e2e/specs/failure.spec.ts` — an unavailable provider is visible in the roster and visibly unavailable, not absent (FR-013)
 - [X] T031 [P] [US2] Stale-quote spec in `e2e/specs/failure.spec.ts` — a quote that went stale is refused with an explanation and can be re-quoted without re-entering the form (FR-014)
-- [ ] T032 [P] [US2] Recording-artefact spec in `e2e/specs/retention.spec.ts` — a failed test's recording exists and is playable; a passing test's recording is absent under `CI=1` (FR-023)
+- [X] T032 [P] [US2] Recording-artefact spec in `e2e/specs/retention.spec.ts` — a failed test's recording exists and is playable; a passing test's recording is absent under `CI=1` (FR-023)
 
 ### Implementation for User Story 2
 
 - [X] T033 [US2] Add the `fail`, `unreachable`, and `providerAvailable: false` outcomes to `e2e/fixtures/test-provider.ts`, each producing the specific value the interface must render
 - [X] T034 [US2] Add selectors in `e2e/support/selectors.ts` for the failure detail, the unreachable notice, and the unavailable-provider marker
-- [ ] T035 [US2] Verify in `e2e/specs/retention.spec.ts` that no recording contains the run's administrator credential or any secret (FR-021's secrecy clause)
+- [X] T035 [US2] Verify in `e2e/specs/retention.spec.ts` that no recording contains the run's administrator credential or any secret (FR-021's secrecy clause)
 
 **Checkpoint**: User Story 2 passes on its own. A failing run is diagnosable by
 playing the video (SC-003, SC-006).
