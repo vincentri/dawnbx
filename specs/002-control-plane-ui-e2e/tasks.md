@@ -42,10 +42,10 @@ implemented, tested, and delivered as an independent increment.
 **Purpose**: Create the `e2e/` package and the ignore rule. No product code is
 touched here.
 
-- [ ] T001 Create `e2e/package.json` with `@playwright/test` as the only runtime dependency and `playwright.config.ts` as the test script
-- [ ] T002 [P] Add `.e2e/` to `.gitignore` so recordings are never committed (FR-025)
-- [ ] T003 [P] Create `e2e/tsconfig.json` extending the repo's TypeScript settings for the suite
-- [ ] T004 Create `e2e/playwright.config.ts` with `outputDir` pointing at `../.e2e`, `video: 'on'`, `use.baseURL` for the control plane, and `retries: 0` (a retry would mask the determinism claim in SC-002)
+- [X] T001 Create `e2e/package.json` with `@playwright/test` as the only runtime dependency and `playwright.config.ts` as the test script
+- [X] T002 [P] Add `.e2e/` to `.gitignore` so recordings are never committed (FR-025)
+- [X] T003 [P] Create `e2e/tsconfig.json` extending the repo's TypeScript settings for the suite
+- [X] T004 Create `e2e/playwright.config.ts` with `outputDir` pointing at `../.e2e`, `video: 'on'`, `use.baseURL` for the control plane, and `retries: 0` (a retry would mask the determinism claim in SC-002)
 
 ---
 
@@ -59,9 +59,9 @@ this is complete.
 
 ### PostgreSQL as the control plane's database
 
-- [ ] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
+- [X] T005 [P] Run the existing auth suite against a real PostgreSQL service using the `DAWNBX_TEST_DATABASE_URL` convention in `internal/auth/auth_test.go:17`, proving `migrate()` and the whole auth path work on the engine the control plane will use
 - [ ] T006 [P] Add a `postgres` service to `e2e/docker-compose.yml` and point `DAWNBX_TEST_DATABASE_URL` at it, so the auth suite runs on both engines rather than whichever one happens to be configured
-- [ ] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
+- [X] T007 Confirm the SQLite path is unchanged: run `go test ./internal/auth/` with no `DAWNBX_TEST_DATABASE_URL` set and verify it still passes
 - [ ] T008 [P] Record in `specs/002-control-plane-ui-e2e/quickstart.md` how to run the auth suite against either engine, so the Postgres path is reproducible by hand and not only in CI
 
 ### Test provider, selectable only in a test build

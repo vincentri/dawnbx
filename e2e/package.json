@@ -1,0 +1,16 @@
+{
+  "name": "dawnbx-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser-driven end-to-end suite for the control-plane dashboard. Runs in Docker Compose; see specs/002-control-plane-ui-e2e/.",
+  "scripts": {
+    "test": "playwright test --config playwright.config.ts",
+    "test:ui": "playwright test --config playwright.config.ts --ui",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.7.0"
+  }
+}
