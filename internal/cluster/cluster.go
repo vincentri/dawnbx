@@ -108,6 +108,7 @@ type Store interface {
 	CreateCluster(c Cluster) error
 	GetCluster(name string) (*Cluster, error)
 	ListClusters() ([]Cluster, error)
+	ClusterByURL(url string) (*Cluster, error)
 	DeleteCluster(name string) error
 	SetClusterState(name, status, phase, detail string) error
 	SetClusterURL(name, url, pin string) error
@@ -320,17 +321,28 @@ func (r *Registry) LastProgress(name string) (time.Time, error) {
 // ByURL finds a cluster by the URL it answers on. The provider hands worker
 // operations a URL rather than a name, and the client for that URL has to carry
 // the cluster's recorded pin or it cannot be trusted.
-func (r *Registry) ByURL(url string) (*Cluster, bool) {
-	list, err := r.List()
+// ByURL returns the cluster published at url.
+//
+// It was a full SELECT of every cluster, converted row by row, with all but one
+// discarded by a string comparison - on the path of every sandbox list and every
+// worker add or remove, so the cost scaled with the number of clusters the
+// control plane manages. It is one indexed row now.
+//
+// The error is returned rather than collapsed into the bool: a store that cannot
+// be read is not a cluster that does not exist, and the previous shape could not
+// tell the caller which it was.
+func (r *Registry) ByURL(url string) (*Cluster, bool, error) {
+	if url == "" {
+		return nil, false, nil
+	}
+	c, err := r.db.ClusterByURL(url)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	for i := range list {
-		if list[i].URL != "" && list[i].URL == url {
-			return &list[i], true
-		}
-	}
-	return nil, false
+	return c, true, nil
 }
 
 // List returns every cluster, newest first.

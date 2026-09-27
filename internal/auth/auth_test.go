@@ -473,3 +473,45 @@ func TestClusterNodesAndOps(t *testing.T) {
 		t.Errorf("ops outlived the cluster: %+v %v", ops, err)
 	}
 }
+
+// ClusterByURL is the query behind the url lookup, which is on the path of every
+// sandbox list and every worker add or remove. It only ran through the in-memory
+// store, so the real one had no coverage at all - and the whole point of the
+// change was the query, not the Go around it.
+func TestClusterByURLFindsOnlyTheClusterAtThatURL(t *testing.T) {
+	d := open(t)
+	now := time.Unix(1_800_000_000, 0)
+	d.Now = func() time.Time { return now }
+	for _, name := range []string{"alpha", "beta"} {
+		if err := d.CreateCluster(newCluster(name, now)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.SetClusterURL("beta", "https://beta.example", "pin-beta"); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := d.ClusterByURL("https://beta.example")
+	if err != nil {
+		t.Fatalf("ClusterByURL: %v", err)
+	}
+	if c.Name != "beta" {
+		t.Fatalf("ClusterByURL returned %q for beta's URL", c.Name)
+	}
+	if c.TLSPin != "pin-beta" {
+		t.Errorf("pin is %q; the client built for this URL must carry the one recorded", c.TLSPin)
+	}
+
+	// An unpublished URL is no rows, which the caller can tell from a store
+	// fault.
+	if _, err := d.ClusterByURL("https://nowhere.example"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("an unpublished URL returned %v, want no rows", err)
+	}
+	// An empty URL is deliberately NOT refused here: every cluster that has never
+	// published one has an empty url column, so the query matches the first of
+	// them. Registry.ByURL is what refuses an empty url before it ever asks, and
+	// this is why that guard is load-bearing rather than defensive.
+	if c, err := d.ClusterByURL(""); err == nil {
+		t.Logf("an empty url matches %q, which is what ByURL guards against upstream", c.Name)
+	}
+}

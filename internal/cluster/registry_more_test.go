@@ -47,7 +47,10 @@ func TestByURLFindsOnlyTheClusterThatServesIt(t *testing.T) {
 	provisioned(t, r, m, "alpha")
 	provisioned(t, r, m, "beta")
 
-	got, ok := r.ByURL("https://beta.example")
+	got, ok, err := r.ByURL("https://beta.example")
+	if err != nil {
+		t.Fatalf("ByURL: %v", err)
+	}
 	if !ok {
 		t.Fatal("a cluster whose URL is recorded was not found by that URL")
 	}
@@ -61,7 +64,7 @@ func TestByURLFindsOnlyTheClusterThatServesIt(t *testing.T) {
 	}
 
 	for _, unknown := range []string{"https://gamma.example", "https://beta.example/", "beta.example", ""} {
-		if c, ok := r.ByURL(unknown); ok {
+		if c, ok, err := r.ByURL(unknown); err != nil || ok {
 			t.Errorf("ByURL(%q) matched %q, which is not the URL it answers on", unknown, c.Name)
 		}
 	}
@@ -76,19 +79,40 @@ func TestByURLSkipsAClusterThatHasNotPublishedItsURL(t *testing.T) {
 		InstanceType: "t4g.medium", DiskGiB: 30}, provider.Estimate{}, provider.Handle{}); err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := r.ByURL(""); ok {
+	if c, ok, err := r.ByURL(""); err != nil || ok {
 		t.Fatalf("a cluster with no URL matched the empty string: %q", c.Name)
 	}
 }
 
-func TestByURLReportsNotFoundWhenTheStoreCannotAnswer(t *testing.T) {
+// A store that cannot answer is a failure the caller must see, not a cluster
+// that does not exist. The old shape returned a bool, so these were
+// indistinguishable, and a worker operation on a downed store looked like a
+// worker operation against a host nobody published.
+func TestByURLReportsAStoreFailureRatherThanNotFound(t *testing.T) {
 	r, m := testRegistry(t)
 	provisioned(t, r, m, "alpha")
-	m.failWith("ListClusters", errStoreDown)
+	m.failWith("ClusterByURL", errStoreDown)
 
-	c, ok := r.ByURL("https://alpha.example")
+	c, ok, err := r.ByURL("https://alpha.example")
+	if !errors.Is(err, errStoreDown) {
+		t.Errorf("ByURL returned %v, want the store's own error; a store that cannot be read must not read as no cluster at that URL", err)
+	}
 	if ok || c != nil {
 		t.Fatalf("a store error produced a cluster: %+v %v", c, ok)
+	}
+}
+
+// A URL nobody published is genuinely absent, and says so without an error.
+func TestByURLReportsAbsenceWithoutAnError(t *testing.T) {
+	r, m := testRegistry(t)
+	provisioned(t, r, m, "alpha")
+
+	c, ok, err := r.ByURL("https://nowhere.example")
+	if err != nil {
+		t.Errorf("an unpublished URL produced an error: %v", err)
+	}
+	if ok || c != nil {
+		t.Errorf("an unpublished URL produced a cluster: %+v %v", c, ok)
 	}
 }
 

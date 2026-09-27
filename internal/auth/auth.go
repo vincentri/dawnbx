@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS cluster_ops (id TEXT PRIMARY KEY,
   cluster TEXT NOT NULL REFERENCES clusters(name) ON DELETE CASCADE,
   kind TEXT NOT NULL, phase TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS cluster_ops_cluster_kind ON cluster_ops (cluster, kind, created)`,
+	`CREATE INDEX IF NOT EXISTS clusters_url ON clusters (url)`,
 }
 
 // Principal is who a request acts as.
@@ -826,6 +827,19 @@ func (d *DB) CreateCluster(c Cluster) error {
 func (d *DB) GetCluster(name string) (*Cluster, error) {
 	c := &Cluster{}
 	if err := c.scan(d.db.QueryRow(`SELECT `+clusterCols+` FROM clusters WHERE name = $1`, name)); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// ClusterByURL returns the cluster published at url.
+//
+// One indexed row rather than a filter over ListClusters: the url lookup is on
+// the path of every sandbox list and every worker add or remove, so reading every
+// cluster to compare one string cost more as the control plane grew.
+func (d *DB) ClusterByURL(url string) (*Cluster, error) {
+	c := &Cluster{}
+	if err := c.scan(d.db.QueryRow(`SELECT `+clusterCols+` FROM clusters WHERE url = $1`, url)); err != nil {
 		return nil, err
 	}
 	return c, nil

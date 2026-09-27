@@ -332,7 +332,10 @@ func listen(ctx context.Context, cfg config, d serverDeps, h http.Handler) error
 // worker operation cannot be redirected to a host that is not the one we made.
 func signerFor(reg *cluster.Registry) func(ctx context.Context, url string) (*cluster.Remote, error) {
 	return func(ctx context.Context, url string) (*cluster.Remote, error) {
-		c, ok := reg.ByURL(url)
+		c, ok, err := reg.ByURL(url)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("no cluster is registered at %s", url)
 		}

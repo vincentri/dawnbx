@@ -25,6 +25,9 @@ type memStore struct {
 	nodes    map[string][]auth.ClusterNode
 	ops      map[string][]auth.Op
 	now      time.Time
+	// calls counts each Store method, so a test can prove a lookup is one row
+	// rather than a scan of the lot.
+	calls map[string]int
 	// fail maps a Store method name to the error it must return instead of
 	// doing its job. A store that is down is the failure every caller of Store
 	// has to survive, and it cannot be reproduced any other way without a
@@ -120,7 +123,66 @@ func (m *memStore) GetCluster(name string) (*auth.Cluster, error) {
 	return &c, nil
 }
 
+// ClusterByURL answers for one cluster, so a test can prove the lookup is a
+// single row and not a scan of the lot.
+func (m *memStore) ClusterByURL(url string) (*auth.Cluster, error) {
+	m.count("ClusterByURL")
+	if err := m.errFor("ClusterByURL"); err != nil {
+		return nil, err
+	}
+	if url == "" {
+		return nil, sql.ErrNoRows
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.clusters {
+		if c.URL == url {
+			cc := c
+			return &cc, nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+// count records one call to name.
+func (m *memStore) count(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.calls == nil {
+		m.calls = map[string]int{}
+	}
+	m.calls[name]++
+}
+
+// callsOf reports how many times name was called.
+func (m *memStore) callsOf(name string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls[name]
+}
+
+// resetCounters clears the call counts, so a test measures one operation.
+func (m *memStore) resetCounters() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = map[string]int{}
+}
+
+// setURL records a cluster's published URL.
+func (m *memStore) setURL(name, url string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.clusters[name]
+	if !ok {
+		return errors.New("no such cluster: " + name)
+	}
+	c.URL = url
+	m.clusters[name] = c
+	return nil
+}
+
 func (m *memStore) ListClusters() ([]auth.Cluster, error) {
+	m.count("ListClusters")
 	if err := m.errFor("ListClusters"); err != nil {
 		return nil, err
 	}
