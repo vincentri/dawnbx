@@ -43,7 +43,13 @@ class Fake(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n).decode()
         Fake.seen.append(f"{self.command} {self.path} {body}")
-        assert self.headers["Authorization"] == "Bearer k"
+        # A wrong key is answered 401 rather than asserted. An assert here runs
+        # on the server thread, so a failure closed the socket and the SDK raised
+        # connection_failed - the test then failed pointing at the network
+        # rather than at the missing header. Answering 401 puts it back on the
+        # SDK's own error path, which is where a caller would meet it.
+        if self.headers.get("Authorization") != "Bearer k":
+            return self.reply(401, {"code": "unauthorized", "message": "missing or wrong API key"})
         p = self.path
         if p == "/v1/sandboxes" and self.command == "POST":
             return self.reply(200, SB)

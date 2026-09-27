@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from dawnbx import DawnbxError, Sandbox, _Client, _info
+from dawnbx import DawnbxError, Sandbox
 
 STOPPED = {
     "id": "sb-abc123",
@@ -76,8 +76,13 @@ class TestSdkSurface(unittest.TestCase):
     def tearDownClass(cls):
         cls.srv.shutdown()
 
+    # Built through the public API, not by reaching into _Client and _info to
+    # hand-assemble the object: the fake already answers GET /v1/sandboxes/{id}
+    # with STOPPED, so the SDK can do what a caller would do. Reaching past the
+    # public surface coupled this suite to the constructor, which the contract
+    # does not promise and a refactor is free to change.
     def sandbox(self):
-        return Sandbox(_Client(**self.opts), _info(STOPPED))
+        return Sandbox.get("sb-abc123", **self.opts)
 
     def test_list_returns_every_sandbox(self):
         out = Sandbox.list(**self.opts)
